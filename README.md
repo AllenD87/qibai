@@ -443,9 +443,9 @@ TTS 引擎可在「本地 / 云端」之间切换，STT 走本地 whisper，语�
 
 ## 许可证
 
-- **代码**：MIT，见 [`LICENSE`](LICENSE)。
+- **代码**：MIT，见 [`LICENSE`](LICENSE)（`LICENSE` 只放纯 MIT 正文，便于平台自动识别许可）。
 - **美术素材**（立绘 / 动作帧 / 表情）：**不适用 MIT**，另行授权，商用请联系作者，详见 [`docs/ASSETS.md`](docs/ASSETS.md)。
-- **第三方组件**：whisper.cpp、sherpa-onnx、piper、espeak-ng 等各有其许可，详见 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)。
+- **第三方组件**：whisper.cpp、sherpa-onnx、piper、espeak-ng 等各有其许可，详见 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)（含 bge-small-zh-v1.5 向量模型与 tract-onnx）。
 
 ---
 

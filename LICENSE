@@ -19,10 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-------------------------------------------------------------
-附注：本 MIT 许可仅覆盖源码。美术素材（立绘 / 动作帧 / 表情 / 图标）
-不适用本许可，其授权范围见 docs/ASSETS.md。
-第三方组件（whisper.cpp / sherpa-onnx / piper / espeak-ng 等）
-适用其各自许可，见 THIRD-PARTY-NOTICES.md。
-------------------------------------------------------------
