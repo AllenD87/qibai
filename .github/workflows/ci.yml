@@ -73,6 +73,7 @@ jobs:
       #    跳过项按模块前缀 + 单条精确匹配，新增桌面耦合用例时补一行即可。
       - name: qibai-core cargo test (portable subset)
         working-directory: qibai-core
+        shell: bash          # Windows 默认是 PowerShell，`--` 与反斜杠续行都需要 bash
         run: |
           cargo test --locked -- \
             --skip fileops:: \
@@ -82,6 +83,9 @@ jobs:
             --skip task_exec:: \
             --skip tts:: \
             --skip whisper_engine:: \
+            --skip skills::save_tests:: \
+            --skip skills::tests::file_ops_delete_goes_pending_then_approval_executes \
+            --skip vault::tests::kdf_210k_runtime_bench \
             --skip engine::tests::stt_status_shape_and_sandbox_device_unavailable \
             --skip engine::tests::tts_decide_no_key_downgrade_reason_when_local_faked_available \
             --skip engine::tests::v18_plugin_library_scan_and_invoke \
