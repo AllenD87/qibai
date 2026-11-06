@@ -358,7 +358,7 @@ TTS 引擎可在「本地 / 云端」之间切换，STT 走本地 whisper，语�
 
 欢迎 Issue 与 PR。三条底线：
 
-1. **能过测试**：`cargo test -p qibai-core` 必须全绿。
+1. **能过测试**：`cargo test -p qibai-core` 跑通再提交 PR。
 2. **能力默认关闭**：任何新增的执行类能力，默认关 + 白名单 + 确认闸门。
 3. **大文件不进 git**：单文件 > 5 MB 请走 Release 或下载脚本。
 
