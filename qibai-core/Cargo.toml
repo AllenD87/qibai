@@ -38,5 +38,8 @@ sonora = "0.2"
 rubato = "0.15"
 zip = "2"
 
+# P2 知识库向量化：纯 Rust ONNX 推理（不依赖 onnxruntime 动态库，三平台免系统依赖）。
+tract-onnx = "0.21"
+
 [dev-dependencies]
 # 测试用临时目录

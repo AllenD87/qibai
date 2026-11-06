@@ -152,6 +152,7 @@ pub fn status(idx: &Index, folders: &[String]) -> KbStatus {
         chunks: idx.chunks.len(),
         indexed_at: idx.indexed_at,
         last_error: None,
+        ..Default::default()
     }
 }
 

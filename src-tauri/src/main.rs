@@ -1346,6 +1346,37 @@ async fn kb_status(state: tauri::State<'_, AppState>) -> Result<serde_json::Valu
     serde_json::to_value(v).map_err(|e| e.to_string())
 }
 
+/// P2：应用内一键下载向量模型（91 MB，按需拉取，不进安装包）。
+/// 下载完成立刻让 embedding 缓存失效，下一次检索就用上。
+#[tauri::command]
+async fn kb_embed_fetch(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let app2 = app.clone();
+    let cb = move |done: u64, total: u64| {
+        let pct = if total > 0 { (done.saturating_mul(100) / total) as u32 } else { 0 };
+        let _ = app2.emit(
+            "kb:embed_progress",
+            serde_json::json!({ "done": done, "total": total, "pct": pct }),
+        );
+    };
+    let dir = qibai_core::kb::embed::fetch_model(Some(&cb))
+        .await
+        .map_err(|e| e.to_string())?;
+    qibai_core::kb::embed::invalidate_cache();
+    let _ = app.emit("kb:embed_progress", serde_json::json!({ "done": 0, "total": 0, "pct": 100 }));
+    Ok(serde_json::json!({
+        "ok": true,
+        "dir": dir.to_string_lossy(),
+        "model": qibai_core::kb::embed::MODEL_NAME,
+    }))
+}
+
+/// P2：语义检索真实状态（模型是否安装/加载、已向量化块数、融合权重）。
+#[tauri::command]
+async fn kb_embed_status(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let v = state.engine.lock().await.kb_embed_status();
+    Ok(v)
+}
+
 #[tauri::command]
 async fn kb_search(
     state: tauri::State<'_, AppState>,
@@ -4324,6 +4355,8 @@ fn main() {
             kb_remove_folder,
             kb_reindex,
             kb_status,
+            kb_embed_status,
+            kb_embed_fetch,
             kb_search,
             approve_skill,
             mcp_list,

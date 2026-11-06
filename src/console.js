@@ -598,6 +598,9 @@
     if ($('kbTopK')) out.kb_top_k = Math.min(20, Math.max(1, num('kbTopK', 6)));
     if ($('kbChunkChars')) out.kb_chunk_chars = Math.min(800, Math.max(500, num('kbChunkChars', 700)));
     if ($('kbMaxChunks')) out.kb_max_chunks = Math.min(100000, Math.max(1000, num('kbMaxChunks', 20000)));
+    // P2：语义检索开关 / 融合权重（0..1，默认 0.45）
+    if ($('kbEmbedEnabled')) out.kb_embed_enabled = !!$('kbEmbedEnabled').checked;
+    if ($('kbHybridWeight')) out.kb_hybrid_weight = Math.min(1, Math.max(0, num('kbHybridWeight', 0.45)));
     return out;
   }
 
@@ -608,6 +611,12 @@
     $('setBaseUrl').value = (s.llm && s.llm.base_url) || '';
     $('setModel').value = (s.llm && s.llm.model) || '';
     $('setApiKey').value = (s.llm && s.llm.api_key) || '';
+    // v45.11/P2：知识库参数回填
+    if ($('kbTopK')) $('kbTopK').value = s.kb_top_k || 6;
+    if ($('kbChunkChars')) $('kbChunkChars').value = s.kb_chunk_chars || 700;
+    if ($('kbMaxChunks')) $('kbMaxChunks').value = s.kb_max_chunks || 20000;
+    if ($('kbEmbedEnabled')) $('kbEmbedEnabled').checked = s.kb_embed_enabled !== false;
+    if ($('kbHybridWeight')) $('kbHybridWeight').value = (s.kb_hybrid_weight === 0 ? 0 : s.kb_hybrid_weight) || 0.45;
 
     $('setSitMin').value = (s.reminders && s.reminders.sit_min) || 60;
     $('setWaterMin').value = (s.reminders && s.reminders.water_min) || 40;
@@ -4596,6 +4605,53 @@
   const statusEl = $('kbStatus');
   if (!foldersEl) return;
 
+  const embedEl = $('kbEmbedStatus');
+  const fetchBtn = $('btnKbEmbedFetch');
+  let fetching = false;
+  try {
+    await listen('kb:embed_progress', (ev) => {
+      const p = (ev && ev.payload) || {};
+      if (!fetching || !embedEl) return;
+      const mb = (p.done / 1048576).toFixed(1);
+      const totalMb = p.total ? (p.total / 1048576).toFixed(1) : '?';
+      embedEl.textContent = `下载向量模型中… ${p.pct || 0}%（${mb} / ${totalMb} MB）`;
+    });
+  } catch (e) {}
+  if (fetchBtn) {
+    fetchBtn.onclick = async () => {
+      if (fetching) return;
+      fetching = true;
+      fetchBtn.disabled = true;
+      fetchBtn.textContent = '下载中…';
+      try {
+        const r = await invoke('kb_embed_fetch');
+        toast(`向量模型已安装（${r.model}）`);
+        refreshEmbed();
+      } catch (e) {
+        toast('下载失败：' + ((e && e.message) || e));
+        refreshEmbed();
+      } finally {
+        fetching = false;
+        fetchBtn.disabled = false;
+        fetchBtn.textContent = '下载向量模型';
+      }
+    };
+  }
+  async function refreshEmbed() {
+    if (!embedEl) return;
+    try {
+      const e = await invoke('kb_embed_status');
+      let text;
+      if (!e.enabled) text = '语义检索：已关闭（纯 BM25 关键词）';
+      else if (e.loaded) text = `语义检索：已开启（${e.model} · ${e.dim} 维 · 已向量化 ${e.vector_chunks || 0} 块 · 权重 ${(+e.hybrid_weight).toFixed(2)}）`;
+      else if (e.installed) text = `语义检索：模型已下载但加载失败，当前走纯 BM25（${e.hint || ''}）`;
+      else text = `语义检索：未安装模型，当前走纯 BM25。${e.hint || ''}`;
+      embedEl.textContent = text;
+    } catch (err) {
+      embedEl.textContent = '语义检索状态读取失败：' + ((err && err.message) || err);
+    }
+  }
+
   async function refreshStatus() {
     try {
       const s = await invoke('kb_status');
@@ -4615,8 +4671,10 @@
       if (!s.folders || !s.folders.length) {
         foldersEl.innerHTML = '<div class="hint" style="font-size:12px;">还没有知识库目录。加一个文件夹，小小就能在里面找资料。</div>';
       }
-      const err = s.error ? `<span style="color:#b91c1c;">${s.error}</span>` : '';
-      statusEl.innerHTML = `文件 ${s.file_count || 0} · 块 ${s.chunk_count || 0}${s.last_indexed ? ' · 上次索引 ' + s.last_indexed : ''} ${err}`;
+      const err = s.last_error ? `<span style="color:#b91c1c;">${s.last_error}</span>` : '';
+      const when = s.indexed_at ? ' · 上次索引 ' + new Date(s.indexed_at).toLocaleString() : '';
+      statusEl.innerHTML = `文件 ${s.files || 0} · 块 ${s.chunks || 0}${when} ${err}`;
+      refreshEmbed();
     } catch (e) {
       statusEl.innerHTML = '<span style="color:#b91c1c;">状态读取失败：' + ((e && e.message) || e) + '</span>';
     }

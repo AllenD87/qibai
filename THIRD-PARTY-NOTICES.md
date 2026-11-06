@@ -16,6 +16,7 @@
 | **sherpa-onnx / Paraformer** | `paraformer.onnx`（233 MB） | Apache-2.0【待核实】 | ❌ 不入库 | 备用中文流式识别引擎 |
 | **piper** 引擎 | 可执行程序 | MIT | ❌ | 本地离线 TTS |
 | **piper 音色** `zh_CN-huayan-medium.onnx` | 61 MB | **各音色独立许可，部分限非商用**【必须核实】 | ❌ 不入库，建议用户自行从 `rhasspy/piper-voices` 下载 | **若该音色限非商用，不得随本项目安装包分发** |
+| **bge-small-zh-v1.5**（向量模型） | `model.onnx` 91 MB + `vocab.txt` | MIT（BAAI，上游 `BAAI/bge-small-zh-v1.5`） | ❌ 不进安装包、不入库 | 知识库语义检索用；用户在应用内按需下载（Release `kb-model-v1` 仅做镜像分发，权重版权归原作者） |
 | **espeak-ng** | 二进制 + `share/` 语音数据（13 MB） | **GPL-3.0** | ❌ 不入库，建议用户用系统包管理器安装 | 以独立可执行程序调用；若你选择分发二进制，须同时提供许可文本与源码获取方式 |
 
 ## 二、Rust 依赖（主要项，均由 `Cargo.lock` 锁定）
@@ -28,6 +29,7 @@
 | `reqwest`（`rustls-tls`） | HTTP 客户端 | MIT / Apache-2.0 |
 | `cpal` / `rodio` / `rubato` | 音频采集、播放、重采样 | MIT / Apache-2.0 |
 | `sonora` | WebRTC AEC3 纯 Rust 移植（回声消除） | 【待核实】 |
+| `tract-onnx` | 纯 Rust ONNX 推理（本地向量模型，免 C/C++ 依赖） | MIT / Apache-2.0 |
 | `aes-gcm` / `pbkdf2` / `sha2` / `rand` / `zeroize` | 本地保险箱加密 | MIT / Apache-2.0 |
 | `keyring` | 系统钥匙串 | MIT / Apache-2.0 |
 | `directories` / `thiserror` / `async-trait` / `base64` / `zip` | 路径、错误、trait、编码、打包 | MIT / Apache-2.0 |

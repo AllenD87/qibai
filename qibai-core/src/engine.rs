@@ -1617,18 +1617,79 @@ pub(crate) fn reset_plan_for_rerun(
             chunk_cfg: crate::kb::chunk::ChunkConfig { target_chars: self.settings.kb_chunk_chars, overlap: 80 },
         };
         let folders = self.settings.kb_folders.clone();
-        match crate::kb::index::reindex(&folders, cfg) {
-            Ok(idx) => Ok(crate::kb::index::status(&idx, &folders)),
+        let idx = match crate::kb::index::reindex(&folders, cfg) {
+            Ok(idx) => idx,
             Err(e) => {
                 eprintln!("[qibai] kb: reindex failed: {e}");
-                Err(EngineError::Skill(format!("kb_reindex: {e}")))
+                return Err(EngineError::Skill(format!("kb_reindex: {e}")));
             }
-        }
+        };
+        // 重建索引后同步向量（模型缺席/推理失败只降级，不打断 reindex）
+        let note = match self.kb_sync_vectors(&idx) {
+            Ok(0) => Some("未安装向量模型，检索走纯 BM25（跑 fetch_embed_model.sh 可开启语义检索）".to_string()),
+            Ok(_) => None,
+            Err(e) => {
+                eprintln!("[qibai] kb: 向量化失败，退回纯 BM25: {e}");
+                Some(format!("向量化失败，已退回纯 BM25：{e}"))
+            }
+        };
+        Ok(self.kb_status_with_note(&idx, note))
     }
 
     pub fn kb_status(&self) -> Result<crate::kb::KbStatus, EngineError> {
         let idx = crate::kb::index::load_index().map_err(|e| EngineError::Skill(format!("kb_status: {e}")))?;
-        Ok(crate::kb::index::status(&idx, &self.settings.kb_folders))
+        Ok(self.kb_status_with_note(&idx, None))
+    }
+
+    /// 向量检索真状态（给前端展示「已开启语义检索 / 未安装模型」用）。
+    pub fn kb_embed_status(&self) -> serde_json::Value {
+        let dir = crate::kb::embed::default_model_dir();
+        let installed = dir.join("model.onnx").exists() && dir.join("vocab.txt").exists();
+        let vectors = crate::kb::vectors::load();
+        let loaded = if self.settings.kb_embed_enabled && installed {
+            crate::kb::embed::cached_default().is_some()
+        } else {
+            false
+        };
+        serde_json::json!({
+            "enabled": self.settings.kb_embed_enabled,
+            "installed": installed,
+            "loaded": loaded,
+            "model": crate::kb::embed::MODEL_NAME,
+            "dim": crate::kb::embed::MODEL_DIM,
+            "max_tokens": crate::kb::embed::MAX_LEN,
+            "dir": dir.to_string_lossy(),
+            "vector_chunks": vectors.as_ref().map(|v| v.rows()).unwrap_or(0),
+            "vector_model": vectors.as_ref().map(|v| v.model.clone()),
+            "hybrid_weight": self.settings.kb_hybrid_weight,
+            "hint": if installed {
+                if loaded { "" } else { "模型已下载但加载失败，检索走纯 BM25（看日志 [qibai] kb: 向量模型加载失败）" }
+            } else {
+                "未安装向量模型：跑 fetch_embed_model.sh 下载后自动开启语义检索；不装也能用纯 BM25"
+            },
+        })
+    }
+
+    /// 把向量索引状态填进 KbStatus（前端一行字就能看出走的是哪条检索路径）。
+    fn kb_status_with_note(&self, idx: &crate::kb::index::Index, note: Option<String>) -> crate::kb::KbStatus {
+        let mut st = crate::kb::index::status(idx, &self.settings.kb_folders);
+        let vectors = crate::kb::vectors::load();
+        if let Some(v) = vectors.filter(|v| v.model == crate::kb::embed::MODEL_NAME && v.dim == crate::kb::embed::MODEL_DIM) {
+            st.embed_model = Some(v.model.clone());
+            st.embed_chunks = v.rows();
+        }
+        st.embed_note = note;
+        st
+    }
+
+    /// 同步向量索引；返回写入的块数（0 = 没有向量模型）。
+    fn kb_sync_vectors(&self, idx: &crate::kb::index::Index) -> Result<usize, String> {
+        if !self.settings.kb_embed_enabled {
+            return Ok(0);
+        }
+        let Some(emb) = crate::kb::embed::cached_default() else { return Ok(0) };
+        crate::kb::vectors::sync(&idx.chunks, emb.as_ref() as &dyn crate::kb::embed::TextEmbedder)
+            .map_err(|e| e.to_string())
     }
 
     pub fn kb_search(&self, query: &str, top_k: Option<usize>) -> Result<Vec<crate::kb::KbHit>, EngineError> {
@@ -1642,7 +1703,41 @@ pub(crate) fn reset_plan_for_rerun(
             return Ok(Vec::new());
         }
         let k = top_k.unwrap_or(self.settings.kb_top_k);
-        Ok(crate::kb::search::search(&idx.chunks, query, k))
+
+        // 语义检索：有模型 + 有对得上的向量索引才走混合，否则纯 BM25
+        let qvec = if self.settings.kb_embed_enabled {
+            crate::kb::embed::cached_default().and_then(|e| {
+                match crate::kb::embed::TextEmbedder::embed(e.as_ref(), &[query.to_string()]) {
+                    Ok(mut v) if !v.is_empty() => Some(v.remove(0)),
+                    Ok(_) => None,
+                    Err(err) => {
+                        eprintln!("[qibai] kb: 查询向量化失败，退回纯 BM25: {err}");
+                        None
+                    }
+                }
+            })
+        } else {
+            None
+        };
+        let vectors = qvec.as_ref().and_then(|_| {
+            crate::kb::vectors::load().filter(|v| {
+                v.model == crate::kb::embed::MODEL_NAME && v.dim == crate::kb::embed::MODEL_DIM
+            })
+        });
+        let hybrid = qvec.is_some() && vectors.is_some();
+        eprintln!(
+            "[qibai] kb: search path={} chunks={} top_k={k}",
+            if hybrid { "hybrid(bm25+vec)" } else { "bm25" },
+            idx.chunks.len()
+        );
+        Ok(crate::kb::search::search_hybrid(
+            &idx.chunks,
+            query,
+            k,
+            qvec.as_deref(),
+            vectors.as_ref(),
+            self.settings.kb_hybrid_weight,
+        ))
     }
 
     // ====== v45.10 P1 音频诊断 ======

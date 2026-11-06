@@ -457,6 +457,13 @@ pub struct Settings {
     /// v45.10 P1：块数硬上限（超过 reindex 报错，不静默截断）。
     #[serde(default = "default_kb_max_chunks")]
     pub kb_max_chunks: usize,
+    /// P2：语义检索开关。true 且本机已装向量模型时才走「向量 + BM25」混合检索，
+    /// 否则一律纯 BM25（模型缺席不影响检索可用性）。
+    #[serde(default = "default_kb_embed_enabled")]
+    pub kb_embed_enabled: bool,
+    /// P2：混合检索里向量权重（0..1）。默认 0.45：语义与字面各占一半，字面略重。
+    #[serde(default = "default_kb_hybrid_weight")]
+    pub kb_hybrid_weight: f32,
 }
 
 fn default_context_layers_enabled() -> bool { true }
@@ -466,6 +473,8 @@ fn default_task_parallel_max() -> u32 { 3 }
 fn default_kb_top_k() -> usize { 6 }
 fn default_kb_chunk_chars() -> usize { 700 }
 fn default_kb_max_chunks() -> usize { 20_000 }
+fn default_kb_embed_enabled() -> bool { true }
+fn default_kb_hybrid_weight() -> f32 { 0.45 }
 
 fn default_search_engine() -> String { "auto".into() }
 fn default_http_timeout_secs() -> u64 { 8 }
@@ -552,6 +561,8 @@ impl Default for Settings {
             kb_top_k: default_kb_top_k(),
             kb_chunk_chars: default_kb_chunk_chars(),
             kb_max_chunks: default_kb_max_chunks(),
+            kb_embed_enabled: default_kb_embed_enabled(),
+            kb_hybrid_weight: default_kb_hybrid_weight(),
         }
     }
 }
@@ -592,6 +603,7 @@ impl Settings {
         self.kb_top_k = self.kb_top_k.clamp(1, 20);
         self.kb_chunk_chars = self.kb_chunk_chars.clamp(500, 800);
         self.kb_max_chunks = self.kb_max_chunks.clamp(100, 200_000);
+        self.kb_hybrid_weight = self.kb_hybrid_weight.clamp(0.0, 1.0);
         // v45.13：并行上限——合法区间 1..=8 内不动；0 或越界（>8）一律回默认 3 并留日志。
         if self.task_parallel_max == 0 || self.task_parallel_max > 8 {
             eprintln!(
