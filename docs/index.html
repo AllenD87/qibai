@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>元气小小 · 住在桌面角落的 AI 伴侣</title>
+<meta name="description" content="元气小小（Qibai）：会聊天、听得懂、记得住、真动手的本地优先桌面 AI 伴侣。Tauri 2 + 纯 Rust 核心，Windows / macOS / Linux。">
+<meta property="og:title" content="元气小小 · 住在桌面角落的 AI 伴侣">
+<meta property="og:description" content="会聊天、听得懂、记得住、真动手。本地优先，文本不出门。">
+<meta property="og:image" content="images/personas-all.png">
+<link rel="icon" href="images/personas/huopo.png">
+<style>
+  :root{
+    --ink:#17181c; --ink-2:#4b4d55; --ink-3:#7c7f88;
+    --paper:#fbf7f3; --card:#ffffff; --line:#ece3da;
+    --coral:#e2574c; --coral-soft:#fdece9; --amber:#f0a32f; --teal:#2f8f83;
+    --r:18px; --shadow:0 10px 30px rgba(23,24,28,.07);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--paper); color:var(--ink); overflow-x:hidden;
+    font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+    line-height:1.7; -webkit-font-smoothing:antialiased;
+  }
+  a{color:inherit}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+  header{
+    position:sticky;top:0;z-index:9;background:rgba(251,247,243,.86);
+    backdrop-filter:saturate(160%) blur(10px);border-bottom:1px solid var(--line);
+  }
+  .nav{display:flex;align-items:center;gap:22px;height:62px}
+  .mark{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.02em}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--coral);box-shadow:0 0 0 4px var(--coral-soft)}
+  .nav .sp{flex:1}
+  .nav a.navlink{color:var(--ink-2);font-size:14px;text-decoration:none}
+  .nav a.navlink:hover{color:var(--coral)}
+  .ghost{
+    border:1px solid var(--line);background:#fff;border-radius:999px;
+    padding:7px 16px;font-size:14px;text-decoration:none;color:var(--ink)
+  }
+  .ghost:hover{border-color:var(--coral);color:var(--coral)}
+
+  .hero{padding:64px 0 30px;display:grid;grid-template-columns:1.05fr .95fr;gap:44px;align-items:center}
+  .kick{display:inline-flex;align-items:center;gap:8px;background:var(--coral-soft);color:#b8433a;
+    border-radius:999px;padding:5px 13px;font-size:13px;font-weight:600}
+  h1{font-size:46px;line-height:1.2;margin:16px 0 6px;letter-spacing:-.02em}
+  h1 em{font-style:normal;color:var(--coral)}
+  .sub{font-size:18px;color:var(--ink-2);margin:0 0 24px}
+  .btns{display:flex;flex-wrap:wrap;gap:12px}
+  .btn{
+    display:inline-flex;align-items:center;gap:8px;text-decoration:none;border-radius:999px;
+    padding:12px 22px;font-weight:700;font-size:15px;border:1px solid transparent
+  }
+  .btn.primary{background:var(--coral);color:#fff;box-shadow:0 8px 20px rgba(226,87,76,.25)}
+  .btn.primary:hover{filter:brightness(1.03)}
+  .btn.line{background:#fff;border-color:var(--line);color:var(--ink)}
+  .btn.line:hover{border-color:var(--coral);color:var(--coral)}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+  .chip{font-size:12.5px;color:var(--ink-2);border:1px solid var(--line);background:#fff;border-radius:8px;padding:4px 10px}
+  .heroart{position:relative}
+  .heroart img{width:100%;border-radius:var(--r);border:1px solid var(--line);box-shadow:var(--shadow);display:block}
+  .float{
+    position:absolute;left:-22px;bottom:-26px;width:126px;border-radius:14px;overflow:hidden;
+    border:1px solid var(--line);box-shadow:var(--shadow);background:#fff
+  }
+  .float img{width:100%;display:block}
+  .caption{font-size:12px;color:var(--ink-3);margin:14px 0 0;text-align:left}
+
+  section{padding:52px 0}
+  h2{font-size:26px;margin:0 0 8px;letter-spacing:-.01em}
+  .lead{color:var(--ink-2);margin:0 0 28px;font-size:15.5px}
+  .grid{display:grid;gap:16px;align-items:start}
+  .grid>*{min-width:0}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  .card{
+    background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+    padding:22px;box-shadow:var(--shadow)
+  }
+  .card h3{margin:0 0 8px;font-size:17px}
+  .card p{margin:0;color:var(--ink-2);font-size:14.5px}
+  .tag{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.04em;
+    color:#b8433a;background:var(--coral-soft);border-radius:6px;padding:2px 8px;margin-bottom:12px}
+  .tag.t2{color:#1f6f65;background:#e6f4f1}
+  .tag.t3{color:#8a5a11;background:#fdf0da}
+
+  .shot{background:#fff;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow)}
+  .shot img{width:100%;display:block}
+  .shot img.tall{max-height:520px;object-fit:contain;background:#fbf7f3}
+  .shot .bar{display:flex;align-items:center;gap:7px;padding:10px 14px;border-bottom:1px solid var(--line);background:#fdfbf9}
+  .shot .bar i{width:9px;height:9px;border-radius:50%;background:#e6ddd4;display:block}
+  .shot .bar span{margin-left:8px;font-size:12.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  .split{display:grid;grid-template-columns:1.15fr .85fr;gap:32px;align-items:center}
+  .split>*{min-width:0}
+  .arch-img{width:100%;border-radius:var(--r);border:1px solid var(--line);box-shadow:var(--shadow)}
+  ul.facts{margin:0;padding:0;list-style:none}
+  ul.facts li{padding:14px 0;border-bottom:1px dashed var(--line)}
+  ul.facts li:last-child{border-bottom:0}
+  ul.facts b{display:block;font-size:14.5px}
+  ul.facts span{color:var(--ink-2);font-size:13.5px}
+
+  pre{
+    background:#1c1d22;color:#e9e7e3;border-radius:14px;padding:18px 20px;overflow-x:auto;
+    font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.65;
+    margin:12px 0 0;max-width:100%
+  }
+  pre .c{color:#8f929a}
+  pre .k{color:#ffd48a}
+  .steps{display:grid;gap:18px}
+  .step{display:grid;grid-template-columns:36px 1fr;gap:14px}
+  .step>*{min-width:0}
+  .num{width:30px;height:30px;border-radius:50%;background:var(--coral-soft);color:#b8433a;
+    font-weight:800;display:flex;align-items:center;justify-content:center;font-size:14px}
+  .step h4{margin:2px 0 4px;font-size:15.5px}
+  .step p{margin:0;font-size:13.5px;color:var(--ink-2)}
+
+  .note{background:#fff;border:1px solid var(--line);border-left:4px solid var(--amber);
+    border-radius:12px;padding:16px 18px;font-size:14px;color:var(--ink-2)}
+  .note b{color:var(--ink)}
+
+  footer{border-top:1px solid var(--line);margin-top:20px;padding:34px 0 46px;color:var(--ink-3);font-size:13.5px}
+  footer .cols{display:flex;flex-wrap:wrap;gap:30px;justify-content:space-between}
+  footer a{color:var(--ink-2);text-decoration:none}
+  footer a:hover{color:var(--coral)}
+  @media (max-width:900px){
+    .hero{grid-template-columns:1fr;padding-top:40px;gap:28px}
+    h1{font-size:34px}
+    .g3,.g2,.split{grid-template-columns:1fr}
+    .nav a.navlink{display:none}
+    .float{width:104px;right:-6px;bottom:-12px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap nav">
+    <div class="mark"><span class="dot"></span>元气小小</div>
+    <div class="sp"></div>
+    <a class="navlink" href="#skills">能力</a>
+    <a class="navlink" href="#ui">界面</a>
+    <a class="navlink" href="#arch">架构</a>
+    <a class="navlink" href="#start">开始</a>
+    <a class="ghost" href="https://github.com/AllenD87/qibai" target="_blank" rel="noopener">GitHub ↗</a>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="hero">
+    <div>
+      <span class="kick">桌面 AI 伴侣 · Tauri 2 + 纯 Rust 核心</span>
+      <h1>住在你桌面角落的<br><em>AI 伴侣</em></h1>
+      <p class="sub">会聊天 · 听得懂 · 记得住 · 真动手。<br>本地优先，索引与语音都在本机，文本不出门。</p>
+      <div class="btns">
+        <a class="btn primary" href="https://github.com/AllenD87/qibai" target="_blank" rel="noopener">查看源码</a>
+        <a class="btn line" href="https://github.com/AllenD87/qibai/releases" target="_blank" rel="noopener">素材与模型（Release）</a>
+        <a class="btn line" href="https://weixin.qq.com/sph/AZdiIWOvIU" target="_blank" rel="noopener">看演示视频</a>
+      </div>
+      <div class="chips">
+        <span class="chip">Windows / macOS / Linux</span>
+        <span class="chip">656 个核心库测试</span>
+        <span class="chip">三平台 CI 全绿</span>
+        <span class="chip">MIT（代码）</span>
+      </div>
+    </div>
+    <div class="heroart">
+      <img src="images/demo-console.gif" alt="控制台：11 个页签一览">
+      <div class="caption">控制台 11 个页签：聊天 / 角色 / 亲密度 / 事件 / 设置 / 技能 / 代码检查 / 任务，点开都是真界面</div>
+    </div>
+  </div>
+
+  <section id="skills">
+    <h2>它不是「聊天窗口换个皮肤」</h2>
+    <p class="lead">聊天、听、记、动手这四件事，每一件背后都有独立的实现，而不是把 API 包一层弹窗。</p>
+    <div class="grid g3">
+      <div class="card">
+        <span class="tag">会聊天</span>
+        <h3>一个有状态的桌宠</h3>
+        <p>5 个角色各有形象、性格、亲密度与音色；表情与动作由模型的结构化输出驱动；久坐、喝水、护眼会主动冒出来提醒你。</p>
+      </div>
+      <div class="card">
+        <span class="tag t2">听得懂</span>
+        <h3>语音真的在本机跑</h3>
+        <p>本地 whisper 转写，音频不出本机；喊一句「小小」进免提，VAD 自动断句；支持双工打断，它说话时你能插话。</p>
+      </div>
+      <div class="card">
+        <span class="tag t3">真动手</span>
+        <h3>能替你把活干完</h3>
+        <p>14 个内置技能：建工程、读写文件、跑测试、查代码、搜网页、开应用；危险操作逐次确认，不确认就不执行。</p>
+      </div>
+      <div class="card">
+        <span class="tag t2">记得住</span>
+        <h3>上下文不爆，任务能续上</h3>
+        <p>四层上下文 + token 预算 + 自动压缩 + 快照；长任务先出计划、可暂停可恢复、按依赖图并行、跑歪了能从某一步重跑。</p>
+      </div>
+      <div class="card">
+        <span class="tag t3">能扩展</span>
+        <h3>能力从外面长进来</h3>
+        <p>技能包 zip 导入即装、专家插件换人设和工具白名单、标准 stdio MCP、以及控制台里一条配置就能加的自定义连接器。</p>
+      </div>
+      <div class="card">
+        <span class="tag">守边界</span>
+        <h3>默认关，越界拒绝</h3>
+        <p>文件操作只在白名单目录内；执行命令、写文件逐次批准并留痕；屏幕能力默认关闭，操作必须由你的语音或点击触发。</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>知识库：从「面板里能搜」到「对话里真的用上」</h2>
+    <p class="lead">目录级索引 + 分块 + BM25；再装一个 512 维本地向量模型，就升级成「关键词 + 语义」混合检索。</p>
+    <div class="split">
+      <div class="shot">
+        <div class="bar"><i></i><i></i><i></i><span>控制台 · 设置 · 知识库</span></div>
+        <img src="images/kb-context.png" alt="知识库面板：索引状态、混合检索权重与对话引用说明">
+      </div>
+      <ul class="facts">
+        <li><b>问「电脑很卡怎么办」</b><span>也能命中写着「机器运行越来越慢」的那一段——靠语义，不是靠字面。</span></li>
+        <li><b>索引建好就自动引用</b><span>对话时把命中片段带给模型；弱相关块被门限挡掉，不往上下文里掺水。</span></li>
+        <li><b>没装模型也照常用</b><span>纯 BM25 关键词检索，功能不倒退；模型约 91 MB，应用内一键下载。</span></li>
+        <li><b>全程不出本机</b><span>索引、向量化、检索都在本地跑，文本一个字节都不外传。</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="ui">
+    <h2>界面实录</h2>
+    <p class="lead">下面这些不是设计稿，是前端页面渲染录制出来的真界面。</p>
+    <div class="grid g2">
+      <div class="shot">
+        <div class="bar"><i></i><i></i><i></i><span>角色：点选即换人，立绘 / 性格 / 音色一起切</span></div>
+        <img src="images/demo-roles.gif" alt="角色切换演示">
+      </div>
+      <div class="shot">
+        <div class="bar"><i></i><i></i><i></i><span>技能与专家：能力逐项开关，危险能力「逐次批准」</span></div>
+        <img src="images/demo-skills.gif" alt="技能开关演示">
+      </div>
+    </div>
+    <div style="margin-top:16px" class="shot">
+      <div class="bar"><i></i><i></i><i></i><span>五个角色：古典 / 都市 / 温柔 / 活泼 / 热情时尚</span></div>
+      <img src="images/personas-all.png" alt="五个角色立绘">
+    </div>
+  </section>
+
+  <section id="arch">
+    <h2>技术架构</h2>
+    <p class="lead">外壳与内核彻底分离：业务逻辑全在一个无 GUI 依赖的 Rust crate 里，换壳不用重写。</p>
+    <img class="arch-img" src="images/architecture.png" alt="元气小小四层架构图">
+    <div class="grid g3" style="margin-top:20px">
+      <div class="card"><h3>纯 Rust 核心</h3><p><code>qibai-core</code> 零 GUI 依赖，656 个测试不需要图形环境就能跑完；今天接 Tauri，明天接 CLI 或服务端，逻辑一行不用改。</p></div>
+      <div class="card"><h3>一个状态源</h3><p>对话、任务、演出、窗口状态都在 engine 里，前端只读投影；不会有「两边各记一份」的漂移。</p></div>
+      <div class="card"><h3>默认最小出网</h3><p>MCP 默认配置为空 → 不启动任何子进程；只有你显式触发的对话才把必要文本发给 LLM，Key 由你提供。</p></div>
+    </div>
+  </section>
+
+  <section id="start">
+    <h2>快速开始</h2>
+    <p class="lead">仓库不含模型权重与美术帧（体积与许可双重原因），用脚本从上游官方 release 拉。</p>
+    <div class="steps">
+      <div class="step"><div class="num">1</div><div>
+        <h4>前置依赖</h4>
+        <p>Rust 1.75+ 与 Git；Linux 另需 webkit2gtk 4.1 等系统库，macOS 装 Xcode 命令行工具，Windows 用 MSVC 工具链。</p>
+      </div></div>
+      <div class="step"><div class="num">2</div><div>
+        <h4>补齐大资源</h4>
+        <p>模型、STT 二进制、五个角色的立绘与动作帧都不进仓库，两个脚本各管一边，幂等可重复跑。</p>
+<pre><span class="c"># 模型与语音二进制</span>
+bash fetch_resources.sh
+<span class="c"># 角色立绘与动作帧（3 个分卷 → md5 校验 → 拼接 → 解压）</span>
+bash fetch_personas.sh</pre>
+      </div></div>
+      <div class="step"><div class="num">3</div><div>
+        <h4>跑测试 / 构建</h4>
+<pre><span class="c"># 核心库单测</span>
+cargo test -p qibai-core
+<span class="c"># 构建</span>
+cd src-tauri &amp;&amp; <span class="k">cargo build --release</span>
+<span class="c"># 打包安装包（需 cargo-tauri）</span>
+cargo tauri build</pre>
+      </div></div>
+      <div class="step"><div class="num">4</div><div>
+        <h4>填 API Key</h4>
+        <p>首次启动进控制台 → 设置页填写 LLM API Key（默认对接豆包 Ark，也可换任意 OpenAI 兼容接口）。Key 只落本地，不进日志。</p>
+      </div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="note">
+      <b>隐私边界先说清楚：</b>对话、设置、记忆、任务全部存放在本地数据目录，不同步、不上传；出网的只有你显式触发的那次对话请求；
+      文件读写限制在白名单目录内，越界直接拒绝；危险操作未确认则不执行，并留痕。
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap cols">
+    <div>
+      <div class="mark" style="font-size:15px;margin-bottom:8px"><span class="dot"></span>元气小小 · Qibai</div>
+      <div>会聊天 · 听得懂 · 记得住 · 真动手</div>
+    </div>
+    <div>
+      <div><a href="https://github.com/AllenD87/qibai" target="_blank" rel="noopener">源码仓库</a> · <a href="https://github.com/AllenD87/qibai/releases" target="_blank" rel="noopener">Release</a> · <a href="https://github.com/AllenD87/qibai/actions" target="_blank" rel="noopener">CI 状态</a></div>
+      <div style="margin-top:6px"><a href="https://github.com/AllenD87/qibai/blob/main/LICENSE" target="_blank" rel="noopener">代码 MIT</a> · <a href="https://github.com/AllenD87/qibai/blob/main/docs/ASSETS.md" target="_blank" rel="noopener">素材授权</a> · <a href="https://github.com/AllenD87/qibai/blob/main/THIRD-PARTY-NOTICES.md" target="_blank" rel="noopener">第三方许可</a></div>
+    </div>
+    <div style="max-width:360px">
+      美术素材不适用 MIT，商用请联系作者；第三方组件适用其各自许可。本项目为全龄向内容。
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
