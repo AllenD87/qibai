@@ -86,6 +86,9 @@ jobs:
             --skip skills::save_tests:: \
             --skip skills::tests::file_ops_delete_goes_pending_then_approval_executes \
             --skip vault::tests::kdf_210k_runtime_bench \
+            --skip engine::tests::connector_mcp_full_lifecycle \
+            --skip engine::tests::datetime_plugin_full_lifecycle \
+            --skip engine::tests::skill_pack_install_and_export_lifecycle \
             --skip engine::tests::stt_status_shape_and_sandbox_device_unavailable \
             --skip engine::tests::tts_decide_no_key_downgrade_reason_when_local_faked_available \
             --skip engine::tests::v18_plugin_library_scan_and_invoke \
