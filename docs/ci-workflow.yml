@@ -1,0 +1,93 @@
+# 说明：GitHub 限制「未带 workflow 权限的 token」推送 .github/workflows/ 下的文件，
+# 因此本仓库首推时把 CI 配置放在这里。启用方式：
+#   mkdir -p .github/workflows && cp docs/ci-workflow.yml .github/workflows/ci.yml
+#   git add .github/workflows/ci.yml && git commit -m "ci: enable" && git push
+# =============================================================================
+# 元气小小 Qibai — CI（持续集成）工作流
+# -----------------------------------------------------------------------------
+# 触发条件：push 到任意分支 / 任意 pull_request
+# 矩阵：    ubuntu-latest / windows-latest / macos-latest
+# 职责：    跑 qibai-core 单测（保持 648 条基线只增不减）+ server 单测
+#           不产物、不签名、不发布、不依赖任何 secret
+# 备注：    ubuntu-latest 当前为 24.04，WebKitGTK 4.1 包名 libwebkit2gtk-4.1-dev
+#           已对照 Tauri 2 官方前置依赖核实。
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# 本工作流不需要写权限，默认只读 token 即可
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (${{ matrix.platform }})
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false        # 一个平台失败不中断其他平台，便于一次看完三平台结果
+      matrix:
+        platform:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+
+    steps:
+      # 1) 拉取源码
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2) Node 22（server/package.json engines 要求 >=22.5）
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # 3) Rust 工具链（stable + rustfmt/clippy 可选组件，供后续静态检查扩展）
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # 4) Linux 系统依赖（仅 ubuntu；windows/macos 自带图形/webkit 栈）
+      #    包名按 Ubuntu 24.04 + Tauri 2 要求；libfuse2 用于 AppImage 运行时（CI 不打 AppImage，
+      #    但装上避免后续 release 工作流漏装）
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libfuse2
+
+      # 5) qibai-core 纯 Rust 核心库单测（与 GUI/Tauri 解耦，三平台均可跑）
+      - name: qibai-core cargo test
+        working-directory: qibai-core
+        run: cargo test --locked --verbose
+
+      # 6) server 单测（npm ci 严格按 lockfile 安装；node --test 跑 src/test/*.test.js）
+      - name: server npm ci & npm test
+        working-directory: server
+        run: |
+          npm ci
+          npm test
+
+      # 7) 前端静态资源存在性冒烟（src/ 为 frontendDist；不做打包，仅确认三个入口在）
+      #    注：本工程无 index.html（早期迭代已删除），实际入口为 console/pet/smoke 三个 html。
+      - name: Frontend smoke check
+        shell: bash
+        run: |
+          set -e
+          test -f src/console.html && echo ">> src/console.html OK"
+          test -f src/pet.html     && echo ">> src/pet.html OK"
+          test -f src/smoke.html   && echo ">> src/smoke.html OK"
+          node --check src/console.js    && echo ">> src/console.js syntax OK"
+          node --check server/src/server.js && echo ">> server/src/server.js syntax OK"

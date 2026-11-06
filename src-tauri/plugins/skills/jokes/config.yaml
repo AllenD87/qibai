@@ -1,0 +1,11 @@
+name: 冷笑话
+version: 1.0.0
+description: 本地词库冷笑话（谐音/文字游戏/反转三类，全龄无伤害，safe-mode）
+triggers:
+  - 讲个笑话
+  - 冷笑话
+  - 来段子
+  - 逗我笑
+  - 讲个段子
+  - 开心一下
+category: 生活娱乐

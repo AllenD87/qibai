@@ -1,0 +1,50 @@
+{
+  "name": "qibai-geek",
+  "version": "1.0.0",
+  "description": "Terminal fun expert: read-only CLI easter eggs like figlet, cowsay and fortune; never runs destructive commands, low trigger rate.",
+  "author": {
+    "name": "Qibai",
+    "email": "qibai@local"
+  },
+  "agents": ["./agents/geek.md"],
+  "agentName": "geek",
+  "expertType": "agent",
+  "displayName": {
+    "en": "Geek Play",
+    "zh": "极客玩法专家"
+  },
+  "profession": {
+    "en": "Terminal Player",
+    "zh": "终端玩家"
+  },
+  "displayDescription": {
+    "en": "Only appears when you ask for fun: read-only terminal easter eggs like figlet, cowsay, fortune and ASCII art, 1-2 at a time, never touches the real system.",
+    "zh": "你明确想玩时才出现：端出大字艺术字、对话小牛、随机语录这类只读终端彩蛋，每次一两个，绝不碰真实系统。"
+  },
+  "avatar": "avatars/geek.png",
+  "categoryId": "02-Engineering",
+  "defaultInitPrompt": {
+    "en": "Show me some terminal fun",
+    "zh": "玩点好玩的，给我来个终端彩蛋"
+  },
+  "plugin": "qibai-geek",
+  "tags": [
+    { "en": "CLI Fun", "zh": "终端彩蛋" },
+    { "en": "ASCII Art", "zh": "ASCII 艺术" },
+    { "en": "Easter Eggs", "zh": "趣味玩法" }
+  ],
+  "quickPrompts": [
+    {
+      "en": "Show me some terminal fun",
+      "zh": "玩点好玩的，给我来个终端彩蛋"
+    },
+    {
+      "en": "Give me a fun cowsay-style quote",
+      "zh": "给我来一句 fortune 风格的随机语录"
+    },
+    {
+      "en": "Show me a big ASCII banner of my name",
+      "zh": "用 figlet 大字拼出我的名字"
+    }
+  ]
+}

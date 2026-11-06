@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>元气小小 · 双窗口冒烟 harness</title>
+<!--
+  元气小小双窗口架构 · 浏览器 mock 演示 harness（src/smoke.html）
+  --------------------------------------------------------------
+  用途：在单页内用三个 iframe 槽模拟「独立窗口」：
+    · pet-gudian  桌宠窗（常挂）
+    · pet-huopo   桌宠窗（随 desk-changed 挂载/卸载）
+    · console     控制台窗（随 console-open 事件挂载/卸载）
+  所有按钮一律经 QibaiBridge.invoke 驱动（file:// 跨文档不可脚本化，
+  iframe 内部只能靠 mock 跨窗口总线广播的 qibai:// 事件来演出）。
+  契约：docs/WINDOW_ARCH.md §7/§8。
+-->
+<style>
+  :root{
+    --pink-bg:#FFF6FA; --pink-line:#FBD3E4; --pink-main:#D17397;
+    --pink-deep:#B05A80; --ink:#5A4A56; --muted:#A98FA0;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    background:var(--pink-bg);color:var(--ink);padding:16px;
+  }
+  h1{font-size:18px;margin:0 0 4px;color:var(--pink-deep)}
+  .desc{font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.6}
+  .bar{
+    display:flex;flex-wrap:wrap;gap:10px;align-items:center;
+    background:#fff;border:1px solid var(--pink-line);border-radius:12px;
+    padding:10px 12px;margin-bottom:10px;
+  }
+  .bar button{
+    min-height:44px;padding:0 16px;border-radius:10px;cursor:pointer;
+    border:1.5px solid var(--pink-line);background:#fff;color:var(--pink-deep);
+    font-size:14px;font-family:inherit;
+  }
+  .bar button.primary{background:var(--pink-main);border-color:var(--pink-main);color:#fff}
+  .bar button:disabled{opacity:.45;cursor:not-allowed}
+  .status{font-size:12px;color:var(--muted);padding:2px 4px 12px;line-height:1.7}
+  .status b{color:var(--pink-deep);font-weight:600}
+  .stage{display:flex;gap:18px;align-items:flex-start}
+  .slot{display:flex;flex-direction:column;gap:6px;flex:none}
+  .slot-label{font-size:12px;color:var(--muted)}
+  .frame{
+    border:1.5px solid var(--pink-line);border-radius:10px;
+    overflow:hidden;background:#fff;position:relative;
+  }
+  .frame iframe{display:block;border:none}
+  .placeholder{
+    border:1.5px dashed var(--pink-line);border-radius:10px;
+    background:rgba(255,255,255,.6);display:flex;align-items:center;
+    justify-content:center;color:var(--muted);font-size:12px;text-align:center;
+    line-height:1.7;
+  }
+</style>
+</head>
+<body>
+
+<h1>元气小小双窗口架构 · 浏览器 mock 演示（iframe 模拟独立窗口）</h1>
+<p class="desc">
+  桌宠窗（pet-gudian / pet-huopo）与控制台窗（console）在真实 Tauri 里是各自独立的原生窗口；
+  本 harness 用同页 iframe 槽模拟它们的生命周期——按钮全部走 QibaiBridge.invoke，
+  跨窗演出经 mock 总线（localStorage + storage 事件 + 400ms 轮询兜底）广播 qibai:// 事件。
+</p>
+
+<div class="bar" id="bar">
+  <button type="button" id="btnOpenConsole" class="primary">打开控制台</button>
+  <button type="button" id="btnCloseConsole">关闭控制台</button>
+  <button type="button" id="btnSummon">召唤火火</button>
+  <button type="button" id="btnDismiss">送走火火</button>
+  <button type="button" id="btnGreet">串门寒暄</button>
+  <button type="button" id="btnPk">猜拳一局</button>
+  <button type="button" id="btnIntiUp">亲密度升级演示</button>
+  <button type="button" id="btnSwitch">切换主角色为都市女性</button>
+  <button type="button" id="btnGuardTrigger" class="primary">触发守护演出</button>
+  <button type="button" id="btnGuardSkip">跳过演出</button>
+  <button type="button" id="btnGuardAction">模拟收尾（锁屏）</button>
+  <button type="button" id="btnCcBad">检查坏代码</button>
+  <button type="button" id="btnCcHealthy">检查健康代码</button>
+  <button type="button" id="btnCcChat">对话触发演示</button>
+  <button type="button" id="btnVoiceSpeak" class="primary">朗读一句</button>
+  <button type="button" id="btnVoiceStatus">语音状态</button>
+  <button type="button" id="btnVoiceSettings">打开语音设置</button>
+  <!-- 迭代⑤：每角色专属音色冒烟 -->
+  <button type="button" id="btnVoiceCards" class="primary">①音色卡片(打开控制台设置)</button>
+  <button type="button" id="btnVoiceSwitch">②切主角为活泼+音色联动</button>
+  <button type="button" id="btnVoiceDegrade">③降级提示(设云端speaker)</button>
+  <button type="button" id="btnReset">重置演示状态</button>
+</div>
+
+<div class="status" id="status">正在读取桌面状态…</div>
+
+<div class="stage">
+  <!-- 桌宠窗 1：古典佳人（常挂，契约 §8.1） -->
+  <div class="slot">
+    <div class="slot-label">桌宠窗 · pet-gudian（主角色 · 常挂）</div>
+    <div class="frame" style="width:220px;height:260px">
+      <iframe id="iframeGudian" src="pet.html?persona=gudian"
+              style="width:220px;height:260px" title="pet-gudian"></iframe>
+    </div>
+  </div>
+
+  <!-- 桌宠窗 2：活泼（随 desk-changed 挂载/卸载） -->
+  <div class="slot">
+    <div class="slot-label">桌宠窗 · pet-huopo（客人 · 召唤上桌后出现）</div>
+    <div id="huopoSlot" style="width:220px;height:260px"></div>
+  </div>
+
+  <!-- 控制台窗（随 console-open 挂载/卸载） -->
+  <div class="slot">
+    <div class="slot-label">控制台窗 · console（按需呼出，可关闭）</div>
+    <div id="consoleSlot" style="width:391px;height:578px"></div>
+  </div>
+
+  <!-- 全屏守护演出槽（随 guard-start 挂载 / guard-end 卸载） -->
+  <div class="slot">
+    <div class="slot-label">守护演出 · guard（随 qibai://guard-start 展开 / guard-end 收起）</div>
+    <div id="guardSlot" style="width:680px;height:430px"></div>
+  </div>
+</div>
+
+<script>window.__qibaiWindowLabel = 'harness';</script>
+<script src="tauri-bridge.js?v=2"></script>
+<script>
+(function () {
+  'use strict';
+
+  var consoleOpen = false;
+  var desk = { present: ['gudian'], locked: {} };
+  var huopoMounted = false;
+  var guardMounted = false;
+  var CONSOLE_SRC = 'console.html?x=1#tab=intimacy'; // 亲密度 tab 直达
+
+  var $ = function (id) { return document.getElementById(id); };
+  /* ---------- iframe 槽挂载/卸载（只改 DOM，不碰 iframe 内部） ---------- */
+  function mountHuopo() {
+    if (huopoMounted) return;
+    $('huopoSlot').innerHTML =
+      '<div class="frame" style="width:220px;height:260px">' +
+      '<iframe src="pet.html?persona=huopo" style="width:220px;height:260px" title="pet-huopo"></iframe>' +
+      '</div>';
+    huopoMounted = true;
+  }
+  function unmountHuopo() {
+    if (!huopoMounted) return;
+    $('huopoSlot').innerHTML =
+      '<div class="placeholder" style="width:220px;height:260px">桌宠窗已卸载<br>（火火已被送走）</div>';
+    huopoMounted = false;
+  }
+  function mountConsole(src) {
+    $('consoleSlot').innerHTML =
+      '<div class="frame" style="width:391px;height:578px">' +
+      '<iframe src="' + (src || CONSOLE_SRC) + '" style="width:460px;height:680px;' +
+      'transform:scale(0.85);transform-origin:0 0" title="console"></iframe>' +
+      '</div>';
+  }
+  function unmountConsole() {
+    $('consoleSlot').innerHTML =
+      '<div class="placeholder" style="width:391px;height:578px">控制台窗已关闭<br>（关闭不影响任何桌宠窗）</div>';
+  }
+  // 守护演出槽：guard-start 挂载 guard.html（待机→演出全在 iframe 内）
+  function mountGuard() {
+    if (guardMounted) return;
+    $('guardSlot').innerHTML =
+      '<div class="frame" style="width:680px;height:430px">' +
+      '<iframe src="guard.html" style="width:680px;height:430px" title="guard"></iframe>' +
+      '</div>';
+    guardMounted = true;
+  }
+  function unmountGuard() {
+    if (!guardMounted) return;
+    $('guardSlot').innerHTML =
+      '<div class="placeholder" style="width:680px;height:430px">守护演出槽未激活<br>（点「触发守护演出」后这里展开全屏演出）</div>';
+    guardMounted = false;
+  }
+
+  /* ---------- 状态渲染 ---------- */
+  function renderSlots() {
+    var hasHuopo = desk.present.indexOf('huopo') !== -1;
+    if (hasHuopo) mountHuopo(); else unmountHuopo();
+  }
+  function refreshButtons() {
+    var hasHuopo = desk.present.indexOf('huopo') !== -1;
+    $('btnSummon').disabled = hasHuopo;
+    $('btnDismiss').disabled = !hasHuopo;
+    $('btnCloseConsole').disabled = !consoleOpen;
+    $('btnOpenConsole').disabled = consoleOpen;
+    $('btnGreet').disabled = !hasHuopo;
+    $('btnPk').disabled = !hasHuopo;
+    $('status').innerHTML =
+      'desk.present = <b>[' + desk.present.join(', ') + ']</b>　' +
+      'consoleOpen = <b>' + consoleOpen + '</b>　' +
+      '（后端 qibai-core 为唯一状态源，mock 下由 localStorage 持久化）';
+  }
+
+  /* ---------- 跨窗口总线监听（契约 §5/§7） ---------- */
+  QibaiBridge.listen('qibai://desk-changed', function (ev) {
+    var p = (ev && ev.payload) || {};
+    if (Array.isArray(p.present)) desk.present = p.present.slice();
+    if (p.locked) desk.locked = p.locked;
+    renderSlots(); refreshButtons();
+  });
+
+  QibaiBridge.listen('qibai://console-open', function () {
+    consoleOpen = true;
+    mountConsole();
+    refreshButtons();
+  });
+
+  // 迭代①·守护演出生命周期：start 挂载槽位 / end 收起（参照 console 槽模式）
+  QibaiBridge.listen('qibai://guard-start', function () {
+    mountGuard();
+  });
+  QibaiBridge.listen('qibai://guard-end', function () {
+    unmountGuard();
+  });
+
+  /* ---------- 控制条：一律 invoke，不直接操纵 iframe ---------- */
+  $('btnOpenConsole').onclick = function () { QibaiBridge.invoke('console_open'); };
+  $('btnCloseConsole').onclick = function () {
+    // mock：隐藏 iframe + 置标志（真机由后端关窗；桌宠不受影响）
+    consoleOpen = false;
+    unmountConsole();
+    refreshButtons();
+  };
+  $('btnSummon').onclick = function () {
+    QibaiBridge.invoke('pet_summon', { persona_id: 'huopo' });
+  };
+  $('btnDismiss').onclick = function () {
+    QibaiBridge.invoke('pet_dismiss', { persona_id: 'huopo' });
+  };
+  $('btnGreet').onclick = function () {
+    QibaiBridge.invoke('social_greet', { from: 'huopo', to: 'gudian' });
+  };
+  $('btnPk').onclick = function () {
+    QibaiBridge.invoke('social_pk', { a: 'gudian', b: 'huopo', move_a: 'scissors', move_b: 'rock' });
+  };
+  // 亲密度升级演示（浏览器 mock 专用 dev 触发，真机由 qibai-core 事件驱动）：
+  // seed('huopo') 至 L6 阈值 → qibai://intimacy-updated(leveled_up) → 控制台 iframe 播升级动画+banner
+  $('btnIntiUp').onclick = function () {
+    if (window.__qibaiMock && window.__qibaiMock.intimacy) {
+      window.__qibaiMock.intimacy.seed(6, 'dushi');
+    } else {
+      QibaiBridge.invoke('intimacy_event', { persona_id: 'huopo', kind: 'chat' }).then(function (r) {
+        if (r && !r.leveled_up) {
+          // 降级：循环 chat 直至升级（上限 100 次）
+          var i = 0;
+          var next = function () {
+            if (i++ > 100) return;
+            QibaiBridge.invoke('intimacy_event', { persona_id: 'huopo', kind: 'chat' }).then(function (rr) {
+              if (!rr || !rr.leveled_up) next();
+            });
+          };
+          next();
+        }
+      });
+    }
+  };
+  $('btnSwitch').onclick = function () {
+    QibaiBridge.invoke('set_active_persona', { persona_id: 'dushi' });
+  };
+  // 迭代①·守护演出：全部走 invoke/广播，不直接操纵 iframe 内部
+  $('btnGuardTrigger').onclick = function () {
+    QibaiBridge.invoke('guard_trigger').catch(function (e) {
+      alert('guard_trigger 被拒绝：' + (e && e.message ? e.message : e));
+    });
+  };
+  $('btnGuardSkip').onclick = function () {
+    QibaiBridge.invoke('guard_skip', { reason: 'user' });
+  };
+  $('btnGuardAction').onclick = function () {
+    QibaiBridge.invoke('guard_system_action', { action: 'lock' });
+  };
+  // 迭代①·代码检查演示：先确保控制台槽挂载，再广播让控制台页自行 invoke 渲染
+  $('btnCcBad').onclick = function () {
+    QibaiBridge.invoke('console_open');
+    setTimeout(function () {
+      QibaiBridge.broadcast('qibai://codecheck-run', { path: 'qibai-core/tests/fixtures/bad.js' });
+    }, 300);
+  };
+  $('btnCcHealthy').onclick = function () {
+    QibaiBridge.invoke('console_open');
+    setTimeout(function () {
+      QibaiBridge.broadcast('qibai://codecheck-run', { path: 'qibai-core/tests/fixtures/healthy.js' });
+    }, 300);
+  };
+  $('btnCcChat').onclick = function () {
+    QibaiBridge.invoke('console_open');
+    setTimeout(function () {
+      QibaiBridge.broadcast('qibai://codecheck-chat-demo', {});
+    }, 300);
+  };
+
+  // 迭代②·语音控制条（§4.5）：全部走 QibaiBridge.invoke
+  $('btnVoiceSpeak').onclick = function () {
+    QibaiBridge.invoke('tts_speak', {
+      text: '今天的风很温柔，你要好好照顾自己呀～',
+      kind: 'chat',
+    }).then(function (r) {
+      $('status').innerHTML =
+        'tts_speak → <b>' + (r && r.engine) + '</b>　played=' + (r && r.played) +
+        '　' + ((r && r.detail) || (r && r.reason) || '') +
+        '　（桌宠气泡应出现朗读脉冲）';
+    }).catch(function (e) {
+      $('status').textContent = 'tts_speak 失败：' + (e && e.message ? e.message : e);
+    });
+  };
+  $('btnVoiceStatus').onclick = function () {
+    Promise.all([
+      QibaiBridge.invoke('tts_engine_status'),
+      QibaiBridge.invoke('stt_status'),
+    ]).then(function (rs) {
+      var t = rs[0], s = rs[1];
+      $('status').innerHTML =
+        'TTS resolved = <b>' + (t && t.resolved && t.resolved.engine) + '</b>　' +
+        (t && t.resolved && t.resolved.reason) +
+        '（local_available=' + (t && t.local_available) +
+        '，cloud_ready=' + (t && t.cloud_ready) + '）　' +
+        'STT = <b>' + (s && s.available ? '可用' : '不可用') + '</b>　' +
+        (s && s.reason);
+    }).catch(function (e) {
+      $('status').textContent = '语音状态读取失败：' + (e && e.message ? e.message : e);
+    });
+  };
+  $('btnVoiceSettings').onclick = function () {
+    // console_open + hash 直达设置 tab（重挂控制台 iframe 为 settings）
+    consoleOpen = true;
+    mountConsole('console.html?x=1#tab=settings');
+    refreshButtons();
+  };
+
+  // ---- 迭代⑤：每角色专属音色冒烟 ----
+  // ①音色卡片：打开控制台设置 tab（语音卡内 5 张角色音色卡，含标签 chip / 降级提示）
+  $('btnVoiceCards').onclick = function () {
+    consoleOpen = true;
+    mountConsole('console.html?x=1#tab=settings');
+    refreshButtons();
+    $('status').textContent = '已打开控制台·设置 tab：向下滚动到「语音」卡内「角色音色」，应见 5 张角色音色卡（标签 chip / 模式 / 音高语速滑块 / 两个文本框 / 保存按钮）。';
+  };
+
+  // ②角色切换音色联动：切主角色为活泼(huopo) → pet-huopo 窗标签变「元气 · 轻快 · 偏高」
+  //    → tts_speak 广播带新 voice_tag / pitch
+  $('btnVoiceSwitch').onclick = function () {
+    QibaiBridge.invoke('set_active_persona', { persona_id: 'huopo' }).then(function () {
+      return QibaiBridge.invoke('tts_speak', {
+        text: '切换到活泼啦，今天也要元气满满哦！',
+        kind: 'chat',
+        persona_id: 'huopo',
+      });
+    }).then(function (r) {
+      $('status').innerHTML =
+        'set_active_persona(huopo) 完成 → tts_speak(persona_id=huopo) → <b>' + (r && r.engine) + '</b>' +
+        '　voice_tag=<b>' + (r && r.voice_tag) + '</b>' +
+        '　pitch=' + (r && r.pitch) +
+        '　rate(eff)=' + (r && r.rate) +
+        '　cloud_speaker=' + (r && r.cloud_speaker) +
+        '　（pet-huopo 窗顶部 chip 应显示「元气 · 轻快 · 偏高」）';
+    }).catch(function (e) {
+      $('status').textContent = '音色联动冒烟失败：' + (e && e.message ? e.message : e);
+    });
+  };
+
+  // ③降级提示：给 reqing 角色设一个云端 speaker（无 key 环境）→ 该卡显示
+  //    「云端音色「…」未配置 key，当前用本地音色」。随后打开控制台设置查看。
+  $('btnVoiceDegrade').onclick = function () {
+    QibaiBridge.invoke('set_persona_voice', {
+      persona_id: 'reqing',
+      voice_profile: {
+        mode: 'custom', pitch: 2, rate: 1.05,
+        engine_voice_id: '', cloud_speaker: 'ICL_zh_female_reqingaina_cs_tob',
+      },
+    }).then(function () {
+      consoleOpen = true;
+      mountConsole('console.html?x=1#tab=settings');
+      refreshButtons();
+      $('status').textContent = '已 set_persona_voice(reqing, custom + 云端 speaker) 并重开控制台设置：无 key 环境下该卡应显示「云端音色「ICL_zh_female_reqingaina_cs_tob」未配置 key，当前用本地音色」。';
+    }).catch(function (e) {
+      $('status').textContent = '降级提示冒烟失败：' + (e && e.message ? e.message : e);
+    });
+  };
+
+  $('btnReset').onclick = function () {
+    Object.keys(localStorage).forEach(function (k) {
+      if (k.indexOf('qibai.mock') === 0) localStorage.removeItem(k);
+    });
+    location.reload();
+  };
+
+  /* ---------- 启动：与 desk 状态对齐 ---------- */
+  function init() {
+    unmountConsole(); // 初始：控制台槽隐藏（截图 dualwin_console_closed）
+    // 初始：huopo 槽占位（unmountHuopo 仅在已挂载时才插占位，这里手动初始化）
+    $('huopoSlot').innerHTML =
+      '<div class="placeholder" style="width:220px;height:260px">桌宠窗未出现<br>（火火未召唤上桌）</div>';
+    // 初始：守护槽占位
+    $('guardSlot').innerHTML =
+      '<div class="placeholder" style="width:680px;height:430px">守护演出槽未激活<br>（点「触发守护演出」后这里展开全屏演出）</div>';
+    QibaiBridge.invoke('get_desk_state').then(function (d) {
+      if (d && Array.isArray(d.present)) desk = d;
+      renderSlots(); refreshButtons();
+    }).catch(function () {
+      renderSlots(); refreshButtons();
+    });
+
+    // 确定性 hash 模式（契约 §8.1；GUI 浏览器剥离 fragment 时自动退化）：
+    //   #mode=dual  → 召唤火火 + 打开控制台
+    //   #mode=pk    → dual + 自动执行一局猜拳
+    //   #mode=greet → dual + 自动串门寒暄
+    //   #mode=inti  → dual + 自动亲密度升级演示（控制台播升级动画+banner）
+    //   #mode=voice-chat    → 控制台聊天页自动发一句（回复朗读 + ♪ 指示 + 桌宠脉冲）
+    //   #mode=voice-reminder → 提醒 overlay + reminder 类朗读广播（气泡脉冲）
+    var m = /mode=([a-z-]+)/.exec(location.hash || '');
+    if (m) {
+      var mode = m[1];
+      setTimeout(function () {
+        if (mode === 'dual' || mode === 'pk' || mode === 'greet' || mode === 'inti') {
+          QibaiBridge.invoke('pet_summon', { persona_id: 'huopo' });
+          QibaiBridge.invoke('console_open');
+          setTimeout(function () {
+            if (mode === 'pk') {
+              QibaiBridge.invoke('social_pk', { a: 'gudian', b: 'huopo', move_a: 'scissors', move_b: 'rock' });
+            } else if (mode === 'greet') {
+              QibaiBridge.invoke('social_greet', { from: 'huopo', to: 'gudian' });
+            } else if (mode === 'inti' && window.__qibaiMock && window.__qibaiMock.intimacy) {
+              window.__qibaiMock.intimacy.seed(6, 'dushi');
+            }
+          }, 800);
+        } else if (mode === 'voice-chat') {
+          consoleOpen = true;
+          mountConsole('console.html?x=1#tab=chat');
+          refreshButtons();
+          setTimeout(function () {
+            QibaiBridge.broadcast('qibai://voice-chat-demo', {});
+          }, 1400);
+        } else if (mode === 'voice-reminder') {
+          var msg = '坐久啦，站起来活动一下吧～';
+          QibaiBridge.broadcast('qibai://reminder', { type: 'sit', action: 'stretch', message: msg });
+          QibaiBridge.invoke('tts_speak', { text: msg, kind: 'reminder' });
+        }
+      }, 400);
+    }
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

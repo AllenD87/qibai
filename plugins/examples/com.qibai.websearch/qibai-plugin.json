@@ -1,0 +1,29 @@
+{
+  "id": "com.qibai.websearch",
+  "type": "skill",
+  "name": "联网搜索",
+  "description": "搜索互联网获取实时/最新信息（示例包；实际由内置技能执行）",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": ["network:http"],
+  "entry": {
+    "kind": "command",
+    "command": "scripts/search.sh"
+  },
+  "functions": [
+    {
+      "name": "web_search",
+      "description": "搜索互联网获取实时/最新信息（新闻/天气/百科/知识等）。用户问实时、最新、不知道需要查证的事情时调用",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "搜索关键词，不超过 200 字"
+          }
+        },
+        "required": ["query"]
+      }
+    }
+  ]
+}

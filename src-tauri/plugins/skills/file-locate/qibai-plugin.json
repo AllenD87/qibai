@@ -1,0 +1,1 @@
+{"id":"com.qibai.skill.filelocate","type":"skill","name":"文件查找","version":"1.0.0","description":"在用户目录下按文件名关键词查找文件（只读）","entry":{"kind":"command","command":"locate.sh"},"functions":[{"name":"file_locate","description":"按文件名关键词查找文件"}]}

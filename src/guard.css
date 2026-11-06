@@ -1,0 +1,270 @@
+/* ============================================================
+ * 元气小小 Qibai — 全屏守护演出页 guard.css
+ * 沿用工程粉色系（与 styles.css 同值），演出舞台用深色氛围背景。
+ * 窄屏先行，桌面端在 @media (min-width: 768px) 扩展。
+ * ============================================================ */
+
+:root {
+  --pink-bg:    #FFF6FA;
+  --pink-line:  #FBD3E4;
+  --pink-main:  #D17397;
+  --pink-deep:  #B05A80;
+  --ink:        #5A4A56;
+  --muted:      #A98FA0;
+  --stage-a:    #2B1F27;
+  --stage-b:    #171016;
+  --white:      #FFFFFF;
+  --ok:         #7FBF9E;
+  --font-stack: -apple-system, BlinkMacSystemFont, "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: var(--font-stack);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.6;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+button { font-family: inherit; cursor: pointer; }
+
+/* ================= 待机态 ================= */
+.standby {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background:
+    radial-gradient(900px 480px at 18% -8%, #FFE9F1 0%, transparent 60%),
+    radial-gradient(800px 420px at 92% 108%, #FBD3E4 0%, transparent 55%),
+    linear-gradient(160deg, var(--pink-bg) 0%, #FBEFF5 100%);
+}
+.standby-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--white);
+  border: 1px solid var(--pink-line);
+  border-radius: 24px;
+  box-shadow: 0 12px 36px rgba(209, 115, 151, 0.16);
+  padding: 32px 24px;
+  text-align: center;
+}
+.standby-badge {
+  width: 56px; height: 56px;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--pink-deep);
+  background: var(--pink-bg);
+  border: 1px solid var(--pink-line);
+}
+.standby-title { font-size: 20px; font-weight: 700; color: var(--ink); }
+.standby-desc { margin-top: 8px; color: var(--muted); }
+.standby-status {
+  margin-top: 18px;
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--ink);
+  background: var(--pink-bg);
+  border: 1px solid var(--pink-line);
+  border-radius: 999px;
+  padding: 6px 14px;
+}
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--ok);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+.demo-btn {
+  margin-top: 22px;
+  width: 100%;
+  min-height: 48px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  border: none; border-radius: 14px;
+  background: var(--pink-main); color: var(--white);
+  font-size: 15px; font-weight: 600;
+  transition: background .15s ease, transform .15s ease;
+}
+.demo-btn:hover { background: var(--pink-deep); }
+.demo-btn:active { transform: scale(.98); }
+.exit-btn {
+  margin-top: 10px;
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--pink-main); border-radius: 14px;
+  background: transparent; color: var(--pink-main);
+  font-size: 14px; font-weight: 600;
+  transition: background .15s ease, color .15s ease;
+}
+.exit-btn:hover { background: var(--pink-soft, rgba(209,115,151,.12)); }
+.exit-btn:active { transform: scale(.98); }
+.standby-note { margin-top: 14px; font-size: 12px; color: var(--muted); }
+
+/* ================= 演出舞台 ================= */
+.stage {
+  position: fixed; inset: 0;
+  overflow: hidden;
+  background: linear-gradient(165deg, var(--stage-a) 0%, var(--stage-b) 100%);
+}
+
+/* 底图：截图 data URL 整屏铺底；无截图时 CSS 模拟桌面 */
+.desktop {
+  position: absolute; inset: 0;
+  background: linear-gradient(150deg, #3D2B38 0%, #241A22 60%, #1B1319 100%);
+  background-size: cover;
+  background-position: center;
+  opacity: .9;
+}
+.desktop.has-shot { background-size: cover; opacity: 1; }
+.fake-win {
+  position: absolute;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.07);
+}
+.fake-win-a { width: 46%; height: 34%; left: 8%; top: 12%; }
+.fake-win-b { width: 30%; height: 26%; right: 10%; top: 20%; }
+.fake-win-c { width: 38%; height: 22%; left: 22%; bottom: 10%; }
+.fake-win-tag {
+  position: absolute; left: 14px; bottom: 12px;
+  font-size: 11px; color: rgba(255,255,255,.45);
+  letter-spacing: .04em;
+}
+
+/* 碎裂特效画布：铺满舞台 */
+.fx {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  transition: opacity .5s ease;
+}
+.fx.done { opacity: 0; }
+
+/* 伴侣：从下方弹出 */
+.persona-wrap {
+  position: absolute;
+  left: 50%; bottom: 14%;
+  transform: translateX(-50%);
+  display: flex; align-items: flex-end; justify-content: center;
+  animation: persona-pop .55s cubic-bezier(.2,.9,.3,1.2) both;
+}
+@keyframes persona-pop {
+  from { transform: translateX(-50%) translateY(60px); opacity: 0; }
+  to   { transform: translateX(-50%) translateY(0);    opacity: 1; }
+}
+.persona {
+  height: min(46vh, 320px);
+  width: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 10px 24px rgba(0,0,0,.45));
+}
+.persona-fallback svg { display: block; }
+
+/* 气泡 */
+.bubble {
+  position: absolute;
+  left: 50%; bottom: calc(14% + min(46vh, 320px) + 18px);
+  transform: translateX(-50%);
+  max-width: min(86vw, 480px);
+  background: var(--pink-bg);
+  border: 1px solid var(--pink-line);
+  border-radius: 18px;
+  padding: 14px 18px;
+  font-size: 16px; font-weight: 600; color: var(--ink);
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0,0,0,.35);
+  animation: bubble-in .45s ease both;
+}
+.bubble::after {
+  content: "";
+  position: absolute; left: 50%; bottom: -8px;
+  transform: translateX(-50%);
+  border: 8px solid transparent;
+  border-top-color: var(--pink-line);
+}
+@keyframes bubble-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* Toast：系统动作结果 */
+.toast {
+  position: absolute; left: 50%; bottom: 96px;
+  transform: translateX(-50%);
+  max-width: min(86vw, 420px);
+  background: rgba(30, 20, 26, .92);
+  border: 1px solid var(--pink-line);
+  color: var(--pink-bg);
+  border-radius: 14px;
+  padding: 12px 18px;
+  font-size: 14px; text-align: center;
+  animation: bubble-in .35s ease both;
+}
+
+/* 倒计时遮罩 */
+.countdown {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(20, 13, 18, .82);
+  animation: fade-in .3s ease both;
+}
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+.countdown-card {
+  text-align: center; color: var(--pink-bg);
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+}
+.countdown-card svg { color: var(--pink-main); }
+.countdown-num {
+  font-size: clamp(48px, 12vw, 88px);
+  font-weight: 700; letter-spacing: .04em;
+  color: var(--white);
+  font-variant-numeric: tabular-nums;
+}
+.countdown-desc { color: var(--pink-line); font-size: 15px; }
+
+/* 跳过按钮：常驻右下，热区 ≥44px */
+.skip-btn {
+  position: absolute; right: 18px; bottom: 18px;
+  min-width: 96px; min-height: 48px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: 1px solid var(--pink-line);
+  background: rgba(30, 20, 26, .72);
+  color: var(--pink-line);
+  font-size: 14px; font-weight: 600;
+  backdrop-filter: blur(6px);
+  transition: background .15s ease, color .15s ease;
+}
+.skip-btn:hover { background: var(--pink-main); color: var(--white); }
+
+/* 隐藏工具类 */
+[hidden] { display: none !important; }
+
+/* ================= 窄屏适配 ================= */
+@media (max-width: 600px) {
+  .persona { height: 34vh; }
+  .bubble {
+    bottom: calc(14% + 34vh + 14px);
+    font-size: 15px;
+    padding: 12px 14px;
+  }
+  .skip-btn { right: 12px; bottom: 12px; min-width: 88px; }
+}
+
+/* ================= 桌面端扩展 ================= */
+@media (min-width: 768px) {
+  .standby-card { padding: 44px 40px; }
+  .standby-title { font-size: 24px; }
+  .persona { height: min(52vh, 380px); }
+  .bubble { bottom: calc(14% + min(52vh, 380px) + 20px); font-size: 18px; }
+}
+
+/* 减少动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .status-dot { animation: none; }
+  .persona-wrap, .bubble, .toast { animation-duration: .01s; }
+}

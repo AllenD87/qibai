@@ -1,0 +1,45 @@
+[package]
+name = "qibai-tauri"
+version = "0.1.0"
+edition = "2021"
+description = "Qibai (栖伴) Tauri 2 application shell"
+
+# 独立 workspace：与根 Cargo workspace 解耦。
+# 这样在缺 webkit2gtk/gtk3/libsoup/javascriptcoregtk 等系统库的环境里，
+# 根目录 `cargo test` 只会编译 qibai-core，不会把 tauri sys 系 crate 拖进来。
+# 构建本壳需在具备系统依赖的机器上 `cd src-tauri && cargo build`。
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# tray-icon: 托盘常驻（Linux 运行时还需 libayatana-appindicator3，见 BUILD_NOTE）
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+qibai-core = { path = "../qibai-core" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+cpal = "0.15"
+# 开机自启
+tauri-plugin-autostart = "2"
+# 系统通知（跨三平台）
+tauri-plugin-notification = "2"
+# 迭代③：剪贴板写/清（vault_copy 写系统剪贴板并调度清除）
+tauri-plugin-clipboard-manager = "2"
+# 迭代③：系统钥匙串（Windows Credential Manager / macOS Keychain / Linux Secret Service）。
+# keyring v3 的 feature 名：apple-native / windows-native / sync-secret-service
+# （v2 时代的 linux-native 在 v3 已改名为 sync-secret-service；如升级小版本后 feature
+# 名变动，以 `cargo doc -p keyring` 为准）。Linux Secret Service 运行时还需
+# dbus + gnome-keyring（secret-service provider）在线——沙箱无此环境，真机验证项。
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+# 迭代③：CSPRNG（生成 keyring 模式的 32B 随机主密钥；不引入 rand 全量依赖）
+getrandom = "0.2"
+# v20.7：Linux 下 GTK 层整窗重绘（queue_draw）——无合成器 X11 清窗口表面的
+# 轻量手段，替代 v20.6 的 hide/show（unmap/map 会重置窗口位置、破坏拖动）。
+# v29.1：新增 gdk + libc——XClearArea 物理清屏窗口表面旧像素（等效拖动清屏）。
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+gdk = "0.18"
+libc = "0.2"

@@ -1,0 +1,11 @@
+name: 绘画提示词
+version: 1.0.0
+description: 生成提示词：本地关键词映射拼出英文 AI 绘画 prompt + 中文对照
+triggers:
+  - 生成提示词
+  - 画图提示词
+  - prompt
+  - 帮我写个绘画描述
+  - 绘画关键词
+  - 怎么画 AI 图
+category: 创意创作

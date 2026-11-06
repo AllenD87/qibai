@@ -1,0 +1,1020 @@
+/* ============================================================
+   元气小小 Qibai — 桌宠窗专属增量样式（pet.css）
+   只写新增部分；既有类（speech-bubble/stage/character-wrap/
+   placeholder-face/reminder-overlay/toast/dev-panel 等）复用 styles.css
+   ============================================================ */
+
+/* ============================================================
+ * v21 布局层级重构（根治「覆盖/重叠/显示不全」）：
+ * 全页面统一显式 z-index 体系——自下而上单调递增，杜绝隐式层级依赖。
+ *   1    舞台立绘层（#stage / #characterImg / #glCanvas / 占位脸）
+ *   600  动效层 #fxLayer（pointer-events:none，纯装饰）
+ *   700  右侧快捷图标簇 .quick-cluster
+ *   750  UI 面板卡片 .ui-panel
+ *   800  对话输入条 .chat-bar
+ *   850  提醒 overlay .reminder-overlay
+ *   900  气泡 #speechBubble / #listenTag / 顶部 chip
+ *   950  toast .toast-box
+ *   1000 右键菜单 .ctx-menu（最高，任何内容不得压住）
+ * ============================================================ */
+#stage { z-index: 1; position: relative; }
+#characterImg { z-index: 1; }
+.fx-layer { z-index: 600; }
+.quick-cluster { z-index: 700; }
+.ui-panel { z-index: 750; }
+.chat-bar { z-index: 800; }
+.reminder-overlay { z-index: 850; }
+.speech-bubble { z-index: 900; }
+.listen-tag { z-index: 900; }
+.toast-box { z-index: 950; }
+.ctx-menu { z-index: 1000 !important; }
+
+/* v21.3：菜单打开时由 pet.js 直接隐藏 #characterWrap（立绘容器）——
+   立绘不显示、不拦截点击（opacity 淡化在无合成器下残留且挡点击，
+   是「人物在选项卡上面、点不到、不消失」的根因）。隐藏子容器不塌缩布局。 */
+
+/* ---- 3D 三渲二画布（主路径）：填满立绘区，透明；激活时隐藏 2D 立绘 ---- */
+.gl-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  z-index: 5;
+}
+.gl-canvas.hidden { display: none; }
+body.gl-on #characterImg,
+body.gl-on #placeholderFace { display: none !important; }
+
+/* ============================================================
+ * 极简默认态（body.minimal）：只显示 角色(#stage/#characterWrap) + 输入条(#chatBar)。
+ * 其余装饰/状态/快捷元素默认隐藏；右键菜单「完整界面」呼出，再切回极简。
+ * 气泡/提醒/右键菜单/toast/粒子为事件触发，保持现有 .hidden/.show 门控。
+ * ============================================================ */
+body.minimal #voiceTagChip,
+body.minimal #quickChips,
+body.minimal #quickCluster,
+body.minimal #listenTag,
+body.minimal #pkCard,
+body.minimal #moodBadge,
+body.minimal #lockBadge,
+body.minimal #dragBar { display: none !important; }
+body.minimal #characterWrap { cursor: grab; }
+/* 提醒浮层默认隐藏（仅 qibai://reminder 事件触发 .show 时出现） */
+#reminderOverlay:not(.show) { visibility: hidden; }
+
+/* 任务八·极简严格版：输入框弱化边框/阴影，只留 mic/输入/发送三要素 */
+body.minimal .chat-bar {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(155, 127, 184, 0.18);
+  box-shadow: none;
+  backdrop-filter: blur(2px);
+}
+body.minimal .chat-input { background: transparent; border: none; outline: none; }
+.mic-btn.voice-mode { border-color: #9B7FB8; background: #EFE7F7; color: #7B5FA6; }
+.send-btn:disabled { cursor: default; opacity: .4; }
+
+/* ============================================================
+ * 任务八·3D 风格立绘：轻 idle 动效（纯 CSS，不引 3D 引擎）
+ * 呼吸 scale 1→1.02 / 微摆 rotate ±0.8°，幅度克制；页面隐藏暂停。
+ * ============================================================ */
+@keyframes pet-breathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.02); }
+}
+@keyframes pet-sway {
+  0%, 100% { transform: rotate(-0.6deg); }
+  50%      { transform: rotate(0.6deg); }
+}
+#characterWrap.static-art .character-img {
+  animation: pet-breathe 2.8s ease-in-out infinite;
+  transform-origin: 50% 90%;
+}
+#characterWrap.static-art {
+  animation: pet-sway 4.5s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  #characterWrap.static-art,
+  #characterWrap.static-art .character-img { animation: none; }
+}
+/* 页面不可见时暂停动效（性能） */
+@media (scripting: none) { }
+#characterWrap.static-art.paused { animation-play-state: paused; }
+
+/* ============================================================
+ * v21 重影修复（需求一·3）：
+ * Tauri 透明窗（无合成器环境）内，持续 transform 动画（breathe/sway/img-pulse）
+ * 会逐帧累积残影——tauri-mode 下一律关掉角色 transform 动画；浏览器演示模式保留。
+ * 气泡 speaking 短脉冲（bubbleSpeakingPulse）为一次性 1.6s 演出，保留。
+ * ============================================================ */
+body.tauri-mode #characterWrap,
+body.tauri-mode #characterWrap.static-art,
+body.tauri-mode #characterWrap.static-art .character-img,
+body.tauri-mode .character-wrap {
+  animation: none !important;
+  will-change: auto;
+}
+
+/* ============================================================
+ * v29 动作帧零叠加：角色 img 一律禁 transition——
+ * 透明窗（无合成器 X11）下任何 opacity/transform/filter 过渡都会让旧帧像素
+ * 在过渡期间与新帧同时可见 = 「挥手瞬间两个形象叠加」。
+ * 动画（breathe/sway）已在上方 tauri-mode 禁；这里再兜一层 transition，
+ * 防止未来 CSS 回归引入过渡残留。浏览器演示模式下无 transition 也不影响演出
+ * （动画本身仍由 animation 控制）。
+ * ============================================================ */
+#characterImg,
+#characterWrap .character-img {
+  transition: none !important;
+}
+
+
+/* ---------- Tauri 真窗口（220×260，透明无边框）下压缩 ---------- */
+body.tauri-mode .pet-window {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  display: block;
+}
+/* v31.2：桌宠窗口圆角化——“只保留圆角部分”。
+   body 与底层 canvas 同圆角；配合「透明背景：开」在带合成器的系统上
+   即纯立绘圆角浮窗（角部透明露桌面）；无合成器 X11 下角部会露窗口
+   底色（黑/透明小角），此时建议保持透明背景关闭 = 圆角浅色卡片，
+   矩形硬边消失。 */
+body.tauri-mode {
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  border-radius: 28px;
+  overflow: hidden;
+}
+body.tauri-mode .bg-canvas {
+  border-radius: 28px;
+}
+body.tauri-mode .bg-canvas {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  z-index: 0;
+  pointer-events: none;
+  display: block;
+}
+/* v30：Tauri 模式 DOM 立绘 img 不再直接显示——角色渲染收敛到 canvas
+   整帧绘制（消除「img 换帧残留旧像素」全部表现：启动重合/动效恢复残留/
+   拖动后残留色块）。browser-mode 保持 img 原样。 */
+body.tauri-mode #characterImg {
+  display: none !important;
+}
+body.tauri-mode .speech-bubble {
+  max-width: 200px;
+  font-size: 12.5px;
+  padding: 8px 10px;
+  z-index: 950;  /* v21.11.12：气泡提到 toast 下最高交互层——透明窗无合成器下低 z
+                    会被立绘不透明像素压住（「气泡跑到人物后方」的根因），950 与
+                    v21 层级表（900 气泡层）对齐并高于立绘 1 / 输入条 30 / chip 6 */
+}
+/* 二次修复③：tauri 真窗裁剪边界，任何逃逸到窗宽外的绝对定位残字一律裁掉 */
+body.tauri-mode { overflow: hidden; }
+/* v21.11.13：气泡改为输入栏上方固定聊天条——不再浮在角色右侧；横贯全宽、
+   紧贴输入栏上方（bottom=52px），聊天软件式布局：立绘在上、气泡+输入栏在下，
+   完全不遮角色面部。hidden 态直接 display:none 彻底隐藏（opacity/位移过渡在
+   无合成器 X11 下会残留气泡像素 = 「气泡不消失/残影」的深层根因）。 */
+/* v30.1：气泡紧贴窗口顶部——真机窗口实际可视高常小于标称值
+   （此前 18px+58px 高的气泡区会把立绘头部压住，用户反馈「气泡遮脸」）。
+   现在占 3~45px，立绘从 45px 以下开始；max-width 收窄至 170px，
+   与左上 listenTag（4~84px）不重叠。 */
+body.tauri-mode #speechBubble {
+  position: absolute;
+  top: 4px;
+  bottom: auto;
+  /* v40：旧写法 left:50% + translateX(-50%) 会让「可用宽度 = 父宽一半」，
+     长句被压成 180px。改左右贴边 + margin auto 居中，宽度才真正放开到 300px。 */
+  left: 8px;
+  right: 8px;
+  transform: none;
+  margin: 0 auto;
+  width: auto;
+  /* v40：气泡加宽 + 内部滚动。旧值 170px/42px/2 行截断，长回复必然「文字显示不全」。
+     现在最多占满窗口宽（留 8px 边），高度 58px（约 3.5 行），超出部分气泡内滚动，
+     并由 pet.js 在每次追加文字后自动滚到最新一行（流式/打字机都跟手）。 */
+  max-width: min(300px, calc(100vw - 16px));
+  max-height: 92px;
+  height: auto;        /* v45：按内容收缩，短句不再撑满旧高 = 减少残留外框 */
+  overflow: hidden;
+  display: block;
+  pointer-events: auto;
+  font-size: 12.5px;
+  line-height: 1.32;
+  padding: 4px 10px;
+  text-align: left;
+  word-break: break-word;
+}
+body.tauri-mode #speechBubble::-webkit-scrollbar { width: 0; height: 0; }
+body.tauri-mode #speechText {
+  display: block;
+  max-height: 50px;     /* v45：height:auto 让短句收缩；超过 50px 才气泡内滚动 */
+  overflow-y: auto;
+  overflow-x: hidden;
+  pointer-events: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(197, 145, 173, .75) rgba(255,255,255,.25);
+  -ms-overflow-style: auto;
+  overflow-wrap: anywhere;
+  padding-right: 2px;
+}
+body.tauri-mode #speechText::-webkit-scrollbar { width: 4px; height: 0; }
+body.tauri-mode #speechText::-webkit-scrollbar-track { background: rgba(255,255,255,.28); border-radius: 4px; }
+body.tauri-mode #speechText::-webkit-scrollbar-thumb {
+  background: rgba(197, 145, 173, .75);
+  border-radius: 4px;
+}
+/* v43：Linux WebKitGTK 原生滚动条会自动隐藏；补一条始终可见的自绘细轨。 */
+#speechScrollbar {
+  position: absolute;
+  right: 3px;
+  top: 7px;
+  bottom: 7px;
+  width: 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, .35);
+  pointer-events: none;
+  opacity: 0;
+}
+#speechBubble.scrollable #speechScrollbar { opacity: 1; }
+#speechScrollThumb {
+  position: absolute;
+  left: 0;
+  width: 4px;
+  min-height: 14px;
+  border-radius: 3px;
+  background: rgba(197, 145, 173, .85);
+}
+/* 尾巴朝下指向人物头顶 */
+body.tauri-mode #speechBubble::after {
+  left: 50%;
+  bottom: -6px;
+  transform: translateX(-50%) rotate(45deg);
+}
+body.tauri-mode #speechBubble.hidden {
+  display: none !important;
+  opacity: 1;
+  transform: none;
+}
+/* v21.11.12：窗口加宽至 340px 后输入条更宽——输入框微调字号/内边距，多显示几个字 */
+body.tauri-mode .chat-input {
+  font-size: 12.5px;
+  padding: 0 8px;
+}
+body.tauri-mode .chat-bar { padding: 3px 5px; gap: 3px; }
+/* v21.11.12：输入条三按钮（免提/麦克/发送）44px→36px 压缩固定占位，输入框宽度让位给文字 */
+body.tauri-mode .mic-btn,
+body.tauri-mode .send-btn {
+  min-width: 36px;
+  min-height: 36px;
+  width: 36px;
+  height: 36px;
+}
+/* D1：顶部三元素错层——dragbar 最顶，chip 在其下，气泡在 chip 下，互不重叠 */
+body.tauri-mode .drag-bar { position: absolute; top: 0; left: 0; right: 0; height: 14px; z-index: 6; }
+/* v30：voiceTagChip 已上移右上（见 listenTag 段） */
+/* v21.4：免提状态条——z-index 并入 v21 层级体系（900，不再被立绘遮挡）；
+   位置移到输入条上方（bottom:52px），避开人物头部区域
+   v21.11.13：气泡已改到输入栏上方（bottom:52），聆听条移回顶部细条错层避让。 */
+/* v30：顶部提示错层——listenTag 左上、voiceTagChip 右上，都收在窗口最顶
+   2px 细条内（气泡区下方 18~58px 不冲突），不再叠在人物身后。 */
+body.tauri-mode #listenTag { top: 2px; bottom: auto; left: 8px; right: auto; z-index: 900; }
+body.tauri-mode #voiceTagChip { top: 2px; bottom: auto; left: auto; right: 8px; z-index: 900; }
+body.tauri-mode .input-bar {
+  position: absolute;
+  bottom: 2px;
+  left: 4px;
+  right: 4px;
+  z-index: 30;
+  min-height: 44px;
+}
+body.tauri-mode .mic-btn,
+body.tauri-mode .send-btn {
+  min-width: 36px;
+  min-height: 36px;
+}
+body.tauri-mode #stage {
+  position: absolute;
+  top: var(--stage-top, 90px);
+  left: 0;
+  right: 0;
+  bottom: var(--stage-bottom, 102px);
+  width: auto;
+  height: auto;
+  padding: 0;
+  box-sizing: border-box;
+}
+body.tauri-mode .character-wrap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 260px;
+  height: auto;
+}
+body.tauri-mode .character-wrap#characterWrap {
+  left: 50%;
+  margin-left: -130px;
+  touch-action: none;
+}
+
+/* ---------- 位置锁定视觉提示 ---------- */
+body.locked .character-wrap { cursor: default; }
+body.locked #dragBar { opacity: .55; }
+
+.lock-badge {
+  position: absolute;
+  top: -6px;
+  right: -10px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--white);
+  border: 1.5px solid var(--purple-200);
+  box-shadow: var(--shadow-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 8;
+}
+.lock-badge svg { width: 14px; height: 14px; }
+.lock-badge.hidden { display: none; }
+
+/* ---------- PK 手势小卡（pk-round 演出态，贴舞台旁；非全屏 overlay） ---------- */
+.pk-mini {
+  position: absolute;
+  bottom: 4px;
+  right: -6px;
+  width: 76px;
+  background: var(--white);
+  border: 1.5px solid var(--pink-200);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-soft);
+  padding: 6px 8px;
+  text-align: center;
+  z-index: 7;
+  animation: pkMiniPop .25s ease;
+}
+@keyframes pkMiniPop {
+  from { transform: scale(.7); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+.pk-mini.hidden { display: none; }
+.pk-mini-title {
+  font-size: 10.5px;
+  color: var(--purple-deep);
+  font-weight: 600;
+  letter-spacing: .05em;
+}
+.pk-mini-hand {
+  width: 44px;
+  height: 44px;
+  margin: 4px auto;
+  border-radius: 12px;
+  background: var(--pink-50);
+  border: 1.5px solid var(--pink-200);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pk-mini-hand svg { width: 26px; height: 26px; }
+.pk-mini-hand.shaking { animation: pkMiniShake .18s ease-in-out 4; }
+@keyframes pkMiniShake {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-6px); }
+}
+.pk-mini-result {
+  font-size: 11px;
+  color: var(--rose-deep);
+  font-weight: 600;
+  min-height: 15px;
+}
+
+/* ---------- 右键菜单（自定义 HTML；控件热区 ≥44px） ---------- */
+.ctx-menu {
+  position: fixed;
+  min-width: 168px;
+  background: var(--white);
+  border: 1.5px solid var(--pink-200);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-soft);
+  padding: 6px;
+  /* z-index 统一由顶部 v21 层级体系管理（1000，最高层） */
+  animation: ctxPop .15s ease;
+}
+@keyframes ctxPop {
+  from { transform: scale(.92); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+.ctx-menu.hidden { display: none; }
+/* v20.6：桌宠小窗（220~260px）内菜单项多时超出窗口高度——限高+内部滚动，
+   修「右键呼出菜单下面被截断显示不全」。 */
+body.tauri-mode .ctx-menu {
+  max-height: calc(100vh - 10px);
+  overflow-y: auto;
+  /* v21.11.13：无合成器 X11 下 ctxPop scale(0.92→1) 缩放动画逐帧累积残影 =
+     「右键菜单两个圆角图层先后覆盖」；Tauri 端禁用缩放动画，菜单直接以单层
+     圆角矩形显示（与角色动画同策：Tauri 端一律关 transform 动画）。 */
+  animation: none !important;
+  transform: none !important;
+}
+/* v20.8：菜单 7 项在 220×260 小窗内放不下——压缩行高/字号/图标，确保
+   「退出元气小小」等底部项可见；背景强制纯白不透明（防透明窗合成顺序
+   错乱时立绘透出盖住菜单）；z-index 提到最高。 */
+body.tauri-mode .ctx-menu {
+  background: #ffffff !important;
+  /* z-index 由顶部 v21 层级体系统一管理（1000） */
+  padding: 4px;
+}
+body.tauri-mode .ctx-item {
+  min-height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+  gap: 8px;
+}
+/* v21.11.13：PK 猜拳小卡与 ctx-menu 同根因——pkMiniPop scale 动画在无合成器
+   X11 下逐帧残影（双卡叠放）；Tauri 端一并禁用 transform 动画，直接单层显示。 */
+body.tauri-mode .pk-mini,
+body.tauri-mode .pk-mini-hand.shaking {
+  animation: none !important;
+  transform: none !important;
+}
+/* v21.11.13：无合成器 X11 下浮层过渡/动画逐帧残留像素——统一治理：
+   · toast（「已切回文字输入」「没听到声音」等提示不消失的根因）：过渡动画禁用，
+     显示即直接显示；JS 侧到时直接移除并整窗重绘清屏（见 pet.js toast）。
+   · 点击粒子/爱心特效 clickRise 位移动画：禁用（「动作/特效时覆盖」的残影源）。
+   · 气泡说话脉冲 speaking 1.6s 动画：禁用（气泡残留源）。
+   与角色动画同策：Tauri 端一律关闭 transform/opacity 动画，只留静态渲染。 */
+body.tauri-mode .toast,
+body.tauri-mode .toast.show {
+  transition: none;
+  opacity: 1;
+  transform: none;
+}
+body.tauri-mode .toast-box { transition: none; }
+/* v40：toast 视觉改薄。styles.css 里 .toast 用 var(--text) 深色底 → 真机是一颗
+   黑色药丸压在立绘上方，看起来像「开透明后身后多出一个黑气泡」，且它不透明，
+   会一直盖住角色直到超时消失（用户观感＝「气泡消失后透明才生效」）。
+   这里在 tauri 模式改成浅色磨砂小条、贴窗口顶部，不再压脸、不再形成黑色块。 */
+body.tauri-mode .toast-box {
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  align-items: center;
+  max-width: 320px;
+}
+body.tauri-mode .toast {
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text, #4A3F55);
+  border: 1px solid rgba(155, 127, 184, 0.26);
+  border-radius: 10px;
+  box-shadow: 0 3px 10px rgba(80, 60, 100, 0.14);
+  font-size: 11.5px;
+  padding: 5px 10px;
+  max-width: 300px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+body.tauri-mode .click-fx { animation: none !important; }
+body.tauri-mode .speech-bubble.speaking { animation: none !important; }
+body.tauri-mode .speech-bubble { transition: none; }
+body.tauri-mode .ctx-item svg {
+  width: 15px;
+  height: 15px;
+}
+body.tauri-mode .ctx-group-label {
+  font-size: 10px;
+  padding: 2px 8px;
+}
+
+.ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: var(--radius-s);
+  font-size: 13.5px;
+  color: var(--text);
+  text-align: left;
+  touch-action: manipulation;
+}
+.ctx-item svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: var(--rose-deep);
+  flex-shrink: 0;
+}
+.ctx-item:hover { background: var(--pink-100); }
+.ctx-item.danger { color: var(--danger); }
+.ctx-item.danger svg { stroke: var(--danger); }
+.ctx-item.danger:hover { background: var(--pink-50); }
+
+/* ---------- 浏览器 mock：桌宠窗在演示页面里的呼吸感 ---------- */
+body.browser-mode .pet-window {
+  padding-bottom: 16px;
+}
+
+/* ============================================================
+   亲密度动效（规格 §8.2）：全 CSS/JS，无新增美术资产
+   ============================================================ */
+
+/* 动效层：固定铺满窗口、不拦截事件；粒子由 JS 动态注入 */
+.fx-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 200;
+}
+
+/* 点按飘浮粒子（爱心 ♥ / 星星 ✦），--drift 由 JS 注入横向漂移量 */
+.click-fx {
+  position: absolute;
+  font-size: 15px;
+  line-height: 1;
+  opacity: 0;
+  transform: translate(-50%, -50%);
+  animation: clickRise 1.2s ease-out forwards;
+  user-select: none;
+}
+.click-fx.fx-heart { color: var(--rose); text-shadow: 0 0 6px rgba(229, 143, 173, .45); }
+.click-fx.fx-star  { color: var(--purple-deep); text-shadow: 0 0 6px rgba(155, 127, 184, .45); }
+@keyframes clickRise {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(.55); }
+  18%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(calc(-50% + var(--drift, 0px)), -96px) scale(1.15); }
+}
+
+/* 升级庆祝：舞台光晕脉冲 ×2 + 角色连续跳跃 */
+.stage.celebrating {
+  animation: celebrateGlow 1.6s ease-in-out 2;
+}
+@keyframes celebrateGlow {
+  0%, 100% { box-shadow: 0 0 0 rgba(229, 143, 173, 0); }
+  50% {
+    box-shadow: 0 0 26px 6px rgba(229, 143, 173, .55),
+                0 0 42px 12px rgba(155, 127, 184, .35);
+  }
+}
+.stage.celebrating .character-wrap {
+  animation: celebrateJump .62s ease-in-out 4;
+}
+@keyframes celebrateJump {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-18px); }
+}
+
+/* ============================================================
+   迭代②·语音：气泡喇叭按钮 + 朗读脉冲动画
+   ============================================================ */
+
+/* 喇叭按钮：贴气泡右上角，圆形热区 ≥44px 内缩版（气泡空间小，44×44 会撑爆），
+   保持可点性的同时贴角不遮挡文本 */
+.speak-btn {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--white);
+  border: 1.5px solid var(--pink-200);
+  box-shadow: var(--shadow-soft);
+  color: var(--rose-deep);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.speak-btn svg { width: 14px; height: 14px; }
+.speak-btn:hover { background: var(--pink-100); border-color: var(--rose); }
+.speak-btn:active { transform: scale(.92); }
+
+/* 朗读中脉冲：气泡呼吸式描边 + 轻微放大，动画约 1.6s 后由 JS 移除 class */
+.speech-bubble.speaking {
+  animation: bubbleSpeakingPulse 1.6s ease-in-out;
+  border-color: var(--rose);
+}
+@keyframes bubbleSpeakingPulse {
+  0%, 100% { box-shadow: var(--shadow-soft); transform: scale(1); }
+  50%      { box-shadow: 0 0 18px 4px rgba(229, 143, 173, .5); transform: scale(1.04); }
+}
+
+/* 迭代⑤：当前角色音色标签 chip（桌宠窗顶部，复用全局色板） */
+.voice-tag-chip {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  left: auto;
+  transform: none; /* v30：错层右上——与左上 listenTag 分居两角，不再叠人物身后 */
+  z-index: 5;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--purple-deep, #9B7FB8);
+  background: var(--purple-100, #EFE7F7);
+  border: 1px solid var(--purple-200, #DCCBEF);
+  border-radius: 999px;
+  padding: 3px 9px;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 6px rgba(155, 127, 184, 0.18);
+}
+.voice-tag-chip.hidden { display: none; }
+
+/* ---------- 对话输入条（语音控制中枢入口） ---------- */
+.chat-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(155, 127, 184, 0.35);
+  box-shadow: var(--shadow-soft, 0 2px 10px rgba(80, 60, 100, 0.18));
+  backdrop-filter: blur(4px);
+}
+body.tauri-mode .chat-bar {
+  position: absolute;
+  bottom: 2px;
+  /* v40：与底层 .bg-canvas 左右对齐。旧值 left/right:4px 让输入条比画布窄 8px，
+     真机观感「画布比输入框宽一点点」。画布是 100vw，输入条必须同样贴齐 0/0。 */
+  left: 0;
+  right: 0;
+  z-index: 30;
+  margin: 0;
+  height: 44px;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  gap: 4px;
+  border-radius: 12px;
+}
+.mic-btn {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1.5px solid var(--purple-300, #C0A8DE);
+  background: var(--white, #fff);
+  color: #7B5FA6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+.mic-btn svg { width: 16px; height: 16px; }
+.mic-btn.rec {
+  background: #F2A0B8;
+  border-color: #E06A8E;
+  color: #fff;
+  animation: micPulse .9s ease-in-out infinite;
+}
+@keyframes micPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+}
+.chat-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  border: 1px solid rgba(155, 127, 184, 0.3);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.95);
+  font-size: 13px;
+  padding: 0 10px;
+  color: #4A3B5C;
+  outline: none;
+}
+.chat-input::placeholder { color: #8A769D; }
+.chat-input:focus { border-color: #9B7FB8; }
+.send-btn {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1.5px solid var(--purple-300, #C0A8DE);
+  background: #9B7FB8;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+.send-btn svg { width: 15px; height: 15px; }
+.send-btn:active { transform: scale(.92); }
+
+/* v21 输入条操作反馈打磨：hover/active 热区反馈，小窗可点性 */
+.mic-btn:hover { background: #EFE7F7; border-color: #9B7FB8; }
+.mic-btn:active { transform: scale(.92); }
+/* v8-PTT：免提开关按钮（开=双工免提，关=按住说话） */
+.hf-btn { color: #8A7BA8; }
+.hf-btn.hf-on { background: #DCEFDC; border-color: #66BB6A; color: #2E7D32; }
+.hf-btn.hf-on svg { stroke: #2E7D32; }
+.send-btn:enabled:hover { background: #8A6DB0; box-shadow: 0 0 8px rgba(155, 127, 184, .45); }
+.send-btn:disabled { cursor: default; }
+.chat-bar:hover { border-color: rgba(155, 127, 184, 0.5); }
+.chat-input:focus { background: #fff; box-shadow: 0 0 0 2px rgba(155, 127, 184, .15); }
+
+/* v14：免提聆听状态条（待唤醒/聆听中）
+   v21.5：z-index 40→900 对齐顶部统一层级表——无合成器下合成顺序不稳，
+   40 会被立绘不透明像素盖住（「气泡藏到人物身后」的根因）。 */
+.listen-tag {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  transform: none; /* v30：错层左上——原居中会叠在人物头顶/身后（无合成器下残留成重影） */
+  z-index: 900;
+  background: rgba(20, 20, 30, 0.55);
+  color: #e8e8f0;
+  font-size: 10.5px;
+  line-height: 16px;
+  padding: 1px 8px;
+  border-radius: 9px;
+  white-space: nowrap;
+  pointer-events: none;
+  max-width: 96%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* v21.11.13：.listen-tag.hidden 此前从未定义——「隐藏聆听状态条」的 classList 操作
+   无效，导致聆听条常驻不消失（叠在气泡/菜单上）；补上彻底隐藏规则。
+   Tauri 无合成器下用 display:none 而非 opacity（opacity 残影）。 */
+.listen-tag.hidden { display: none !important; }
+
+
+/* ================= v18 UI 面板·气泡卡片（宠物旁小内容） ================= */
+.ui-panel {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  width: 190px;
+  max-width: 92%;
+  max-height: 170px;
+  z-index: 60;
+  background: #FFFDF8;
+  border: 1px solid #FBD3E4;
+  border-radius: 14px;
+  box-shadow: 0 10px 26px rgba(213, 143, 173, 0.22);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+}
+.ui-panel.hidden { display: none; }
+.ui-panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 8px 4px 10px;
+  background: linear-gradient(135deg, #FFE9F1, #EFE7F7);
+  flex: none;
+}
+.ui-panel-title {
+  font-size: 12px; font-weight: 600; color: #9B7FB8;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ui-panel-actions { display: flex; gap: 2px; flex: none; }
+.ui-panel-btn {
+  border: none; background: transparent; color: #D17397;
+  width: 22px; height: 22px; border-radius: 50%;
+  font-size: 13px; line-height: 1; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0;
+}
+.ui-panel-btn:hover { background: #FFF5F8; }
+.ui-panel-body {
+  padding: 6px 10px 10px;
+  font-size: 12px; line-height: 1.65; color: #6E5A6B;
+  overflow-y: auto;
+}
+.ui-panel-body .qibai-table {
+  width: 100%; border-collapse: collapse; font-size: 11px;
+}
+.ui-panel-body .qibai-table th, .ui-panel-body .qibai-table td {
+  text-align: left; padding: 3px 5px; border-bottom: 1px solid #FFE9F1;
+  word-break: break-word; vertical-align: top;
+}
+.ui-panel-body .qibai-table th { color: #D17397; font-weight: 600; }
+.ui-panel-body .qibai-table .t-role { color: #9B7FB8; white-space: nowrap; }
+.ui-panel-body .qibai-table .t-time { color: #A893A5; white-space: nowrap; font-size: 10px; }
+.ui-panel-body pre, .ui-panel-body code {
+  background: #FFF5F8; border-radius: 6px; padding: 1px 4px; font-size: 11px;
+}
+
+/* ============================================================
+   本轮差距修复增量（D1~D9 / F3~F6）
+   ============================================================ */
+
+/* ---- F3：气泡时间戳 + Thinking 态 ---- */
+.speech-time {
+  display: block;
+  font-size: 9px;
+  color: var(--text-soft, #A893A5);
+  line-height: 1;
+  margin-top: 2px;
+  text-align: right;
+}
+.speech-time.hidden { display: none; }
+.speech-bubble.thinking #speechText::after {
+  content: "…";
+  animation: thinkingDot 1s steps(4, end) infinite;
+}
+@keyframes thinkingDot {
+  0% { opacity: .2; } 50% { opacity: 1; } 100% { opacity: .2; }
+}
+
+/* ---- D4：提醒浮层在小窗内自适应（贴角色侧、不左溢出被裁） ---- */
+/* v41：护眼/久坐等提醒卡改成和「想一想」气泡同一套外观（白磨砂 + 细粉描边 + 16px 圆角），
+   并且去掉位移过渡（无合成器 X11 下 transform 过渡会逐帧留残影，就是「身后一圈一圈」的来源）。 */
+body.tauri-mode .reminder-overlay {
+  top: 3px;
+  bottom: auto;
+  left: 8px;
+  right: 8px;
+  margin: 0 auto;
+  width: auto;
+  max-width: min(300px, calc(100vw - 16px));
+  max-height: 50px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  background: rgba(255, 255, 255, .92);
+  border: 1px solid rgba(214, 160, 190, .55);
+  border-left: none;
+  border-top: none;
+  border-radius: 16px;
+  box-shadow: 0 6px 16px rgba(120, 90, 120, .10);
+  padding: 5px 24px 5px 12px;
+  transform: none;
+  transition: none;
+  display: none;
+  text-align: left;
+}
+body.tauri-mode .reminder-overlay::-webkit-scrollbar { display: none; width: 0; height: 0; }
+body.tauri-mode .reminder-overlay.show { display: block; transform: none; }
+body.tauri-mode .reminder-overlay .tag {
+  display: inline-block;
+  font-size: 10px;
+  line-height: 1.5;
+  font-weight: 600;
+  color: #B0678C;
+  background: rgba(247, 215, 229, .55);
+  border-radius: 999px;
+  padding: 0 6px;
+  margin-right: 4px;
+  vertical-align: 1px;
+  letter-spacing: .02em;
+}
+body.tauri-mode .reminder-overlay .msg {
+  display: inline;
+  margin-top: 0;
+  font-size: 12.5px;
+  line-height: 1.32;
+  color: #4A3F55;
+  word-break: break-word;
+}
+body.tauri-mode .reminder-overlay .close {
+  top: 3px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  font-size: 13px;
+  color: #B49FB0;
+  border-radius: 50%;
+}
+
+/* ---- D6：右键菜单分组标签 + 小窗宽度收敛 ---- */
+.ctx-group-label {
+  font-size: 10px;
+  color: var(--text-soft, #A893A5);
+  letter-spacing: .08em;
+  padding: 4px 12px 2px;
+}
+body.tauri-mode .ctx-menu { min-width: 150px; width: 150px; }
+
+/* ---- D8：右侧快捷图标簇（用户/静音/三点） ---- */
+.quick-cluster {
+  position: fixed;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  z-index: 90;
+}
+.qc-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid var(--pink-200, #FBD3E4);
+  box-shadow: var(--shadow-soft, 0 2px 8px rgba(80, 60, 100, 0.18));
+  color: var(--rose-deep, #D17397);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+.qc-btn svg { width: 15px; height: 15px; }
+.qc-btn:hover { background: var(--pink-100, #FFE9F1); }
+.qc-btn.muted { color: var(--text-soft, #A893A5); border-color: var(--purple-200, #DCCBEF); }
+.browser-mode .quick-cluster { position: static; transform: none; flex-direction: row; margin: 10px auto; width: fit-content; }
+
+/* ---- F4：心情/关系轻量徽章（亲密度驱动） ---- */
+.mood-badge {
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--pink-200, #FBD3E4);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 9.5px;
+  color: var(--purple-deep, #9B7FB8);
+  white-space: nowrap;
+  box-shadow: var(--shadow-soft, 0 2px 8px rgba(80, 60, 100, 0.18));
+  z-index: 8;
+}
+.mood-badge.hidden { display: none; }
+.mood-emoji { font-size: 11px; line-height: 1; }
+.mood-text { font-weight: 600; }
+
+/* ============================================================
+ * v35：显式透明视口——Tauri transparent 窗口在 webkit2gtk 下，
+ * 若网页未显式声明 transparent，视口可能以默认不透明背景合成，
+ * 导致「canvas 已透明但窗口仍显底色」。显式声明确保立绘外穿透桌面。
+ * ============================================================ */
+html, body { background: transparent !important; }
+body.tauri-mode { background: transparent !important; }
+
+
+/* ============================================================
+ * v40 外观收口（真机三处反馈）
+ * 1) 快捷短语一整行 6 个胶囊在 340px 窗里溢出（scrollWidth 737 > clientWidth 340），
+ *    第三项「今天天气怎么样」被窗口右缘直接裁断 —— 改成两行小胶囊排布，不裁字。
+ * 2) toast 深色药丸 → 浅色磨砂（见上方 tauri-mode .toast 块）。
+ * 3) 输入条与画布左右对齐（见 .chat-bar 块）。
+ * ============================================================ */
+body.tauri-mode .quick-chips {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 48px;
+  z-index: 790;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  padding: 0 8px;
+  max-height: none;
+  overflow: visible;
+  justify-content: center;
+  align-content: flex-start;
+  box-sizing: border-box;
+}
+body.tauri-mode .quick-chips .chip {
+  flex: 0 0 auto;
+  min-height: 22px;
+  padding: 2px 7px;
+  font-size: 11px;
+  line-height: 1.25;
+  white-space: nowrap;
+  border-radius: 999px;
+}
+
+/* v40：气泡正在显示时，把提示条压到气泡下层（气泡 900 / 提示条 950 → 890），
+   白色气泡会完整盖住提示条，不出现两个浮层叠字；气泡收起后提示条自然露回。 */
+body.tauri-mode:has(#speechBubble:not(.hidden)) .toast-box,
+body.tauri-mode:has(.reminder-overlay.show) .toast-box {
+  z-index: 890;
+}
+
+/* 矮窗/紧凑窗也保留完整的双区间距；舞台底部由 JS 按快捷区实测高度继续收紧。 */
+@media (max-height: 280px) {
+  body.tauri-mode .stage { top: var(--stage-top, 58px); }
+  body.tauri-mode #speechBubble,
+  body.tauri-mode .reminder-overlay { max-height: 50px; }
+  body.tauri-mode .quick-chips { bottom: 43px; gap: 3px 4px; padding: 0 5px; }
+  body.tauri-mode .quick-chips .chip { min-height: 20px; padding: 1px 5px; font-size: 10px; }
+  body.tauri-mode .chat-bar { height: 40px; bottom: 1px; padding-top: 3px; padding-bottom: 3px; }
+  body.tauri-mode .mic-btn,
+  body.tauri-mode .send-btn { width: 32px; height: 32px; min-width: 32px; min-height: 32px; }
+}

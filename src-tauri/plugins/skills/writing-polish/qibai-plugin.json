@@ -1,0 +1,29 @@
+{
+  "id": "com.qibai.skill.writingpolish",
+  "type": "skill",
+  "name": "写作润色",
+  "description": "帮你把一段话改得更顺：说「润色一下」「改改这段」「帮我改下这段话」「检查错别字」。脚本先做标点/重复字/字数基础检查，再由我按润色方法论出修改稿。只检查不擅自改写，改动守恒、不编造事实。",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": [],
+  "entry": {
+    "kind": "command",
+    "command": "run.sh"
+  },
+  "functions": [
+    {
+      "name": "polish_check",
+      "description": "对用户给定文本做确定性基础检查：中文全角/半角标点混用、连续重复字（的的/了了）、疑似叠词、字数统计、常见口语词提示；输出检查报告，不修改原文，供主模型在此基础上按润色方法论改稿",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "用户要润色或检查的整段文字，如「今天天气很好，我们去公园走走。」"
+          }
+        },
+        "required": ["text"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "key": "reqing",
+  "displayName": "热情时尚",
+  "personality": "明艳大方，时髦御姐",
+  "sourceImage": "assets/ai_char/reqing_raw.png",
+  "params": {
+    "hairColor": 4006944,
+    "skinTint": 16113104,
+    "clothMain": 13214588,
+    "clothTrim": 10508848,
+    "outlineColor": 9071178,
+    "rampStyle": 3,
+    "idleAmplitude": 0.65,
+    "headTilt": 0.05
+  },
+  "notes": "驼色束腰长大衣+焦糖棕半裙+奶白衬衫；红唇作 face tint（阶段二）；3 阶柔中带挺。"
+}

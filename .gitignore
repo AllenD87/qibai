@@ -1,0 +1,79 @@
+# ============================================================
+# 元气小小 / Qibai — .gitignore
+# 目标：仓库只装代码与文档（约 10 MB），其余 ~38 GB 一律不入库。
+# 复核命令：
+#   git ls-files | wc -l
+#   git count-objects -vH | grep size-pack     # 期望 < 15 MB
+#   git ls-files -z | xargs -0 du -m | awk '$1>5'
+# ============================================================
+
+# ---------- Rust 编译产物（最大头：~38 GB） ----------
+/target/
+/src-tauri/target/
+**/*.rs.bk
+*.pdb
+
+# ---------- Node ----------
+node_modules/
+
+# ---------- 模型权重（~731 MB）→ 走 fetch_resources.sh ----------
+# 精确到目录，不用全局 *.bin / *.onnx：
+# 全局后缀规则会静默吞掉将来 tests/ 下的合法夹具，导致别人 clone 后测试挂掉。
+/src-tauri/models/
+*.ggml
+*.gguf
+*.safetensors
+
+# ---------- 语音 / STT 二进制（~21 MB）→ 脚本下载或系统安装 ----------
+/src-tauri/whisper-bin/
+/src-tauri/tts-espeak/
+/assets/tts/
+
+# ---------- 内置 whisper.cpp 源码树（~128 MB）→ 用上游仓库 ----------
+/whisper/
+
+# ---------- 美术帧（~631 MB / 204 张）→ 走 Release 附件 ----------
+/src/assets/personas/*/
+# 仓库只保留 docs/images/ 下的少量低分辨率预览图；
+# tests/ 下的 PNG 夹具不受影响。
+
+# ---------- 大体积媒体（演示片不进库） ----------
+*.mp4
+*.mov
+*.psd
+*.blend
+*.fbx
+*.glb
+
+# ---------- 内部交付与过程物 ----------
+/deliver/
+/artifacts/
+/review-artifacts/
+/verify-switch-out/
+/v22_pkg/
+/v44_pkg/
+/*.zip
+/*.tar.gz
+/final_*.log
+
+# ---------- 备份残留 ----------
+*.orig
+*.bak
+*~
+
+# ---------- 密钥与本地配置（严禁入库） ----------
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+*.p12
+*.pfx
+/src-tauri/tauri.conf.local.json
+
+# ---------- 系统与编辑器 ----------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

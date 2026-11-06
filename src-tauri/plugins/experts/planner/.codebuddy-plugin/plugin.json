@@ -1,0 +1,50 @@
+{
+  "name": "qibai-planner",
+  "version": "1.0.0",
+  "description": "Schedule planning expert that prioritizes tasks, plans time blocks and prepares reminders.",
+  "author": {
+    "name": "Qibai",
+    "email": "qibai@local"
+  },
+  "agents": ["./agents/planner.md"],
+  "agentName": "planner",
+  "expertType": "agent",
+  "displayName": {
+    "en": "Schedule Planner",
+    "zh": "日程规划专家"
+  },
+  "profession": {
+    "en": "Time Management Consultant",
+    "zh": "时间管理顾问"
+  },
+  "displayDescription": {
+    "en": "Turn goals, tasks and meetings into clear executable schedules: prioritize, plan time blocks and set reminders.",
+    "zh": "把目标、任务与会议安排成清晰可执行的日程：按优先级排序、规划时间块、设置提醒，助你高效掌控每一天。"
+  },
+  "avatar": "avatars/planner.png",
+  "categoryId": "10-ProjectQuality",
+  "defaultInitPrompt": {
+    "en": "Help me plan my schedule for tomorrow",
+    "zh": "帮我安排明天的日程"
+  },
+  "plugin": "qibai-planner",
+  "tags": [
+    { "en": "Scheduling", "zh": "日程规划" },
+    { "en": "Time Management", "zh": "时间管理" },
+    { "en": "Reminders", "zh": "提醒设置" }
+  ],
+  "quickPrompts": [
+    {
+      "en": "Help me plan my schedule for tomorrow",
+      "zh": "帮我安排明天的日程"
+    },
+    {
+      "en": "Prioritize my to-do list for this week",
+      "zh": "帮我给这周的任务排个优先级"
+    },
+    {
+      "en": "Set a reminder for my afternoon meeting",
+      "zh": "帮我给下午的会议设置提醒"
+    }
+  ]
+}

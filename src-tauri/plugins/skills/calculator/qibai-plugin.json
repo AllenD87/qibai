@@ -1,0 +1,29 @@
+{
+  "id": "com.qibai.skill.calculator",
+  "type": "skill",
+  "name": "计算器",
+  "description": "计算数学算式：加减乘除、括号、百分比。说「使用计算器，算一下 12乘以8加3」「帮我算 1500*0.85」。本地计算，无需网络。",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": [],
+  "entry": {
+    "kind": "command",
+    "command": "run.sh"
+  },
+  "functions": [
+    {
+      "name": "calculate",
+      "description": "计算一个数学算式（支持 + - * / % 和括号，如 12*8+3 或 (150+200)*0.9）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "expression": {
+            "type": "string",
+            "description": "数学算式，如 12*8+3"
+          }
+        },
+        "required": ["expression"]
+      }
+    }
+  ]
+}

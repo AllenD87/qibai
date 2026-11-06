@@ -1,0 +1,17 @@
+{
+  "key": "dushi",
+  "displayName": "都市",
+  "personality": "干练自信，职场姐姐",
+  "sourceImage": "assets/ai_char/dushi_raw.png",
+  "params": {
+    "hairColor": 5914672,
+    "skinTint": 15914434,
+    "clothMain": 2832981,
+    "clothTrim": 15787730,
+    "outlineColor": 1845056,
+    "rampStyle": 2,
+    "idleAmplitude": 0.5,
+    "headTilt": 0.0
+  },
+  "notes": "深藏青西装+米白缎面衬衫；2 阶硬边 toon 显利落剪裁；珍珠耳钉/金表阶段二挂 ear/wrist 节点。"
+}

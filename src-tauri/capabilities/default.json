@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "栖伴默认能力集。根因修复：此前无 capabilities 文件，Tauri v2 默认不授予 core 权限，导致前端 plugin:event|listen 被 ACL 拦截，全部 30 种事件监听（pet-say/tts-speak/pet-perform/ui-nav/ctx-action/reminder 等）静默失效。core:default 聚合所有 core 插件默认权限（含 event/window/webview/app/path 等）；core:event:default 显式双保险确保事件 listen/emit 放开。",
+  "windows": ["*"],
+  "local": true,
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "autostart:default",
+    "notification:default"
+  ]
+}

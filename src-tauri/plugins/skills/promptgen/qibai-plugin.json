@@ -1,0 +1,29 @@
+{
+  "id": "com.qibai.skill.promptgen",
+  "type": "skill",
+  "name": "绘画提示词",
+  "description": "生成提示词、帮我写个绘画描述：把你说的主体/风格/光照/镜头拼成英文 AI 绘画 prompt + 中文对照，内置关键词映射词库，本地规则生成，无需网络。说「生成提示词」「画图提示词」「prompt」。",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": [],
+  "entry": {
+    "kind": "command",
+    "command": "run.sh"
+  },
+  "functions": [
+    {
+      "name": "generate_prompt",
+      "description": "根据用户描述的主体/风格/光照/镜头，按固定模板输出英文绘画 prompt + 负面词 + 中文对照（本地关键词映射，不生成真人色情/名人脸内容）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "description": "用户想画的内容描述，如「一只橘猫」「雪山，水彩风，黄昏光」"
+          }
+        },
+        "required": ["subject"]
+      }
+    }
+  ]
+}

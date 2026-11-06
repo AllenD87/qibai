@@ -1,0 +1,29 @@
+{
+  "id": "com.qibai.skill.codereview",
+  "type": "skill",
+  "name": "代码审查",
+  "description": "帮你检查代码有没有安全隐患：说「审查这段代码」「检查代码」「代码审查」「有没有安全隐患」。只读扫描指定目录，找出 eval/硬编码密钥/rm -rf 等高危模式，带文件:行号和修复建议。只读，不修改任何文件。",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": ["files:read"],
+  "entry": {
+    "kind": "command",
+    "command": "run.sh"
+  },
+  "functions": [
+    {
+      "name": "code_review_scan",
+      "description": "只读静态扫描用户指定目录（限用户目录 $HOME 内，拒绝 .. 路径遍历），命中危险模式清单（eval/命令拼接/rm -rf/硬编码密钥/无 WHERE 的 DELETE·DROP/curl|sh 管道）时输出「文件:行号 + 风险类型 + 修复建议」；未命中输出「未发现高危模式」",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "要审查的代码目录路径；相对路径按 $HOME 下解析，绝对路径必须在 $HOME 内，如 projects/my-app"
+          }
+        },
+        "required": ["path"]
+      }
+    }
+  ]
+}

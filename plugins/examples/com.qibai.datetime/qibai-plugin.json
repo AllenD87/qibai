@@ -1,0 +1,24 @@
+{
+  "id": "com.qibai.datetime",
+  "type": "skill",
+  "name": "日期时间",
+  "description": "获取当前日期与时间（示例插件）",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": ["command:run"],
+  "entry": {
+    "kind": "command",
+    "command": "scripts/now.sh"
+  },
+  "functions": [
+    {
+      "name": "get_datetime",
+      "description": "获取当前日期与时间",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "id": "com.qibai.skill.codewriter",
+  "type": "skill",
+  "name": "写代码",
+  "description": "帮你生成代码：说「帮我写一个 Python 脚本」「写一个 HTML 页面」「写个 shell 脚本」。识别语言后输出可直接运行的代码骨架/模板（HTML/Python/JavaScript/Shell/JSON/Rust/Go/CSS），面板展示可复制；复杂定制代码由主对话生成。只输出文本，不读写文件。",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": [],
+  "entry": {
+    "kind": "command",
+    "command": "run.sh"
+  },
+  "functions": [
+    {
+      "name": "code_write",
+      "description": "识别用户代码需求中的语言（HTML/Python/JavaScript/Shell/JSON/Rust/Go/CSS），输出对应高质量可运行代码骨架与面板展示；未识别语言时提示指定语言与用途",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "代码需求描述，如「帮我写一个 Python 脚本读取 CSV 并打印统计」"
+          }
+        },
+        "required": ["text"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "id": "com.qibai.skill.websummary",
+  "type": "skill",
+  "name": "网页摘要",
+  "description": "帮我总结网页：抓取指定网址的内容并提炼要点。说「使用网页摘要，总结 https://…」或「帮我看看这篇文章讲了什么」。只读，仅允许白名单站点，防 SSRF。",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": ["network:read"],
+  "entry": {
+    "kind": "command",
+    "command": "run.sh"
+  },
+  "functions": [
+    {
+      "name": "web_summary",
+      "description": "抓取指定网页（仅 http/https 且域名在白名单内）并提取标题与正文，供主模型生成中文摘要",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "网页完整 URL，必须为 http/https 且域名在默认白名单或 QIBAI_WEBSUMMARY_ALLOWED_DOMAINS 中"
+          }
+        },
+        "required": ["url"]
+      }
+    }
+  ]
+}

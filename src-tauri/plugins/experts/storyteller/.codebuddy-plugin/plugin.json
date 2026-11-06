@@ -1,0 +1,61 @@
+{
+  "name": "qibai-storyteller",
+  "version": "1.0.0",
+  "description": "Bedtime story writer expert: three-part warm tales with a tiny conflict and a gentle happy ending, family-safe, no scary content.",
+  "author": {
+    "name": "Qibai",
+    "email": "qibai@local"
+  },
+  "agents": [
+    "./agents/storyteller.md"
+  ],
+  "agentName": "storyteller",
+  "expertType": "agent",
+  "displayName": {
+    "en": "Storyteller",
+    "zh": "故事大王专家"
+  },
+  "profession": {
+    "en": "Bedtime Story Writer",
+    "zh": "睡前故事作家"
+  },
+  "displayDescription": {
+    "en": "Three-part bedtime tales: a warm opening, one tiny conflict, a gentle resolution; vivid imagery, family-safe, never scary.",
+    "zh": "讲三段式睡前故事：温暖的开头、一个小小的冲突、温柔正向的化解，角色鲜明有画面感，全龄适配、不吓人。"
+  },
+  "avatar": "avatars/storyteller.png",
+  "categoryId": "06-ContentCreative",
+  "defaultInitPrompt": {
+    "en": "Tell me a bedtime story",
+    "zh": "给我讲个睡前故事"
+  },
+  "plugin": "qibai-storyteller",
+  "tags": [
+    {
+      "en": "Bedtime Stories",
+      "zh": "睡前故事"
+    },
+    {
+      "en": "Tales",
+      "zh": "童话创作"
+    },
+    {
+      "en": "Family Safe",
+      "zh": "全龄适配"
+    }
+  ],
+  "quickPrompts": [
+    {
+      "en": "Tell me a bedtime story",
+      "zh": "给我讲个睡前故事"
+    },
+    {
+      "en": "Tell a story about a little fox who likes stars",
+      "zh": "讲一个喜欢星星的小狐狸的故事"
+    },
+    {
+      "en": "Tell a short story about kindness",
+      "zh": "讲一个关于善良的小故事"
+    }
+  ]
+}

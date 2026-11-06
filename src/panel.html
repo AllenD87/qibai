@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:">
+<title>元气小小 · 面板</title>
+<style>
+  :root {
+    --cream: #FFF9F4; --pink-50: #FFF5F8; --pink-100: #FFE9F1;
+    --pink-200: #FBD3E4; --rose: #E58FAD; --rose-deep: #D17397;
+    --purple-100: #EFE7F7; --purple-200: #DCCBEF; --purple-deep: #9B7FB8;
+    --text: #6E5A6B; --text-soft: #A893A5; --white: #FFFFFF;
+    --radius-m: 16px; --shadow-soft: 0 8px 24px rgba(213,143,173,.18);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+      "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    background: var(--cream);
+    color: var(--text);
+    display: flex; flex-direction: column;
+  }
+  /* 标题栏 */
+  .panel-titlebar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px; background: linear-gradient(135deg, var(--pink-100), var(--purple-100));
+    border-bottom: 1px solid var(--pink-200);
+    flex: none;
+  }
+  .panel-titlebar .title { font-size: 14px; font-weight: 600; color: var(--purple-deep); }
+  .panel-titlebar .close {
+    border: none; background: transparent; color: var(--rose-deep);
+    font-size: 18px; cursor: pointer; width: 32px; height: 32px; border-radius: 50%;
+    line-height: 1;
+  }
+  .panel-titlebar .close:hover { background: var(--pink-100); }
+  /* 内容区：白名单 HTML（qibai-table 等） */
+  #panelContent {
+    flex: 1; overflow: auto; padding: 12px 16px 20px;
+    font-size: 13px; line-height: 1.7;
+  }
+  #panelContent .qibai-table {
+    width: 100%; border-collapse: collapse; background: var(--white);
+    border-radius: var(--radius-m); overflow: hidden;
+    box-shadow: var(--shadow-soft);
+  }
+  #panelContent .qibai-table th, #panelContent .qibai-table td {
+    text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--pink-100);
+    vertical-align: top; word-break: break-word;
+  }
+  #panelContent .qibai-table th {
+    background: var(--pink-100); color: var(--rose-deep); font-weight: 600;
+    position: sticky; top: 0;
+  }
+  #panelContent .qibai-table tr:last-child td { border-bottom: none; }
+  #panelContent .qibai-table .t-role { color: var(--purple-deep); white-space: nowrap; }
+  #panelContent .qibai-table .t-time { color: var(--text-soft); white-space: nowrap; font-size: 12px; }
+  #panelContent .qibai-table .t-text { max-width: 460px; }
+  #panelContent pre, #panelContent code {
+    background: var(--pink-50); border-radius: 8px; padding: 2px 6px; font-size: 12px;
+  }
+  #panelContent pre { padding: 8px 10px; overflow-x: auto; }
+  #panelContent a { color: var(--rose-deep); }
+  #panelEmpty {
+    color: var(--text-soft); text-align: center; margin-top: 40vh; font-size: 14px;
+  }
+  /* v18.3 屏幕「眼睛 + 手」：截图展示 + 坐标点击 + 输入/按键 */
+  #screenWrap { display: flex; flex-direction: column; height: 100%; }
+  #screenStatus {
+    padding: 6px 12px; font-size: 12px; color: var(--text-soft);
+    background: var(--pink-50); border-bottom: 1px solid var(--pink-100);
+  }
+  #screenStatus .perm-on { color: #C0392B; font-weight: 600; }
+  #screenStatus .perm-off { color: var(--text-soft); }
+  #screenImgWrap {
+    position: relative; flex: 1; overflow: auto; margin: 8px; cursor: crosshair;
+    border: 1px solid var(--pink-100); border-radius: 12px; background: #fff;
+  }
+  #screenImg { display: block; width: 100%; image-rendering: auto; user-select: none; }
+  #screenMarker {
+    position: absolute; width: 26px; height: 26px; pointer-events: none;
+    border: 3px solid var(--rose-deep); border-radius: 50%;
+    transform: translate(-50%, -50%); box-shadow: 0 0 0 2px #fff;
+  }
+  #screenBar {
+    display: flex; gap: 6px; align-items: center; padding: 8px 10px;
+    border-top: 1px solid var(--pink-100); flex-wrap: wrap;
+  }
+  #screenBar input {
+    flex: 1; min-width: 140px; padding: 8px 10px; border-radius: 10px;
+    border: 1px solid var(--pink-200); outline: none; font-size: 13px;
+    background: #fff; color: var(--text);
+  }
+  #screenBar button {
+    padding: 8px 12px; border: none; border-radius: 10px; cursor: pointer;
+    background: var(--pink-100); color: var(--rose-deep); font-size: 13px;
+  }
+  #screenBar button:hover { background: var(--pink-200); }
+  #screenBar button.primary { background: var(--rose-deep); color: #fff; }
+  #screenBar button.primary:hover { background: var(--rose); }
+  #permState { font-size: 12px; color: var(--text-soft); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+  <div class="panel-titlebar">
+    <span class="title" id="panelTitle">元气小小 · 面板</span>
+    <button type="button" class="close" id="panelClose" aria-label="关闭面板">×</button>
+  </div>
+  <div id="panelContent"></div>
+  <div id="panelEmpty" class="hidden">暂无内容～</div>
+
+  <!-- v18.3 屏幕「眼睛 + 手」：截图展示 + 坐标点击 + 输入/按键 -->
+  <div id="screenWrap" class="hidden">
+    <div id="screenStatus">屏幕模式 · <span class="perm-off">待截图</span></div>
+    <div id="screenImgWrap">
+      <img id="screenImg" alt="屏幕截图" draggable="false">
+      <div id="screenMarker" class="hidden"></div>
+    </div>
+    <div id="screenBar">
+      <input id="screenInput" type="text" maxlength="200" placeholder="输入文本，回车发送">
+      <button type="button" id="btnType" class="primary">输入</button>
+      <button type="button" id="btnEnter">回车</button>
+      <button type="button" id="btnEsc">Esc</button>
+      <button type="button" id="btnDown">↓滚</button>
+      <button type="button" id="btnUp">↑滚</button>
+      <button type="button" id="btnClosePerm">关闭权限</button>
+      <span id="permState"></span>
+    </div>
+  </div>
+
+  <script src="tauri-bridge.js?v=2"></script>
+  <script src="panel.js?v=3"></script>
+</body>
+</html>

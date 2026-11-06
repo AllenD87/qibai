@@ -1,0 +1,10 @@
+name: 网页摘要
+version: 1.0.0
+description: 抓取白名单网页并生成简明中文摘要（只读，防 SSRF）
+triggers:
+  - 网页摘要
+  - 总结网页
+  - 总结这篇文章
+  - 看看这个链接
+  - 提取要点
+category: 信息获取

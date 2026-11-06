@@ -1,0 +1,29 @@
+{
+  "id": "com.qibai.skill.weather",
+  "type": "skill",
+  "name": "查天气",
+  "description": "查询任意城市实时天气：温度、体感、天气状况、湿度、风速。说「使用查天气，看看北京今天怎么样」「查一下上海的天气」。免费公开接口（wttr.in），无需配置。",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": [],
+  "entry": {
+    "kind": "command",
+    "command": "run.sh"
+  },
+  "functions": [
+    {
+      "name": "query_weather",
+      "description": "按城市名查询实时天气（中文城市名，如 北京/上海/石家庄）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string",
+            "description": "城市名，如 北京、上海、广州、深圳、石家庄"
+          }
+        },
+        "required": ["city"]
+      }
+    }
+  ]
+}

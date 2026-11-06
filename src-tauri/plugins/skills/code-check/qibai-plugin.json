@@ -1,0 +1,1 @@
+{"id":"com.qibai.skill.codecheck","type":"skill","name":"代码检查","version":"1.0.0","description":"只读检查目录下 JS/TS 文件语法与常见问题，给出修复建议","entry":{"kind":"command","command":"check.sh"},"functions":[{"name":"code_check","description":"检查指定目录下 js 文件的语法错误"}]}

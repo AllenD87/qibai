@@ -1,0 +1,29 @@
+{
+  "id": "com.qibai.skill.horoscope",
+  "type": "skill",
+  "name": "星座运势",
+  "description": "查看今日星座运势：总体评分、幸运色、幸运数字、事业爱情健康小贴士。说「使用星座运势，看看白羊座今天怎么样」。本地规则生成，娱乐向，全龄友好，无需网络。",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": [],
+  "entry": {
+    "kind": "command",
+    "command": "run.sh"
+  },
+  "functions": [
+    {
+      "name": "today_fortune",
+      "description": "按星座生成今日运势（本地规则，确定性随机，娱乐性质）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sign": {
+            "type": "string",
+            "description": "星座名，如 白羊座/金牛座/双子座/巨蟹座/狮子座/处女座/天秤座/天蝎座/射手座/摩羯座/水瓶座/双鱼座"
+          }
+        },
+        "required": ["sign"]
+      }
+    }
+  ]
+}

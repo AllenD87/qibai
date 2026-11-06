@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>元气小小 · 菜单</title>
+<style>
+  /* ===== 独立菜单窗：粉色系圆角卡片风格（窗口 180×240，内容宽松舒适） ===== */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: transparent;
+    font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    -webkit-user-select: none; user-select: none;
+  }
+  #ctxMenu {
+    position: fixed;
+    inset: 0;
+    margin: 10px;
+    background: linear-gradient(165deg, #ffffff 0%, #fff6fa 55%, #ffeef6 100%);
+    border: 1px solid transparent; /* v21.11.6：边框透明（无可见边框线） */
+    border-radius: 24px; /* v21.11.6：加大圆角 */
+    box-shadow:
+      0 10px 30px rgba(196, 118, 158, 0.20),
+      0 3px 8px rgba(196, 118, 158, 0.12),
+      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    padding: 8px;
+    overflow: hidden;
+  }
+  @keyframes ctxPop {
+    from { transform: scale(.92) translateY(-4px); opacity: 0; }
+    to   { transform: scale(1) translateY(0);     opacity: 1; }
+  }
+  .ctx-group-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: #C695B5;
+    letter-spacing: .16em;
+    padding: 7px 14px 4px; /* v21.11.7：压缩标签上下留白 */
+  }
+  .ctx-item {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    width: 100%;
+    min-height: 32px; /* v21.11.7：38→32，保证 5 项+2 标签不超窗口高度、底部「退出」可见 */
+    padding: 0 13px;
+    border: none;
+    border-radius: 12px;
+    background: transparent;
+    font-size: 13px;
+    font-weight: 500;
+    color: #55344A;
+    text-align: left;
+    cursor: pointer;
+    transition: background .13s ease, transform .06s ease;
+  }
+  .ctx-item svg {
+    width: 16px; height: 16px;
+    fill: none;
+    stroke: #E266A6;
+    stroke-width: 2;
+    flex-shrink: 0;
+  }
+  .ctx-item span { white-space: nowrap; }
+  .ctx-item:hover { background: linear-gradient(90deg, #FFE9F2, #FFF2F8); }
+  .ctx-item:active { transform: scale(.97); }
+  .ctx-item.danger { color: #D6435C; }
+  .ctx-item.danger svg { stroke: #D6435C; }
+  .ctx-item.danger:hover { background: #FFEDEF; }
+  .ctx-item.danger:active { transform: scale(.97); }
+</style>
+</head>
+<body>
+  <div id="ctxMenu" role="menu">
+    <div class="ctx-group-label">角色</div>
+    <button type="button" class="ctx-item" id="ctxLock" role="menuitem">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2.6"/><path d="M8 10V7.6a4 4 0 0 1 8 0V10"/></svg>
+      <span id="ctxLockText">锁定位置</span>
+    </button>
+    <button type="button" class="ctx-item" id="ctxGuard" role="menuitem">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8-7 10-4-2-7-5.4-7-10V6l7-3z" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>守护我</span>
+    </button>
+    <div class="ctx-group-label">全局</div>
+    <button type="button" class="ctx-item" id="ctxConsole" role="menuitem">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2.2"/><path d="M9 21h6M12 17v4"/></svg>
+      <span>打开控制台</span>
+    </button>
+    <button type="button" class="ctx-item" id="ctxMinimal" role="menuitem">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" stroke-linecap="round"/></svg>
+      <span id="ctxMinimalText">完整界面</span>
+    </button>
+    <button type="button" class="ctx-item" id="ctxTransBg" role="menuitem">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v12H9l-5 4V5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 9l3 3 2-2 4 4" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span id="ctxTransBgText">透明背景</span>
+    </button>
+    <button type="button" class="ctx-item danger" id="ctxExit" role="menuitem">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 1 0 8 8h-2a6 6 0 1 1-6-6V4zM14 12h7"/></svg>
+      <span>退出元气小小</span>
+    </button>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+      // v21.11.2：零依赖 invoke——不加载 tauri-bridge，直接走 Tauri 内核 API。
+      // 双路径：withGlobalTauri 暴露的 __TAURI__ 优先，否则 __TAURI_INTERNALS__（Tauri v2 内核常驻）。
+      // 彻底消除「桥没加载 / 全局名不匹配 / 缓存旧文件」导致的按钮点了没反应。
+      function invoke(cmd, args) {
+        return new Promise(function (resolve, reject) {
+          try {
+            if (window.__TAURI__ && window.__TAURI__.invoke) {
+              window.__TAURI__.invoke(cmd, args).then(resolve).catch(reject);
+              return;
+            }
+            if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
+              window.__TAURI_INTERNALS__.invoke(cmd, args).then(resolve).catch(reject);
+              return;
+            }
+            reject(new Error('no tauri runtime: ' + cmd));
+          } catch (e) { reject(e); }
+        });
+      }
+      function pick(action) {
+        if (action === 'transbg') { try { invoke('debug_log', { msg: '[transbg] menu-pick' }); } catch (e) {} }
+        invoke('ctx_menu_pick', { action: action }).catch(function (e) { console.error('[menu] pick', action, e); });
+      }
+      function closeMenu() {
+        invoke('ctx_menu_close').catch(function () {});
+      }
+      var els = {
+        lock: document.getElementById('ctxLock'),
+        guard: document.getElementById('ctxGuard'),
+        console: document.getElementById('ctxConsole'),
+        minimal: document.getElementById('ctxMinimal'),
+        transBg: document.getElementById('ctxTransBg'),
+        exit: document.getElementById('ctxExit')
+      };
+      els.lock.addEventListener('click', function () { pick('lock'); });
+      els.guard.addEventListener('click', function () { pick('guard'); });
+      els.console.addEventListener('click', function () { pick('console'); });
+      els.minimal.addEventListener('click', function () { pick('minimal'); });
+      els.transBg.addEventListener('click', function () { pick('transbg'); });
+      els.exit.addEventListener('click', function () { pick('exit'); });
+      // v42：菜单文字与主窗使用同一渲染能力事实源；兼容模式不显示“透明已开”。
+      Promise.all([invoke('get_settings'), invoke('pet_render_info')]).then(function (results) {
+        var s = results[0] || {};
+        var info = results[1] || {};
+        var el = document.getElementById('ctxTransBgText');
+        var nativeTransparent = info.transparent !== false;
+        if (el && s.ui) {
+          el.textContent = nativeTransparent
+            ? '透明背景：' + (s.ui.transparent_bg ? '开' : '关')
+            : '透明背景：兼容';
+          els.transBg.title = nativeTransparent ? '切换透明背景' : '当前 X11 环境使用安全兼容窗，避免动作叠影';
+        }
+      }).catch(function () {});
+      // 失焦自动关闭（点立绘窗/其他窗口/空白处）：菜单窗失焦即销毁
+      window.addEventListener('blur', closeMenu);
+      // ESC 关闭
+      document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMenu(); });
+    })();
+  </script>
+</body>
+</html>

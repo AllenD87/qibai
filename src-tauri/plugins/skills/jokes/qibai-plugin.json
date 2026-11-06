@@ -1,0 +1,29 @@
+{
+  "id": "com.qibai.skill.jokes",
+  "type": "skill",
+  "name": "冷笑话",
+  "description": "讲个冷笑话/段子逗你开心。说「讲个笑话/冷笑话/来段子/逗我笑」。纯本地词库生成，三类无伤害段子（文字游戏/反转/谐音），全龄友好，硬禁地域/职业/疾病/性别/群体攻击与低俗梗。",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": [],
+  "entry": {
+    "kind": "command",
+    "command": "run.sh"
+  },
+  "functions": [
+    {
+      "name": "tell_jokes",
+      "description": "按类别（谐音/文字游戏/反转）或随机输出 1-3 条无伤害冷笑话（本地词库规则生成，safe-mode：禁地域/职业/疾病/性别/群体攻击与低俗内容）。触发词：讲个笑话、冷笑话、来段子、逗我笑。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "段子类别：谐音 / 文字游戏 / 反转；留空则随机混合"
+          }
+        },
+        "required": []
+      }
+    }
+  ]
+}

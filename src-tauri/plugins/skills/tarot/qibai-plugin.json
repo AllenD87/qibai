@@ -1,0 +1,29 @@
+{
+  "id": "com.qibai.skill.tarot",
+  "type": "skill",
+  "name": "塔罗占卜",
+  "description": "抽三张大阿卡纳牌看过去/现在/未来，温和解读加综合提示。说「占卜/塔罗/抽张牌/算一卦」。纯本地规则抽牌（确定性随机、非凭感觉），娱乐向，结尾必带免责声明，不做医疗/财务/法律建议。",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": [],
+  "entry": {
+    "kind": "command",
+    "command": "run.sh"
+  },
+  "functions": [
+    {
+      "name": "draw_tarot",
+      "description": "以「过去/现在/未来」三牌阵抽 3 张大阿卡纳牌并给出温和正向解读（本地确定性随机生成，娱乐性质；输出末尾自带免责声明）。触发词：占卜、塔罗、抽张牌、算一卦。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "用户想问的问题或心情，如「今天的运势」「换工作的纠结」；可为空（整体状态抽牌）"
+          }
+        },
+        "required": []
+      }
+    }
+  ]
+}

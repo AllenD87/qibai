@@ -1,0 +1,9 @@
+{
+  "id": "com.qibai.skill.createproject",
+  "type": "skill",
+  "name": "创建工程",
+  "description": "在工作区根内创建新项目目录骨架：先查真实根、路径被拒改相对路径、每步校验落地。",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": ["files:write"]
+}

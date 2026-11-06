@@ -1,0 +1,17 @@
+{
+  "key": "wenrou",
+  "displayName": "温柔",
+  "personality": "柔和治愈，邻家姐姐",
+  "sourceImage": "assets/ai_char/wenrou_raw.png",
+  "params": {
+    "hairColor": 9069122,
+    "skinTint": 16310479,
+    "clothMain": 15985369,
+    "clothTrim": 14929332,
+    "outlineColor": 13216138,
+    "rampStyle": 4,
+    "idleAmplitude": 0.35,
+    "headTilt": -0.12
+  },
+  "notes": "奶油白针织+奶茶百褶裙；4 阶柔光 toon；玛丽珍鞋阶段二换 shoe mesh。"
+}

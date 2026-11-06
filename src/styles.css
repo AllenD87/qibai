@@ -1,0 +1,1097 @@
+/* ============================================================
+   元气小小 Qibai — 全局样式
+   清新治愈系：奶白 / 淡粉 / 浅紫，全龄友好，无外部字体依赖
+   ============================================================ */
+
+:root {
+  /* 色板 */
+  --cream:        #FFF9F4;
+  --pink-50:       #FFF5F8;
+  --pink-100:      #FFE9F1;
+  --pink-200:      #FBD3E4;
+  --rose:          #E58FAD;
+  --rose-deep:     #D17397;
+  --purple-100:    #EFE7F7;
+  --purple-200:    #DCCBEF;
+  --purple-deep:   #9B7FB8;
+  --text:          #6E5A6B;
+  --text-soft:     #A893A5;
+  --white:         #FFFFFF;
+  --danger:        #E0708A;
+  --ok:            #7FBF9E;
+
+  /* 形态 */
+  --radius-s: 10px;
+  --radius-m: 16px;
+  --radius-l: 24px;
+  --shadow-soft: 0 8px 24px rgba(213, 143, 173, 0.18);
+  --font-stack: -apple-system, BlinkMacSystemFont, "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC",
+    "Source Han Sans SC", sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  font-family: var(--font-stack);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- Tauri 真实环境：body 完全透明，只显示内容 ---------- */
+body.tauri-mode {
+  background: transparent !important;
+  overflow: hidden;
+}
+
+/* ---------- 浏览器独立模式：铺一层桌面感背景，便于冒烟截图 ---------- */
+body.browser-mode {
+  min-height: 100vh;
+  background:
+    radial-gradient(1200px 600px at 20% -10%, #FFE9F1 0%, transparent 60%),
+    radial-gradient(1000px 500px at 90% 110%, #EFE7F7 0%, transparent 55%),
+    linear-gradient(160deg, #FDF6FA 0%, #F4F0FA 100%);
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+input, select, textarea {
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text);
+}
+
+/* ============================================================
+   主窗：桌宠
+   ============================================================ */
+
+.pet-window {
+  width: 340px;
+  margin: 0 auto;
+  padding: 12px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+}
+
+body.browser-mode .pet-window {
+  margin-top: 48px;
+}
+
+/* 顶部拖拽条（Tauri 下 data-tauri-drag-region 生效） */
+.drag-bar {
+  width: 100%;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.drag-bar::after {
+  content: "";
+  width: 48px; height: 4px;
+  border-radius: 2px;
+  background: var(--pink-200);
+  opacity: .8;
+}
+
+/* ---------- 说话气泡 ---------- */
+.speech-bubble {
+  max-width: 280px;
+  background: var(--white);
+  border: 1.5px solid var(--pink-200);
+  border-radius: var(--radius-m);
+  padding: 10px 14px;
+  font-size: 13.5px;
+  text-align: center;
+  box-shadow: var(--shadow-soft);
+  position: relative;
+  transition: opacity .25s ease, transform .25s ease;
+}
+.speech-bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -7px;
+  left: 50%;
+  transform: translateX(-50%) rotate(45deg);
+  width: 12px; height: 12px;
+  background: var(--white);
+  border-right: 1.5px solid var(--pink-200);
+  border-bottom: 1.5px solid var(--pink-200);
+}
+.speech-bubble.hidden {
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+}
+
+/* ---------- 角色立绘区 ---------- */
+.stage {
+  position: relative;
+  width: 190px;
+  height: 220px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  /* v18.8：窗口空白（角色透明边界外）不响应任何点击/拖动/互动，
+     只有角色本身可交互——点矩形框空白不再触发害羞等声音 */
+  pointer-events: none;
+}
+
+.character-wrap {
+  position: relative;
+  width: 180px;
+  height: 210px;
+  pointer-events: auto; /* v18.8：角色区域恢复交互 */
+  cursor: pointer;
+  /* idle 呼吸 */
+  animation: breathe 3.2s ease-in-out infinite;
+  transform-origin: 50% 90%;
+  cursor: pointer;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.025); }
+}
+
+.stage.thinking .character-wrap {
+  /* 思考时呼吸略快 */
+  animation-duration: 1.6s;
+}
+
+.character-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  pointer-events: none;
+  /* v21 安全网：窗口尺寸再小也不溢出裁切，角色全身可见 */
+  max-width: 100%;
+  max-height: 100%;
+}
+.character-img.img-missing { display: none; }
+
+/* 真实立绘加载成功后，隐藏 CSS 占位脸（v21 补 !important，杜绝占位脸与立绘叠影） */
+.stage.asset-ready .placeholder-face { display: none !important; }
+/* v21.11.5：立绘一旦设置 src（无论 asset-ready 类是否及时加上），占位脸必隐藏。
+   根治「启动时粉色圆圈+眼睛叠在立绘上」——占位脸（粉头圆+身体+眼睛）在部分
+   时序（如初始化经 setCharacterImg 显示立绘、probe 未完成）下 asset-ready 未加，
+   透过透明立绘露出粉圈与眼睛。 */
+#characterImg[src]:not([src=""]) ~ .placeholder-face { display: none !important; }
+
+/* v21 叠层修复（需求一·4）：未挂载 3D 引擎时，GL 画布强制隐藏，不与 2D 立绘叠画 */
+body:not(.gl-on) .gl-canvas { display: none !important; }
+
+/* ---- CSS 占位角色（资产未就位时显示，全部表情用类切换） ---- */
+.placeholder-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  pointer-events: none;
+}
+.body.browser-mode .placeholder-face { } /* keep */
+.placeholder-face svg {
+  width: 150px;
+  height: 190px;
+  overflow: visible;
+}
+
+/* 眨眼：character / character_closed 两张图交替时由 JS 换 src；
+   占位脸用 .eyes-closed 类把眼睛翻成一条线 */
+.eye { transition: all .12s ease; }
+.eyes-closed .eye { ry: 1.4; }
+.eyes-closed .eye { transform: scaleY(0.15); transform-box: fill-box; transform-origin: center; }
+
+/* ============================================================
+   v22-fix42：立绘情绪滤镜强化
+   表情立绘（expressions/*.png）局部差异在小窗口（168px 立绘）不可感知，
+   滤镜放大情绪信号（sad 变暗、angry 红调、blush 粉亮等）+ 情绪脉冲微动
+   ============================================================ */
+.character-img { transition: filter .3s ease; }
+.character-img.img-happy     { filter: saturate(1.08) brightness(1.02); }
+.character-img.img-laugh     { filter: saturate(1.12) brightness(1.05); }
+.character-img.img-smiling   { filter: saturate(1.03); }
+.character-img.img-blush     { filter: saturate(1.18) brightness(1.04) hue-rotate(-4deg); }
+.character-img.img-sad       { filter: saturate(.72) brightness(.9) contrast(.95); }
+.character-img.img-worried   { filter: saturate(.84) brightness(.95); }
+.character-img.img-shy       { filter: saturate(1.12) brightness(.99); }
+.character-img.img-surprised { filter: saturate(1.12) brightness(1.1) contrast(1.04); }
+.character-img.img-angry     { filter: saturate(1.28) brightness(.96) contrast(1.07) hue-rotate(-10deg); }
+.character-img.img-thinking  { filter: saturate(.94) brightness(1.02); }
+.character-img.img-focused   { filter: saturate(1.02) contrast(1.03); }
+.character-img.img-sleepy    { filter: saturate(.78) brightness(.88) contrast(.93); }
+.character-img.img-pulse { animation: imgEmotionPulse .7s ease-in-out; }
+@keyframes imgEmotionPulse {
+  0%, 100% { transform: scale(1); }
+  40%      { transform: scale(1.04); }
+}
+
+/* 占位表情微调（JS 给 .placeholder-face 加 emotion 类） */
+.mouth { transition: all .2s ease; }
+.ph-smiling .mouth  { d: path("M60 128 Q70 136 80 128"); }
+.ph-happy .mouth    { d: path("M58 126 Q70 140 82 126"); }
+.ph-worried .mouth  { d: path("M62 134 Q70 128 78 134"); }
+.ph-sleepy .mouth   { d: path("M64 132 L76 132"); }
+.ph-focused .mouth  { d: path("M64 132 L76 132"); }
+.ph-sad .mouth      { d: path("M62 132 Q70 124 78 132"); }
+.ph-shy .mouth      { d: path("M64 132 Q70 136 76 132"); }
+.ph-surprised .mouth { d: path("M70 128 a4 5 0 1 0 0.1 0"); }
+/* v18.4 新表情占位（资产未就绪时的兜底脸） */
+.ph-angry .mouth    { d: path("M62 130 Q70 122 78 130"); }
+.ph-angry .eyebrow  { transform: translateY(-3px) rotate(-6deg); }
+.ph-laugh .mouth    { d: path("M58 130 Q70 142 82 130"); }
+.ph-laugh .eye      { transform: scaleY(0.3); transform-box: fill-box; transform-origin: center; }
+.ph-thinking .mouth { d: path("M62 130 Q70 126 78 130"); }
+.ph-thinking .eye   { transform: translateX(2px); }
+.ph-blush .mouth    { d: path("M64 132 Q70 136 76 132"); }
+.ph-blush .cheek    { opacity: 1; }
+
+/* ---------- 动作动画（整体身体变换） ---------- */
+.action-wave        { animation: actWave .9s ease-in-out 2; }
+.action-nod         { animation: actNod .8s ease-in-out 2; }
+.action-shake       { animation: actShake .8s ease-in-out 2; }
+.action-stretch     { animation: actStretch 1.4s ease-out 1; }
+.action-hands_on_hips { animation: actHands .9s ease-in-out 2; }
+.action-touch       { animation: actTouch 1s ease-out 1; }
+.action-pet         { animation: actPet 1.1s ease-out 1; }
+.action-celebrate   { animation: actCelebrate 1.2s ease-in-out 2; }
+/* v18.4 情感表达新动作：蹦跳/歪头/扭动/前倾/指点 */
+.action-bounce      { animation: actBounce .75s ease-in-out 2; }
+.action-tilt        { animation: actTilt 1.1s ease-in-out 2; }
+.action-wiggle      { animation: actWiggle .9s ease-in-out 2; }
+.action-lean        { animation: actLean 1.1s ease-in-out 2; }
+.action-point       { animation: actPoint 1.2s ease-in-out 2; }
+
+@keyframes actBounce {
+  0%,100% { transform: translateY(0); }
+  40% { transform: translateY(-16px); }
+  70% { transform: translateY(-8px); }
+}
+@keyframes actTilt {
+  0%,100% { transform: rotate(0); }
+  25% { transform: rotate(-7deg); }
+  75% { transform: rotate(7deg); }
+}
+@keyframes actWiggle {
+  0%,100% { transform: rotate(0); }
+  20% { transform: rotate(-5deg); }
+  40% { transform: rotate(5deg); }
+  60% { transform: rotate(-3deg); }
+  80% { transform: rotate(3deg); }
+}
+@keyframes actLean {
+  0%,100% { transform: translateX(0); }
+  30% { transform: translateX(12px); }
+  70% { transform: translateX(-6px); }
+}
+@keyframes actPoint {
+  0%,100% { transform: translateX(0) rotate(0); }
+  50% { transform: translateX(10px) rotate(5deg); }
+}
+
+@keyframes actWave {
+  0%,100% { transform: translateY(0) scale(1); }
+  25% { transform: translateY(-5px) scale(1.02); }
+  75% { transform: translateY(5px) scale(0.99); }
+}
+@keyframes actNod {
+  0%,100% { transform: translateY(0); }
+  40% { transform: translateY(8px); }
+}
+@keyframes actShake {
+  0%,100% { transform: translateY(0) scale(1); }
+  25% { transform: translateY(-7px) scale(1.02); }
+  75% { transform: translateY(7px) scale(0.99); }
+}
+@keyframes actStretch {
+  0%   { transform: scale(1,1); }
+  40%  { transform: scale(1.04,1.12); }
+  100% { transform: scale(1,1); }
+}
+@keyframes actHands {
+  0%,100% { transform: scaleX(1); }
+  50% { transform: scaleX(1.06) translateY(3px); }
+}
+@keyframes actTouch {
+  0%   { transform: translateY(0); }
+  30%  { transform: translateY(-6px) scale(1.03,0.97); }
+  100% { transform: translateY(0); }
+}
+@keyframes actPet {
+  0%   { transform: translateY(0); }
+  30%  { transform: translateY(-12px); }
+  55%  { transform: translateY(0); }
+  80%  { transform: translateY(-6px); }
+  100% { transform: translateY(0); }
+}
+@keyframes actCelebrate {
+  0%,100% { transform: translateY(0) scale(1); }
+  25% { transform: translateY(-9px) scale(1.04); }
+  75% { transform: translateY(0) scale(1.04); }
+}
+
+/* 提醒时一次"呼吸强调" */
+.stage.reminder-pulse .character-wrap {
+  animation: pulseBreathe .8s ease-in-out 2;
+}
+@keyframes pulseBreathe {
+  0%,100% { transform: scale(1); }
+  50%     { transform: scale(1.08); }
+}
+
+/* ============================================================
+   对话面板
+   ============================================================ */
+.chat-panel {
+  width: 100%;
+  background: var(--white);
+  border: 1.5px solid var(--pink-200);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-soft);
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+}
+.chat-panel.open { display: flex; }
+
+.chat-scroll {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bubble-row { display: flex; max-width: 100%; }
+.bubble-row.me { justify-content: flex-end; }
+.bubble-row.role { justify-content: flex-start; }
+
+.bubble {
+  max-width: 78%;
+  padding: 7px 12px;
+  border-radius: 14px;
+  font-size: 13px;
+  word-break: break-word;
+}
+.bubble-row.me .bubble {
+  background: var(--rose);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.bubble-row.role .bubble {
+  background: var(--pink-100);
+  color: var(--text);
+  border-bottom-left-radius: 4px;
+}
+.bubble-row.sys .bubble {
+  background: var(--purple-100);
+  color: var(--purple-deep);
+  font-size: 12px;
+}
+
+/* v26：聊天轻量 Markdown 白名单渲染样式（code 块 / 行内 code / 列表点） */
+.bubble .chat-code {
+  display: block;
+  margin: 4px 0;
+  padding: 6px 8px;
+  background: rgba(110, 90, 107, .08);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+.bubble code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
+  font-size: .92em;
+  background: rgba(110, 90, 107, .12);
+  padding: 0 3px;
+  border-radius: 4px;
+}
+.bubble .chat-bullet {
+  display: inline;
+}
+
+.thinking-tip {
+  font-size: 12px;
+  color: var(--text-soft);
+  padding: 2px 12px 8px;
+  display: none;
+}
+.thinking-tip.on { display: block; }
+.thinking-tip .dot {
+  display: inline-block; width: 6px; height: 6px;
+  margin: 0 2px; border-radius: 50%;
+  background: var(--rose);
+  animation: dotPulse 1s infinite;
+}
+.thinking-tip .dot:nth-child(2) { animation-delay: .2s; }
+.thinking-tip .dot:nth-child(3) { animation-delay: .4s; }
+@keyframes dotPulse { 0%,100%{opacity:.2;} 50%{opacity:1;} }
+
+.chat-input-row {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid var(--pink-100);
+}
+.chat-input-row input {
+  flex: 1;
+  min-width: 0;
+  border: 1.5px solid var(--pink-200);
+  border-radius: 999px;
+  padding: 7px 12px;
+  outline: none;
+  background: var(--pink-50);
+}
+.chat-input-row input:focus { border-color: var(--rose); }
+.chat-input-row button.send {
+  background: var(--rose);
+  color: #fff;
+  border-radius: 999px;
+  padding: 7px 16px;
+  font-size: 13px;
+}
+.chat-input-row button.send:hover { background: var(--rose-deep); }
+
+/* ---------- 底部工具条 ---------- */
+.toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.toolbar button.icon-btn {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  background: var(--white);
+  border: 1.5px solid var(--pink-200);
+  box-shadow: var(--shadow-soft);
+  display: flex; align-items: center; justify-content: center;
+  transition: transform .15s ease;
+}
+.toolbar button.icon-btn:hover { transform: translateY(-2px); }
+.toolbar button.icon-btn svg { width: 18px; height: 18px; fill: var(--rose-deep); }
+
+/* ============================================================
+   提醒气泡 overlay（桌面角落）
+   ============================================================ */
+.reminder-overlay {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  width: 260px;
+  background: var(--white);
+  border: 1.5px solid var(--purple-200);
+  border-left: 6px solid var(--purple-deep);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-soft);
+  padding: 12px 14px;
+  transform: translateX(120%);
+  transition: transform .35s ease;
+  z-index: 50;
+}
+.reminder-overlay.show { transform: translateX(0); }
+.reminder-overlay .tag {
+  font-size: 11px;
+  color: var(--purple-deep);
+  font-weight: 600;
+  letter-spacing: .05em;
+}
+.reminder-overlay .msg {
+  margin-top: 4px;
+  font-size: 13.5px;
+}
+.reminder-overlay .close {
+  position: absolute; top: 6px; right: 8px;
+  /* v26：扩大点击热区（录屏实测 16px 小按钮点不中）。
+     30×30 圆形热区 + flex 居中，hover 高亮，移动端点按即时响应。 */
+  width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-soft); font-size: 18px; line-height: 1;
+  background: transparent; border: none; border-radius: 50%;
+  cursor: pointer; z-index: 2;
+  touch-action: manipulation;
+  transition: background .2s ease, color .2s ease;
+}
+.reminder-overlay .close:hover {
+  background: rgba(110, 90, 107, .1);
+  color: var(--purple-deep);
+}
+.reminder-overlay .close:active {
+  background: rgba(110, 90, 107, .18);
+}
+
+/* ============================================================
+   危险操作确认弹窗
+   ============================================================ */
+.approval-modal {
+  position: fixed; inset: 0;
+  background: rgba(110, 90, 107, .25);
+  backdrop-filter: blur(2px);
+  display: none;
+  align-items: center; justify-content: center;
+  z-index: 100;
+}
+.approval-modal.show { display: flex; }
+.approval-card {
+  width: 300px;
+  background: var(--white);
+  border-radius: var(--radius-l);
+  border: 1.5px solid var(--pink-200);
+  box-shadow: var(--shadow-soft);
+  padding: 20px;
+  text-align: center;
+}
+.approval-card h3 { font-size: 16px; color: var(--danger); margin-bottom: 8px; }
+.approval-card .skill-name {
+  display: inline-block;
+  background: var(--pink-100);
+  color: var(--rose-deep);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.approval-card p { font-size: 13px; color: var(--text); }
+.approval-actions {
+  display: flex; gap: 10px; margin-top: 16px;
+}
+.approval-actions button {
+  flex: 1; padding: 9px 0; border-radius: 999px; font-size: 13px;
+}
+.approval-actions .deny {
+  background: var(--pink-100); color: var(--text);
+}
+.approval-actions .allow {
+  background: var(--rose); color: #fff;
+}
+
+/* ============================================================
+   浏览器模式：调试控制台（手动触发各系统，仅 mock 模式显示）
+   ============================================================ */
+.dev-panel {
+  display: none;
+  width: 560px;
+  margin: 24px auto 60px;
+  background: var(--white);
+  border: 1.5px dashed var(--purple-200);
+  border-radius: var(--radius-m);
+  padding: 16px 20px;
+}
+body.browser-mode .dev-panel { display: block; }
+.dev-panel h4 {
+  font-size: 13px; color: var(--purple-deep);
+  margin-bottom: 10px; letter-spacing: .03em;
+}
+.dev-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.dev-grid button {
+  background: var(--purple-100);
+  color: var(--purple-deep);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  transition: background .15s;
+}
+.dev-grid button:hover { background: var(--purple-200); }
+.dev-note { font-size: 11.5px; color: var(--text-soft); }
+
+/* ============================================================
+   设置页 settings.html
+   ============================================================ */
+.settings-page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 32px 20px 80px;
+}
+body.browser-mode.settings-page-body { padding: 20px 0 0; }
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.settings-header h1 {
+  font-size: 22px;
+  color: var(--text);
+  font-weight: 600;
+}
+.settings-header .back {
+  font-size: 13px;
+  color: var(--rose-deep);
+  text-decoration: none;
+}
+
+.settings-card {
+  background: var(--white);
+  border: 1.5px solid var(--pink-200);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-soft);
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}
+.settings-card h2 {
+  font-size: 15px;
+  color: var(--rose-deep);
+  margin-bottom: 14px;
+  display: flex; align-items: center; gap: 8px;
+}
+.settings-card h2::before {
+  content: "";
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--rose);
+}
+
+.field { margin-bottom: 12px; }
+.field label {
+  display: block;
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 5px;
+  font-weight: 500;
+}
+.field .hint {
+  font-size: 11.5px;
+  color: var(--text-soft);
+  margin-top: 4px;
+}
+.field input[type=text], .field input[type=password], .field input[type=number],
+.field select {
+  width: 100%;
+  border: 1.5px solid var(--pink-200);
+  border-radius: var(--radius-s);
+  padding: 8px 12px;
+  background: var(--pink-50);
+  outline: none;
+}
+.field input:focus, .field select:focus { border-color: var(--rose); }
+
+.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+@media (max-width: 900px) {
+  .row-3 { grid-template-columns: 1fr; }
+}
+
+/* 开关行 */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+}
+.toggle-row .label-wrap { flex: 1; min-width: 0; }
+.toggle-row .title { font-size: 13.5px; }
+.toggle-row .desc { font-size: 11.5px; color: var(--text-soft); margin-top: 2px; }
+
+.switch {
+  position: relative;
+  width: 42px; height: 24px;
+  border-radius: 999px;
+  background: var(--pink-200);
+  transition: background .2s;
+  flex-shrink: 0;
+}
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left .2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,.15);
+}
+.switch.on { background: var(--rose); }
+.switch.on::after { left: 21px; }
+
+/* ---------- 形象选择卡片 ---------- */
+.persona-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 10px;
+}
+.persona-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 8px;
+  border: 1.5px solid var(--pink-200);
+  border-radius: var(--radius-m);
+  background: var(--pink-50);
+  cursor: pointer;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+  text-align: center;
+}
+.persona-card img {
+  width: 64px;
+  height: 84px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #FFE9F1, #EFE7F7);
+}
+.persona-card .p-name { font-size: 12.5px; color: var(--text); font-weight: 500; }
+.persona-card .p-desc { font-size: 10.5px; color: var(--text-soft); }
+.persona-card:hover { border-color: var(--rose); }
+.persona-card.sel {
+  border-color: var(--rose);
+  background: var(--pink-100);
+  box-shadow: 0 0 0 2px var(--pink-200);
+}
+
+.save-bar {
+  position: sticky;
+  bottom: 0;
+  padding: 14px 0 4px;
+  background: linear-gradient(transparent, var(--cream) 30%);
+  display: flex; align-items: center; gap: 14px;
+}
+.save-bar button.save {
+  background: var(--rose);
+  color: #fff;
+  border-radius: 999px;
+  padding: 10px 32px;
+  font-size: 14px;
+}
+.save-bar button.save:hover { background: var(--rose-deep); }
+.save-bar .saved-tip { font-size: 12.5px; color: var(--ok); opacity: 0; transition: opacity .3s; }
+.save-bar .saved-tip.show { opacity: 1; }
+
+/* 响应式 */
+@media (max-width: 480px) {
+  .row-2 { grid-template-columns: 1fr; }
+  .dev-panel { width: calc(100vw - 24px); }
+  .pet-window { width: 100%; }
+}
+
+/* ============================================================
+   P1 双角色同屏与互动
+   ============================================================ */
+
+/* ---- 双角色舞台：角色容器改为舞台内绝对定位，可窗口内拖动 ---- */
+.stage { overflow: visible; }
+.character-wrap { position: absolute; bottom: 4px; }
+#characterWrap { left: 50%; margin-left: -90px; }
+
+/* 客角色：默认藏在舞台左侧外沿，召唤时走入 */
+.guest-wrap {
+  left: 150px;
+  transition: left 1s ease;
+}
+.guest-wrap.offstage { left: -170px; }
+.guest-wrap[hidden] { display: none; }
+
+/* 双人同屏：舞台变宽、两个角色等比缩小，220×260 窗口内自适应 */
+.stage.two-up { width: 320px; height: 230px; }
+.stage.two-up .character-wrap { width: 104px; height: 122px; }
+.stage.two-up .placeholder-face svg { width: 84px; height: 116px; }
+.stage.two-up #characterWrap { left: 6px; margin-left: 0; }
+.stage.two-up .guest-wrap { left: 150px; }
+.stage.two-up .guest-wrap.offstage { left: -120px; }
+
+/* Tauri 真窗口（220px 宽）内进一步压缩 */
+body.tauri-mode .stage.two-up { width: 208px; }
+body.tauri-mode .stage.two-up .character-wrap { width: 96px; height: 112px; }
+
+/* 客角色气泡：靠近客角色上方 */
+.guest-bubble {
+  position: absolute;
+  top: -10px;
+  left: 130px;
+  max-width: 150px;
+  font-size: 12px;
+  padding: 7px 10px;
+  z-index: 5;
+}
+.guest-bubble::after { display: none; }
+
+/* 关系称谓徽标 */
+.rel-badge {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--purple-100);
+  color: var(--purple-deep);
+  font-size: 11px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+  box-shadow: var(--shadow-soft);
+  z-index: 6;
+}
+.rel-badge.hidden { display: none; }
+
+/* 工具条双人按钮 */
+.toolbar .social-btn.hidden { display: none; }
+.toolbar button.icon-btn.off { opacity: .45; }
+
+/* ---- toast 轻提示 ---- */
+.toast-box {
+  position: fixed;
+  top: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  z-index: 200;
+  pointer-events: none;
+}
+.toast {
+  background: var(--text);
+  color: #fff;
+  font-size: 12.5px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  box-shadow: var(--shadow-soft);
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity .25s ease, transform .25s ease;
+  max-width: 260px;
+  text-align: center;
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+
+/* ---- 猜拳 overlay ---- */
+.pk-overlay {
+  position: fixed; inset: 0;
+  background: rgba(110, 90, 107, .25);
+  backdrop-filter: blur(2px);
+  display: none;
+  align-items: center; justify-content: center;
+  z-index: 150;
+}
+.pk-overlay.show { display: flex; }
+.pk-card {
+  width: 300px;
+  background: var(--white);
+  border: 1.5px solid var(--pink-200);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-soft);
+  padding: 16px;
+  text-align: center;
+}
+.pk-card h3 { font-size: 15px; color: var(--rose-deep); margin-bottom: 8px; }
+.pk-arena {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  margin: 8px 0;
+}
+.pk-fighter { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.pk-name { font-size: 12.5px; color: var(--text); }
+.pk-hand {
+  width: 64px; height: 64px;
+  border-radius: 16px;
+  background: var(--pink-50);
+  border: 1.5px solid var(--pink-200);
+  display: flex; align-items: center; justify-content: center;
+}
+.pk-hand svg { width: 36px; height: 36px; }
+.pk-hand.shaking { animation: pkShake .18s ease-in-out 4; }
+@keyframes pkShake {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.pk-vs { color: var(--rose-deep); font-weight: 700; font-size: 14px; }
+.pk-result { font-size: 13.5px; min-height: 22px; color: var(--rose-deep); font-weight: 600; }
+.pk-moves { display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
+.pk-moves button {
+  min-width: 64px;
+  padding: 9px 0;
+  border-radius: 999px;
+  background: var(--pink-100);
+  font-size: 13px;
+  border: 1.5px solid var(--pink-200);
+}
+.pk-moves button:not(:disabled):hover { background: var(--pink-200); }
+.pk-moves button:disabled { opacity: .45; cursor: not-allowed; }
+.pk-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-soft);
+}
+.pk-foot button { font-size: 12.5px; color: var(--rose-deep); }
+
+/* ---- 事件摘要面板（主窗 #social=events） ---- */
+.event-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  width: 280px;
+  background: var(--white);
+  border: 1.5px solid var(--purple-200);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-soft);
+  padding: 12px;
+  display: none;
+  z-index: 120;
+}
+.event-panel.show { display: block; }
+.event-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: var(--purple-deep);
+  margin-bottom: 8px;
+}
+.event-panel-head button { color: var(--text-soft); font-size: 16px; }
+.event-panel-list { display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow-y: auto; }
+.event-row { display: flex; gap: 6px; align-items: flex-start; font-size: 11.5px; }
+.event-row .ev-tag { flex-shrink: 0; background: var(--purple-100); color: var(--purple-deep); border-radius: 6px; padding: 1px 6px; }
+.event-row .ev-text { flex: 1; color: var(--text); }
+.event-row .ev-time { color: var(--text-soft); flex-shrink: 0; }
+
+/* ============================================================
+   设置页：角色管理 / 关系面板 / 事件日志
+   ============================================================ */
+
+/* 角色管理卡片列表 */
+.mgmt-list { display: flex; flex-direction: column; gap: 10px; }
+.mgmt-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1.5px solid var(--pink-200);
+  border-radius: var(--radius-m);
+  background: var(--pink-50);
+}
+.mgmt-card.active { border-color: var(--rose); background: var(--pink-100); box-shadow: 0 0 0 2px var(--pink-200); }
+.mgmt-card img {
+  width: 48px; height: 64px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #FFE9F1, #EFE7F7);
+  flex-shrink: 0;
+}
+.mgmt-info { flex: 1; min-width: 0; }
+.mgmt-info .m-name { font-size: 13.5px; font-weight: 600; }
+.mgmt-info .m-meta { font-size: 11.5px; color: var(--text-soft); margin-top: 2px; }
+.mgmt-nick {
+  display: flex; gap: 6px; margin-top: 6px; align-items: center;
+}
+.mgmt-nick input {
+  width: 90px;
+  border: 1.5px solid var(--pink-200);
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: var(--white);
+  outline: none;
+  font-size: 12.5px;
+}
+.mgmt-nick button {
+  font-size: 11.5px;
+  color: var(--rose-deep);
+  background: var(--white);
+  border: 1.5px solid var(--pink-200);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+.mgmt-actions { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+.mgmt-actions button {
+  min-width: 84px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--white);
+  border: 1.5px solid var(--pink-200);
+  color: var(--text);
+  white-space: nowrap;
+}
+.mgmt-actions button.primary { background: var(--rose); color: #fff; border-color: var(--rose); }
+.mgmt-actions button.on-desk { background: var(--purple-100); border-color: var(--purple-200); color: var(--purple-deep); }
+.mgmt-actions button:hover { filter: brightness(.98); }
+
+/* 关系面板 */
+.relation-row {
+  padding: 10px 4px;
+  border-bottom: 1px dashed var(--pink-200);
+}
+.relation-row:last-child { border-bottom: none; }
+.relation-head { display: flex; justify-content: space-between; font-size: 13px; }
+.relation-head .r-level { color: var(--rose-deep); font-weight: 600; }
+.relation-bar {
+  margin-top: 6px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--pink-100);
+  overflow: hidden;
+}
+.relation-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--pink-200), var(--rose));
+  transition: width .4s ease;
+}
+.relation-foot { margin-top: 4px; font-size: 11.5px; color: var(--text-soft); display: flex; justify-content: space-between; }
+
+/* 事件日志列表 */
+.event-list { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; }
+.event-list .event-row { font-size: 12.5px; }
+.event-list .ev-time { font-size: 11px; }
+
+/* 角色管理面板定位高亮（#social=settings 钩子） */
+.mgmt-list.flash .mgmt-card { animation: mgmtFlash 1.2s ease 2; }
+@keyframes mgmtFlash {
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 0 3px var(--pink-200); }
+}
+
+/* v24 UI 开关：窗口隐藏（浏览器演示模式隐藏立绘容器；真机走 Tauri window.hide） */
+body.pet-window-hidden .pet-window,
+body.pet-window-hidden .bubble,
+body.pet-window-hidden .chat-input-wrap { display: none !important; }
+
+/* v25 聊天功能完善：快捷提问 chips */
+.quick-chips {
+  display: flex;
+  gap: 8px;
+  padding: 6px 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.quick-chips::-webkit-scrollbar { display: none; }
+.quick-chips .chip {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 6px 12px;
+  border: 1px solid var(--pink-200, #f3d9de);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .82);
+  color: var(--rose-deep, #b0455a);
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .18s ease, transform .12s ease;
+}
+.quick-chips .chip:active { transform: scale(.96); background: var(--pink-100, #fce9ee); }
+body.pet-window-hidden .quick-chips { display: none !important; }

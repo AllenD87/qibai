@@ -1,0 +1,42 @@
+[package]
+name = "qibai-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Qibai (栖伴) AI desktop companion — pure Rust core engine, decoupled from Tauri/GUI"
+
+[lib]
+name = "qibai_core"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+async-trait = "0.1"
+directories = "5"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "charset", "stream", "multipart"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "process", "sync", "net", "io-util"] }
+
+# 迭代④：联网社交（WebSocket 客户端；HTTP 复用 reqwest）。
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+
+# 迭代③：本地密码保险箱（纯 Rust 加密栈；系统钥匙串为 Tauri 层事项，core 只提供 key 字节接口）。
+aes-gcm = "0.10"
+pbkdf2 = { version = "0.12", features = ["hmac"] }
+sha2 = "0.10"
+rand = "0.8"
+zeroize = "1"
+base64 = "0.22"
+cpal = "0.15"
+rodio = "0.19"
+
+# P0 回声根治工程：信号级声学回声消除（WebRTC AEC3 纯 Rust 移植，Send+Sync）。
+sonora = "0.2"
+# 参考信号（云端 24k / espeak-piper ≈22.05k / 未知 48k）统一重采样到 16k。
+rubato = "0.15"
+zip = "2"
+
+[dev-dependencies]
+# 测试用临时目录

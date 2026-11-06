@@ -1,0 +1,9 @@
+{
+  "id": "com.qibai.skill.longread",
+  "type": "skill",
+  "name": "长文续读",
+  "description": "长文档分段读取：has_more=true 时必须续读，最多连续 6 段，每段记要点，读不完如实说读到哪。",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": ["files:read"]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "qibai-net-server",
+  "version": "0.1.0",
+  "description": "栖伴 迭代④ 联网社交（星球×同城）后端：HTTP + WebSocket + SQLite",
+  "private": true,
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test \"src/test/*.test.js\""
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

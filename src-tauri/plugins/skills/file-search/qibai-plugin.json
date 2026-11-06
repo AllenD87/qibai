@@ -1,0 +1,29 @@
+{
+  "id": "com.qibai.skill.filesearch",
+  "type": "skill",
+  "name": "文件搜索",
+  "description": "在你的用户目录里按文件名关键词找文件。说「找文件/搜索文件/文件在哪里/帮我找一下简历」。只读查找，自动排除 node_modules/.git 与含 secret/password 字样的敏感目录，找不到会明说、绝不编造路径。",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": ["files:read"],
+  "entry": {
+    "kind": "command",
+    "command": "run.sh"
+  },
+  "functions": [
+    {
+      "name": "search_files",
+      "description": "按文件名关键词在用户主目录内只读查找匹配文件（Glob 文件名通道；自动排除依赖目录与敏感目录；搜不到明说，禁止编造路径）。触发词：找文件、搜索文件、文件在哪里、帮我找一下。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "keyword": {
+            "type": "string",
+            "description": "文件名关键词，兼容中英文，如「简历」「report」「发票」"
+          }
+        },
+        "required": ["keyword"]
+      }
+    }
+  ]
+}

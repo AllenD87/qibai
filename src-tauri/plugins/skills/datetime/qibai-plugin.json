@@ -1,0 +1,23 @@
+{
+  "id": "com.qibai.skill.datetime",
+  "type": "skill",
+  "name": "日期时间",
+  "description": "查询当前日期、时间、星期。说「使用日期时间，现在几点了」「今天星期几」。本地系统时间，无需网络。",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": [],
+  "entry": {
+    "kind": "command",
+    "command": "run.sh"
+  },
+  "functions": [
+    {
+      "name": "now",
+      "description": "返回当前日期、时间与星期",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ]
+}

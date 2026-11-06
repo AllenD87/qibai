@@ -1,0 +1,354 @@
+# 说明：同 ci-workflow.yml，因首推 token 无 workflow 权限，暂存于此。
+# 启用：cp docs/release-workflow.yml .github/workflows/release.yml 后提交推送。
+# =============================================================================
+# 《栖伴》Qibai — Release（发版）工作流
+# -----------------------------------------------------------------------------
+# 触发条件：push tag  refs/tags/v*   （例：git tag v0.1.0 && git push origin v0.1.0）
+# 矩阵：    ubuntu-latest / windows-latest / macos-latest
+# 产物：    三平台 Tauri bundle 上传到对应 tag 的 GitHub Release，并生成 latest.json
+#           供 Tauri updater 自动更新使用。
+#
+# ┌─ Secrets 清单（全部仅以 ${{ secrets.XXX }} 占位，仓库需在
+# │  GitHub → Settings → Secrets and variables → Actions 自行配置）──────────┐
+# │  UPDATE_PRIVATE_KEY  【必配】tauri signer 私钥（`tauri signer generate`  │
+# │                      生成的内容）。用于给每个 bundle 生成 .sig，latest. │
+# │                      json 中的 signature 取自此。未配置时流水线仍可跑通，│
+# │                      但 latest.json 的 signature 为 null，客户端 updater│
+# │                      会校验失败——正式对外发版前必须配置。                 │
+# │  APPLE_CERT         【可选】macOS Developer ID 安装证书（.p12）的 base64  │
+# │                      编码。配置后才做 codesign；未配置则打出未签名 dmg。 │
+# │  APPLE_NOTARY       【可选】macOS 公证凭据 JSON：                        │
+# │                        {"apple_id":"...","password":"app-specific-pwd",  │
+# │                         "team_id":"..."}                                  │
+# │                      配置后才执行 notarytool 公证；未配置则跳过。        │
+# │  WIN_SIGN           【可选】Windows Authenticode 材料（pfx + 密码，base64 │
+# │                      或 JSON）。配置后才 signtool；未配置则打出未签名 exe│
+# └──────────────────────────────────────────────────────────────────────────┘
+#
+# tauri-cli 方案选型说明：
+#   本工作流采用 `cargo install tauri-cli --locked`（而非 tauri-apps/tauri-action），
+#   理由：
+#     1) 需要按平台显式指定 bundles（nsis / dmg / appimage,deb），并对签名、
+#        公证、latest.json 拼装做细粒度 shell 条件判断；
+#     2) tauri-action 把"构建+签名+发版+latest.json"打包成黑盒，且在缺少
+#        UPDATE_PRIVATE_KEY 时直接失败，与"无证书也能跑通、产出未签名包"的目标冲突；
+#     3) cargo install --locked 版本可复现、行为透明，后续要切回 tauri-action
+#        只需替换"安装 tauri-cli"与"构建"两步。
+# =============================================================================
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# 创建 Release / 上传资产需要 contents: write
+permissions:
+  contents: write
+
+# 全局 env（便于后续维护）
+env:
+  TAURI_SIGNER_PRIVATE_KEY: ${{ secrets.UPDATE_PRIVATE_KEY }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 阶段一：三平台并行构建 bundle + updater 签名
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libfuse2
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --locked
+
+      # --- macOS 签名/公证（可选；无证书则整体跳过，包仍产出）----------------
+      - name: macOS codesign & notarize (optional)
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERT:   ${{ secrets.APPLE_CERT }}
+          APPLE_NOTARY: ${{ secrets.APPLE_NOTARY }}
+        shell: bash
+        run: |
+          set -e
+          if [ -z "$APPLE_CERT" ]; then
+            echo ">> APPLE_CERT 未设置：跳过 macOS 代码签名，将产出未签名 dmg。"
+            echo "APPLE_SKIP=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo ">> APPLE_CERT 已提供：导入 keychain 并配置 codesign 环境"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PWD="$(openssl rand -base64 32)"
+          echo "$APPLE_CERT" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain     -p "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+          security import "$RUNNER_TEMP/cert.p12" -P "" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          # tauri build 会读 SIGNING_IDENTITY / APPLE_ID 等环境变量完成签名；
+          # 公证步在 build 之后执行（见 notarize 步）。
+          echo "APPLE_KEYCHAIN=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          if [ -n "$APPLE_NOTARY" ]; then
+            echo ">> APPLE_NOTARY 已提供：启用公证"
+            echo "$APPLE_NOTARY" > "$RUNNER_TEMP/notary.json"
+          else
+            echo ">> APPLE_NOTARY 未设置：跳过公证"
+          fi
+
+      # --- 分平台构建（tauri.conf.json 的 beforeBuildCommand 为空，frontendDist=../src，
+      #     直接 tauri build 即可）---
+      - name: Build Windows NSIS bundle
+        if: matrix.platform == 'windows-latest'
+        working-directory: src-tauri
+        run: cargo tauri build --bundles nsis
+
+      - name: Build macOS DMG bundle
+        if: matrix.platform == 'macos-latest'
+        working-directory: src-tauri
+        run: cargo tauri build --bundles dmg
+
+      - name: Build Linux AppImage + deb
+        if: matrix.platform == 'ubuntu-latest'
+        working-directory: src-tauri
+        run: cargo tauri build --bundles appimage,deb
+
+      # --- macOS 公证（可选；构建后对 dmg 跑 notarytool）---
+      - name: macOS notarize (optional)
+        if: matrix.platform == 'macos-latest' && env.APPLE_SKIP != '1'
+        env:
+          APPLE_NOTARY: ${{ secrets.APPLE_NOTARY }}
+        shell: bash
+        run: |
+          set -e
+          if [ -z "$APPLE_NOTARY" ]; then
+            echo ">> APPLE_NOTARY 未设置：跳过公证。"
+            exit 0
+          fi
+          # 占位：实际使用时按公司凭据把 notary.json 解析为 apple_id/password/team_id，
+          # 然后执行：
+          #   xcrun notarytool submit <dmg> --key <api-key> --keychain-profile <profile> --wait
+          #   xcrun stapler staple <dmg>
+          echo ">> notarytool submit + stapler 占位（请按实际凭据填入）"
+
+      # --- Windows Authenticode（可选；构建后对 exe 跑 signtool）---
+      - name: Windows signtool (optional)
+        if: matrix.platform == 'windows-latest'
+        env:
+          WIN_SIGN: ${{ secrets.WIN_SIGN }}
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrEmpty($env:WIN_SIGN)) {
+            Write-Host ">> WIN_SIGN 未设置：跳过 Authenticode，将产出未签名 exe。"
+            exit 0
+          }
+          # 占位：实际使用时按公司 pfx 结构解出证书 + 密码，然后：
+          #   signtool sign /f cert.pfx /p $pwd /fd SHA256 /tr http://timestamp.acs.microsoft.com /td SHA256 <exe>
+          Write-Host ">> signtool 占位（请按实际证书填入）"
+
+      # --- updater 签名：用 UPDATE_PRIVATE_KEY 对每个 bundle 生成 .sig ---
+      # 私钥写入临时文件再传给 tauri signer，避免 `echo $KEY` 把私钥打进日志。
+      - name: Sign bundles for updater
+        env:
+          UPDATE_PRIVATE_KEY: ${{ secrets.UPDATE_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -e
+          if [ -z "$UPDATE_PRIVATE_KEY" ]; then
+            echo ">> UPDATE_PRIVATE_KEY 未设置：跳过 .sig 签名。"
+            echo ">> 警告：无签名则 latest.json 不含 signature，updater 校验会失败。"
+            echo "UPDATE_SIGNED=0" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "UPDATE_SIGNED=1" >> "$GITHUB_ENV"
+
+          KEY_FILE="$(mktemp)"
+          trap 'rm -f "$KEY_FILE"' EXIT
+          printf '%s' "$UPDATE_PRIVATE_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          shopt -s nullglob
+          files=(
+            "$BUNDLE_DIR/nsis/"*.exe
+            "$BUNDLE_DIR/dmg/"*.dmg
+            "$BUNDLE_DIR/appimage/"*.AppImage
+            "$BUNDLE_DIR/deb/"*.deb
+          )
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "!! 未找到任何 bundle，检查上一步构建是否成功" >&2
+            exit 1
+          fi
+          for f in "${files[@]}"; do
+            echo ">> tauri signer sign $f"
+            tauri signer sign -k "$KEY_FILE" "$f"
+          done
+
+      # --- 把本平台 bundle + .sig 作为 artifact 暂存，供 publish 阶段聚合 ---
+      - name: Upload platform artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundles-${{ matrix.platform }}
+          path: |
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.sig
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # 阶段二：聚合三平台产物 → 创建 GitHub Release → 上传 bundle → 生成 latest.json
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # 合并三平台 artifact 到同一目录
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bundles-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      # 从 src-tauri/tauri.conf.json 读 version，作为 latest.json.version
+      - name: Read app version
+        id: meta
+        run: |
+          VER="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo ">> app version = $VER"
+
+      # 创建 GitHub Release 并上传三平台 bundle（.sig 稍后随 latest.json 一起上传）
+      - name: Create GitHub Release & upload bundles
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:    ${{ github.ref_name }}
+          name:        Release ${{ github.ref_name }}
+          body:        "栖伴 Qibai ${{ github.ref_name }} 自动构建产物。"
+          draft:       false
+          prerelease:  false
+          generate_release_notes: true
+          files: |
+            artifacts/*.exe
+            artifacts/*.dmg
+            artifacts/*.AppImage
+            artifacts/*.deb
+
+      # 生成 latest.json：
+      #   - version 取自 tauri.conf.json
+      #   - platforms 映射到 Tauri updater 约定的 key（windows-x86_64 / darwin-aarch64 / linux-x86_64）
+      #   - signature 读 <file>.sig；若未配置 UPDATE_PRIVATE_KEY 则为 null
+      #   - url 指向本 tag 的 GitHub Releases 下载地址
+      - name: Generate latest.json
+        env:
+          GH_REPO: ${{ github.repository }}
+          TAG:     ${{ github.ref_name }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        working-directory: artifacts
+        shell: bash
+        run: |
+          set -e
+          BASE="https://github.com/${GH_REPO}/releases/download/${TAG}"
+          PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          # 选每个平台的代表文件（deb 不参与 updater，只作附件）
+          WIN_EXE=$(ls windows-x86_64-*.exe *_x64-setup.exe 2>/dev/null | head -n1 || true)
+          MAC_DMG=$(ls *.dmg 2>/dev/null | head -n1 || true)
+          LIN_APP=$(ls *.AppImage 2>/dev/null | head -n1 || true)
+
+          sig_of() {
+            local f="$1"
+            [ -z "$f" ] && { echo "null"; return; }
+            if [ -f "${f}.sig" ]; then
+              # 用 node 做 JSON 字符串转义，避免 base64 里出现引号
+              node -e 'process.stdout.write(JSON.stringify(require("fs").readFileSync(process.argv[1],"utf8").trim()))' "${f}.sig"
+            else
+              echo "null"
+            fi
+          }
+
+          url_of() {
+            local f="$1"
+            [ -z "$f" ] && return
+            printf '%s/%s' "$BASE" "$f"
+          }
+
+          {
+            echo "{"
+            echo "  \"version\": \"${VERSION}\","
+            echo "  \"notes\": \"Release ${TAG}\","
+            echo "  \"pub_date\": \"${PUB_DATE}\","
+            echo "  \"platforms\": {"
+            first=1
+            for pair in \
+              "windows-x86_64|${WIN_EXE}" \
+              "darwin-aarch64|${MAC_DMG}" \
+              "linux-x86_64|${LIN_APP}" ; do
+              p="${pair%%|*}"
+              f="${pair#*|}"
+              [ -z "$f" ] && continue
+              [ $first -eq 1 ] && first=0 || echo ","
+              printf '    "%s": { "signature": %s, "url": "%s" }' \
+                "$p" "$(sig_of "$f")" "$(url_of "$f")"
+            done
+            echo ""
+            echo "  }"
+            echo "}"
+          } > latest.json
+
+          echo ">> latest.json 内容："
+          cat latest.json
+
+      - name: Upload latest.json to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: artifacts/latest.json

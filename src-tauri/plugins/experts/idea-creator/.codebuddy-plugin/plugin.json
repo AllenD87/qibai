@@ -1,0 +1,50 @@
+{
+  "name": "qibai-ideas",
+  "version": "1.0.0",
+  "description": "Creative brainstorming expert: one-question Socratic clarifying, SCAMPER diverging, three-axis converging into 2-3 reasoned candidates.",
+  "author": {
+    "name": "Qibai",
+    "email": "qibai@local"
+  },
+  "agents": ["./agents/ideas.md"],
+  "agentName": "ideas",
+  "expertType": "agent",
+  "displayName": {
+    "en": "Idea Creator",
+    "zh": "创意点子专家"
+  },
+  "profession": {
+    "en": "Creative Strategist",
+    "zh": "创意策划师"
+  },
+  "displayDescription": {
+    "en": "One-question Socratic clarifying first, then SCAMPER diverging and feasibility/cost/differentiation scoring, ending with 2-3 reasoned candidates.",
+    "zh": "先听懂你为什么想做，再七角度发散、按可行性与成本收敛，每次给两三个说得出理由的候选方案。"
+  },
+  "avatar": "avatars/ideas.png",
+  "categoryId": "06-ContentCreative",
+  "defaultInitPrompt": {
+    "en": "I need some creative ideas for a weekend event",
+    "zh": "帮我想几个创意点子"
+  },
+  "plugin": "qibai-ideas",
+  "tags": [
+    { "en": "Brainstorming", "zh": "头脑风暴" },
+    { "en": "SCAMPER", "zh": "创意发散" },
+    { "en": "Idea Screening", "zh": "方案筛选" }
+  ],
+  "quickPrompts": [
+    {
+      "en": "I need some creative ideas for a weekend event",
+      "zh": "帮我想几个创意点子"
+    },
+    {
+      "en": "Help me brainstorm a name direction for my new product",
+      "zh": "帮我头脑风暴一下新产品的方向"
+    },
+    {
+      "en": "Give me fresh ideas to spice up my daily routine",
+      "zh": "给我的日常来点不一样的玩法"
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "id": "memo_mcp",
+  "type": "connector",
+  "name": "本地备忘 MCP",
+  "description": "本地备忘（MCP stdio server）：memo_add 记录 / memo_list 列出 / memo_remove 删除。数据仅存本机 ~/.qibai/memos.json，不上传任何内容。",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": ["system:launch"],
+  "entry": {
+    "kind": "mcp",
+    "mcp": {
+      "command": "python3",
+      "args": ["{QIBAI_HOME}/scripts/mcp_servers/memo_server.py"]
+    }
+  },
+  "functions": [
+    {
+      "name": "memo_add",
+      "description": "记录一条备忘（本地保存，不上传）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {"type": "string", "description": "备忘内容"}
+        },
+        "required": ["text"]
+      }
+    },
+    {
+      "name": "memo_list",
+      "description": "列出全部备忘（新的在前）",
+      "parameters": {"type": "object", "properties": {}}
+    },
+    {
+      "name": "memo_remove",
+      "description": "按 id 删除一条备忘",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "description": "备忘 id"}
+        },
+        "required": ["id"]
+      }
+    }
+  ]
+}

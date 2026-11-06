@@ -1,0 +1,42 @@
+{
+  "id": "com.qibai.fileops",
+  "type": "skill",
+  "name": "文件助手",
+  "description": "浏览/打开/创建/重命名/移动/复制/删除本地文件或文件夹（示例包；实际由内置技能执行，删除需审批）",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": ["files:read", "files:write"],
+  "entry": {
+    "kind": "command",
+    "command": "scripts/fileop.sh"
+  },
+  "functions": [
+    {
+      "name": "file_ops",
+      "description": "浏览/打开/创建/重命名/移动/复制/删除本地文件或文件夹（删除需审批）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["list", "open", "create", "rename", "move", "copy", "delete"],
+            "description": "操作类型：list=列出文件夹，open=系统打开，create=新建文本文件，rename/move=重命名或移动，copy=复制，delete=删除（需审批）"
+          },
+          "path": {
+            "type": "string",
+            "description": "目标文件或文件夹绝对路径，或 ~/ 开头（限主目录内）"
+          },
+          "dest": {
+            "type": "string",
+            "description": "rename/move/copy 的目标路径（限主目录内）"
+          },
+          "content": {
+            "type": "string",
+            "description": "create 时写入的文本内容"
+          }
+        },
+        "required": ["action", "path"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "name": "qibai-codearchitect",
+  "version": "1.0.0",
+  "description": "Architecture review expert that evaluates system designs, technology choices and evolution paths.",
+  "author": {
+    "name": "Qibai",
+    "email": "qibai@local"
+  },
+  "agents": ["./agents/codearchitect.md"],
+  "agentName": "codearchitect",
+  "expertType": "agent",
+  "displayName": {
+    "en": "Code Architect",
+    "zh": "代码架构专家"
+  },
+  "profession": {
+    "en": "Architecture Review Specialist",
+    "zh": "架构评审专家"
+  },
+  "displayDescription": {
+    "en": "Reviews system designs and technology choices against an 8-dimension checklist, with selection trade-offs and an evolution roadmap.",
+    "zh": "对照八维清单评审系统设计与技术选型，给出选型权衡分析与分阶段演进路线，助你打造可持续演进的架构。"
+  },
+  "avatar": "avatars/codearchitect.png",
+  "categoryId": "02-Engineering",
+  "defaultInitPrompt": {
+    "en": "Review my system architecture design",
+    "zh": "帮我评审一下这个架构方案"
+  },
+  "plugin": "qibai-codearchitect",
+  "tags": [
+    { "en": "Architecture Review", "zh": "架构评审" },
+    { "en": "Technology Selection", "zh": "技术选型" },
+    { "en": "Evolution Roadmap", "zh": "演进路线" }
+  ],
+  "quickPrompts": [
+    {
+      "en": "Review my system architecture design",
+      "zh": "帮我评审一下这个架构方案"
+    },
+    {
+      "en": "Compare these two technology stacks for me",
+      "zh": "帮我对比一下这两套技术栈"
+    },
+    {
+      "en": "Plan the evolution path for my legacy system",
+      "zh": "帮我规划旧系统的演进路线"
+    }
+  ]
+}

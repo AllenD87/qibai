@@ -1,0 +1,29 @@
+{
+  "id": "com.qibai.skill.namegen",
+  "type": "skill",
+  "name": "创意命名",
+  "description": "起个名字、帮我命名、给产品起名：科技/文艺/萌宠/游戏/国风五组词根随机组合，输出 5 个候选名 + 简短含义注解。本地规则生成，不碰八字五格，无需网络。说「起个名字」「取个名」。",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": [],
+  "entry": {
+    "kind": "command",
+    "command": "run.sh"
+  },
+  "functions": [
+    {
+      "name": "generate_names",
+      "description": "按场景（科技/文艺/萌宠/游戏/国风）随机组合词根，输出 5 个候选名及简短含义注解（本地词库规则，不含八字五格类迷信内容）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scene": {
+            "type": "string",
+            "description": "命名场景/风格：科技/文艺/萌宠/游戏/国风；不填时随机一种风格"
+          }
+        },
+        "required": []
+      }
+    }
+  ]
+}

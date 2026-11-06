@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>元气小小 · 桌宠</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="pet.css?v=7">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+</head>
+<body>
+
+<!-- v30 渲染层重构：canvas 整帧重绘画布（body 首子元素，z-index 0）。
+     Tauri 模式（无合成器 X11）下，角色帧与窗口背景全部由本 canvas 每帧
+     画不透明内容整块覆盖旧像素——根治「动作重合/重影/拖动残留色块/任何
+     DOM 变化残留」。DOM 立绘 img 在 tauri-mode 隐藏（CSS），browser-mode 保持原样。 -->
+<canvas id="bgCanvas" class="bg-canvas" aria-hidden="true"></canvas>
+
+<!-- ============================================================
+     桌宠窗（pet-<persona_id>）— 独立常驻窗
+     承载：角色 + 气泡 + 拖动 + 右键菜单 + 提醒 overlay + toast
+           + 对话输入条（语音控制中枢入口：说/写统一从 #chatBar 进）
+           + 右侧快捷图标簇（用户/静音/三点）
+     不承载：聊天历史面板 / 工具栏 / PK overlay / 事件面板 / 技能审批弹窗
+     ============================================================ -->
+<main class="pet-window">
+
+  <!-- 顶部拖拽条（Tauri: data-tauri-drag-region 拖动窗口；锁定时 web 侧视觉禁用） -->
+  <div class="drag-bar" id="dragBar"></div>
+
+  <!-- 迭代⑤：当前角色音色标签 chip（语义化 id；pet.js 按本窗 persona 计算渲染） -->
+  <div id="voiceTagChip" class="voice-tag-chip hidden" title="当前角色音色"></div>
+
+  <!-- 说话气泡（迭代②：内附喇叭按钮 #btnSpeak，点击重读最近一句） -->
+  <div id="listenTag" class="listen-tag hidden"></div>
+  <div id="speechBubble" class="speech-bubble hidden">
+    <span id="speechText"></span>
+    <!-- v45：滚动条改为 beginBubble 动态创建 / dismissBubble 物理销毁，不再静态残留 -->
+    <span id="speechTime" class="speech-time hidden"></span>
+    <button id="btnSpeak" type="button" class="speak-btn" title="朗读这一句" aria-label="朗读这一句">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4z" fill="currentColor"/>
+        <path d="M15 9a4.2 4.2 0 0 1 0 6M17.5 6.5a8 8 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- 舞台：立绘 + CSS 占位脸 -->
+  <div id="stage" class="stage">
+    <div id="characterWrap" class="character-wrap">
+      <!-- 3D 三渲二画布（阶段二；WebGL2 不可用或加载失败时隐藏，回退下方 2D 立绘） -->
+      <canvas id="glCanvas" class="gl-canvas hidden"></canvas>
+      <!-- 真实立绘（v20：初始隐藏——HTML 静态 src 会在 JS 换实际形象前先渲染一帧，
+           无合成器 X11 下旧立绘像素残留=「启动即多形象重叠」。由 pet.js 确认 persona 后
+           一次性设 src+onload 再显示，窗口首帧=最终形象，杜绝二次替换残留。） -->
+      <img id="characterImg" class="character-img"
+           src="" alt="元气小小" draggable="false"
+           style="display:none">
+
+      <!-- CSS 占位脸（资产未就位期间开发用） -->
+      <div class="placeholder-face" id="placeholderFace">
+        <svg viewBox="0 0 140 190" aria-hidden="true">
+          <!-- 身体 -->
+          <ellipse cx="70" cy="160" rx="34" ry="26" fill="#FFD9E8"/>
+          <!-- 头 -->
+          <circle cx="70" cy="85" r="46" fill="#FFE9F1"/>
+          <!-- 腮红 -->
+          <circle cx="48" cy="98" r="6" fill="#FBD3E4" opacity=".9"/>
+          <circle cx="92" cy="98" r="6" fill="#FBD3E4" opacity=".9"/>
+          <!-- 眼睛（眨眼时被 .eyes-closed 压扁） -->
+          <ellipse class="eye" cx="56" cy="82" rx="4.5" ry="6" fill="#6E5A6B"/>
+          <ellipse class="eye" cx="84" cy="82" rx="4.5" ry="6" fill="#6E5A6B"/>
+          <!-- 嘴巴（emotion 类切换形状） -->
+          <path class="mouth" d="M60 128 Q70 136 80 128"
+                stroke="#D17397" stroke-width="3" fill="none" stroke-linecap="round"/>
+        </svg>
+      </div>
+
+      <!-- 位置锁定视觉提示徽章 -->
+      <div id="lockBadge" class="lock-badge hidden" title="位置已锁定">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="5" y="10" width="14" height="10" rx="2.5" fill="#9B7FB8"/>
+          <path d="M8 10V7.5a4 4 0 0 1 8 0V10" fill="none" stroke="#9B7FB8" stroke-width="2.2"/>
+        </svg>
+      </div>
+
+      <!-- F4：心情/关系轻量标签（亲密度驱动，不做面板） -->
+      <div id="moodBadge" class="mood-badge hidden">
+        <span id="moodEmoji" class="mood-emoji"></span>
+        <span id="moodText" class="mood-text"></span>
+      </div>
+    </div>
+
+    <!-- PK 手势小卡（pk-round 演出态；非 overlay，仅贴舞台旁的小手势） -->
+    <div id="pkCard" class="pk-mini hidden">
+      <div class="pk-mini-title">猜拳</div>
+      <div id="pkHandIcon" class="pk-mini-hand"></div>
+      <div id="pkResultTag" class="pk-mini-result"></div>
+    </div>
+  </div>
+</main>
+
+<!-- ================= 快捷聊天引导（点击即发送；新用户/演示入口） ================= -->
+<div id="quickChips" class="quick-chips" aria-label="快捷提问">
+  <button type="button" class="chip" data-text="开心一点">😊 开心一点</button>
+  <button type="button" class="chip" data-text="帮我写首诗">✍️ 帮我写首诗</button>
+  <button type="button" class="chip" data-text="今天天气怎么样">🌤 今天天气怎么样</button>
+  <button type="button" class="chip" data-text="检查一下我的代码">🔍 检查我的代码</button>
+  <button type="button" class="chip" data-text="提醒我喝水">💧 提醒我喝水</button>
+  <button type="button" class="chip" data-text="带我去星球广场">🪐 星球广场</button>
+</div>
+
+<!-- ================= 对话输入条（语音控制中枢入口：说/写都从这里进） ================= -->
+<div id="chatBar" class="chat-bar">
+  <button id="btnHF" class="mic-btn hf-btn" type="button" title="免提开关：开=双工免提聆听，关=按住说话（PTT）" aria-label="免提开关">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 13v-2a8 8 0 0 1 16 0v2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <rect x="3" y="11" width="4" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
+      <rect x="17" y="11" width="4" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M17 19c0 1.1-.9 2-2 2h-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+  </button>
+  <button id="btnMic" class="mic-btn" type="button" title="按住说话（需配置 STT 后可用）" aria-label="语音输入">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/>
+      <path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+  </button>
+  <input id="chatInput" class="chat-input" type="text" placeholder="说点什么…"
+         autocomplete="off" enterkeyhint="send" aria-label="对话输入">
+  <button id="btnSend" class="send-btn" type="button" aria-label="发送">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l16-7-6 16-2.5-7L4 12z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+  </button>
+</div>
+
+<!-- ================= D8 右侧快捷图标簇：用户(控制台/设置) / 静音(全局安静) / 三点(快捷菜单) ================= -->
+<div id="quickCluster" class="quick-cluster" aria-label="快捷操作">
+  <button id="btnUser" class="qc-btn" type="button" title="打开控制台 / 设置" aria-label="打开控制台">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c0-3.8 3.4-5.8 7.5-5.8s7.5 2 7.5 5.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+  </button>
+  <button id="btnMute" class="qc-btn" type="button" title="全局静音（关闭朗读）" aria-label="全局静音">
+    <svg viewBox="0 0 24 24" class="ic-sound" aria-hidden="true"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4z" fill="currentColor"/><path d="M15.5 9.2a4 4 0 0 1 0 5.6M18 7a8 8 0 0 1 0 10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+    <svg viewBox="0 0 24 24" class="ic-mute" style="display:none" aria-hidden="true"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4z" fill="currentColor"/><path d="M16 9.5l5 5M21 9.5l-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+  </button>
+  <button id="btnMore" class="qc-btn" type="button" title="更多（快捷菜单）" aria-label="更多">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="19" r="1.5" fill="currentColor"/></svg>
+  </button>
+</div>
+
+<!-- ================= 轻提示 toast 容器 ================= -->
+<div id="toastBox" class="toast-box"></div>
+
+<!-- ================= 动效层（点按飘浮粒子 + 庆祝飘心，JS 动态注入；不拦截事件） ================= -->
+<div id="fxLayer" class="fx-layer" aria-hidden="true"></div>
+
+<!-- ================= 提醒 overlay ================= -->
+<div id="reminderOverlay" class="reminder-overlay">
+  <button class="close" id="reminderClose" aria-label="关闭提醒">×</button>
+  <div class="tag" id="reminderTag">小提醒</div>
+  <div class="msg" id="reminderMsg"></div>
+</div>
+
+<!-- ================= v18 UI 面板·气泡卡片（宠物旁小内容；大内容展开为独立面板窗） ================= -->
+<div id="uiPanel" class="ui-panel hidden">
+  <div class="ui-panel-head">
+    <span class="ui-panel-title" id="uiPanelTitle">元气小小</span>
+    <span class="ui-panel-actions">
+      <button type="button" class="ui-panel-btn" id="uiPanelExpand" title="展开为独立窗口" aria-label="展开为独立窗口">
+        <svg viewBox="0 0 24 24" aria-hidden="true" width="13" height="13">
+          <path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <button type="button" class="ui-panel-btn" id="uiPanelClose" title="关闭卡片" aria-label="关闭卡片">×</button>
+    </span>
+  </div>
+  <div class="ui-panel-body" id="uiPanelBody"></div>
+</div>
+
+<!-- ================= 右键菜单（自定义 HTML，浏览器与 Tauri 均可用；F6 角色级/全局级分组） ================= -->
+<div id="ctxMenu" class="ctx-menu hidden" role="menu">
+  <div class="ctx-group-label">角色</div>
+  <button type="button" class="ctx-item" id="ctxLock" role="menuitem">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2.5"/><path d="M8 10V7.5a4 4 0 0 1 8 0V10" fill="none" stroke-width="2.2"/></svg>
+    <span id="ctxLockText">锁定位置</span>
+  </button>
+  <button type="button" class="ctx-item" id="ctxGuard" role="menuitem">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8-7 10-4-2-7-5.4-7-10V6l7-3z" fill="none" stroke-width="2" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span>守护我</span>
+  </button>
+  <div class="ctx-group-label">全局</div>
+  <button type="button" class="ctx-item" id="ctxConsole" role="menuitem">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M9 21h6M12 17v4"/></svg>
+    <span>打开控制台</span>
+  </button>
+  <button type="button" class="ctx-item" id="ctxWorkspace" role="menuitem">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" fill="none" stroke-width="1.8"/><path d="M3 11h18" stroke-width="1.8" stroke-linecap="round"/></svg>
+    <span>本地工作区</span>
+  </button>
+  <button type="button" class="ctx-item" id="ctxKB" role="menuitem">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6z" fill="none" stroke-width="1.8"/><path d="M8 3v18M16 3v18M8 12h8" stroke-width="1.8" stroke-linecap="round"/></svg>
+    <span>知识库</span>
+  </button>
+  <button type="button" class="ctx-item" id="ctxMinimal" role="menuitem">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    <span id="ctxMinimalText">完整界面</span>
+  </button>
+  <button type="button" class="ctx-item" id="ctxTransBg" role="menuitem">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v12H9l-5 4V5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 9l3 3 2-2 4 4" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span id="ctxTransBgText">透明背景：关</span>
+  </button>
+  <button type="button" class="ctx-item danger" id="ctxExit" role="menuitem">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 1 0 8 8h-2a6 6 0 1 1-6-6V4zM14 12h7" fill="none" stroke-width="2"/></svg>
+    <span>退出元气小小</span>
+  </button>
+</div>
+
+<!-- ================= 浏览器 mock 调试面板（仅浏览器模式可见，Tauri 下隐藏） ================= -->
+<div class="dev-panel">
+  <h4>调试面板 · 仅浏览器独立模式可见（Tauri 下隐藏）</h4>
+  <div class="dev-grid" id="devEmotions">
+    <b style="font-size:12px;color:#A893A5;align-self:center;">表情：</b>
+  </div>
+  <div class="dev-grid" id="devActions">
+    <b style="font-size:12px;color:#A893A5;align-self:center;">动作：</b>
+  </div>
+  <div class="dev-grid" id="devEvents">
+    <b style="font-size:12px;color:#A893A5;align-self:center;">事件：</b>
+  </div>
+  <div class="dev-grid" id="devIntimacy">
+    <b style="font-size:12px;color:#A893A5;align-self:center;">亲密度：</b>
+  </div>
+  <div class="dev-note">
+    按钮用于无 Tauri 环境下冒烟：表情/动作/提醒链路与右键菜单。正式运行时由 qibai:// 事件广播驱动。
+  </div>
+</div>
+
+<!-- 身份内联脚本（契约 §7.1）：浏览器模式由 ?persona=<id> 推导 windowLabel；Tauri 下不设置 -->
+<script>
+  if (!window.__TAURI_INTERNALS__) {
+    var m = /persona=([a-z]+)/.exec(location.search);
+    window.__qibaiWindowLabel = 'pet-' + (m ? m[1] : 'gudian');
+  }
+</script>
+<script src="tauri-bridge.js?v=2"></script>
+<script src="mood-rules.js?v=1"></script>
+<script src="pet.js?v=7"></script>
+<script type="module" src="3d_character.js?v=1"></script>
+<script type="module" src="2d_frames.js?v=1"></script>
+<script>
+  // 内容就绪心跳（渲染兜底）：脚本解析即报信 + load 后再补一次，最大化送达率；
+  // 主进程 4 秒未收到会重建桌宠为非透明普通窗口，保证窗口必然可见。
+  function __qibaiPetReady(tries) {
+    tries = tries || 0;
+    try {
+      invoke('pet_ready', {}).catch(function () {
+        if (tries < 3) setTimeout(function () { __qibaiPetReady(tries + 1); }, 1000);
+      });
+    } catch (e) {
+      if (tries < 3) setTimeout(function () { __qibaiPetReady(tries + 1); }, 1000);
+    }
+  }
+  __qibaiPetReady();
+  window.addEventListener('load', function () { __qibaiPetReady(3); });
+</script>
+</body>
+</html>

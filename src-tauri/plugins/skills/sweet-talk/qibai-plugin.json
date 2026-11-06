@@ -1,0 +1,33 @@
+{
+  "id": "com.qibai.skill.sweettalk",
+  "type": "skill",
+  "name": "情话语录",
+  "description": "说句情话、生成一句温柔暖心的话：温和日常/俏皮轻松/深情克制三层词库，本地规则生成，全龄、尊重、无擦边，无需网络。说「说句情话」「来一句俏皮的」。",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": [],
+  "entry": {
+    "kind": "command",
+    "command": "run.sh"
+  },
+  "functions": [
+    {
+      "name": "send_sweet_talk",
+      "description": "按层级生成 1-3 句温馨情话（本地三层词库规则组合，全龄合规、无擦边文案）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "level": {
+            "type": "string",
+            "description": "层级：l1 温和日常 / l2 俏皮轻松 / l3 深情克制；不填或填错时随机给一层"
+          },
+          "count": {
+            "type": "integer",
+            "description": "输出句数 1-3，默认 1"
+          }
+        },
+        "required": []
+      }
+    }
+  ]
+}

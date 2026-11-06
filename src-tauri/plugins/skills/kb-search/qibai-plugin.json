@@ -1,0 +1,11 @@
+{
+  "id": "com.qibai.skill.kbsearch",
+  "type": "skill",
+  "name": "知识库检索",
+  "description": "在用户配置的本地知识库目录里检索资料，返回原文位置",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": [],
+  "entry": "SKILL.md",
+  "functions": ["kb_search"]
+}

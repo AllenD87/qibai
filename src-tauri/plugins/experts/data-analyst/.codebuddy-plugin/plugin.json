@@ -1,0 +1,61 @@
+{
+  "name": "qibai-dataanalyst",
+  "version": "1.0.0",
+  "description": "Business data analyst that defines metric definitions, picks analysis frameworks and turns data into clear insights.",
+  "author": {
+    "name": "Qibai",
+    "email": "qibai@local"
+  },
+  "agents": [
+    "./agents/dataanalyst.md"
+  ],
+  "agentName": "dataanalyst",
+  "expertType": "agent",
+  "displayName": {
+    "en": "Data Analyst",
+    "zh": "数据分析专家"
+  },
+  "profession": {
+    "en": "Business Data Analyst",
+    "zh": "商业数据分析师"
+  },
+  "displayDescription": {
+    "en": "Define metric definitions first, choose the right analysis framework, and turn numbers into clear business insights and actions.",
+    "zh": "先定义指标口径再动手分析：选用留存、漏斗、分群等框架，把散落的数字讲成清晰的业务洞察与可落地的行动建议。"
+  },
+  "avatar": "avatars/dataanalyst.png",
+  "categoryId": "04-DataAI",
+  "defaultInitPrompt": {
+    "en": "Help me analyze this data",
+    "zh": "帮我分析一下这份数据"
+  },
+  "plugin": "qibai-dataanalyst",
+  "tags": [
+    {
+      "en": "Metrics",
+      "zh": "指标体系"
+    },
+    {
+      "en": "Analysis Frameworks",
+      "zh": "分析框架"
+    },
+    {
+      "en": "Data Storytelling",
+      "zh": "数据叙事"
+    }
+  ],
+  "quickPrompts": [
+    {
+      "en": "Help me analyze this data",
+      "zh": "帮我分析一下这份数据"
+    },
+    {
+      "en": "Define the metric definitions for my KPI dashboard",
+      "zh": "帮我定一下看板的指标口径"
+    },
+    {
+      "en": "Help me find where my conversion drops",
+      "zh": "帮我看看转化掉在哪一步"
+    }
+  ]
+}

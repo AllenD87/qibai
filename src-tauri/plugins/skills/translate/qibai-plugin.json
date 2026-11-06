@@ -1,0 +1,29 @@
+{
+  "id": "com.qibai.skill.translate",
+  "type": "skill",
+  "name": "翻译助手",
+  "description": "帮你做中英翻译：说「翻译一下这个」「翻成英文」「翻成中文」「这个用英语怎么说」。脚本先查本地常用词表给参考，再由我整句润色。本地处理不联网，不发送任何原文。",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": [],
+  "entry": {
+    "kind": "command",
+    "command": "run.sh"
+  },
+  "functions": [
+    {
+      "name": "translate_text",
+      "description": "对用户给定的文本做确定性翻译参考：自动识别中→英/英→中方向，查本地常用中英对照表输出原文/词表译文/术语参考与可改进提示；整句译文由主模型在脚本结果基础上润色，脚本不做子串自动替换",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "要翻译的原文（中文或英文均可，方向自动识别），如「你好」「meeting at 3 pm」"
+          }
+        },
+        "required": ["text"]
+      }
+    }
+  ]
+}

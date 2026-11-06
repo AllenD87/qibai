@@ -1,0 +1,15 @@
+# 《栖伴》Qibai — Cargo workspace 根
+#
+# workspace 仅包含与 GUI 解耦的纯 Rust 核心库 qibai-core。
+# src-tauri 因依赖 tauri 及其 sys 系 crate（webkit2gtk / gtk3 / libsoup /
+# javascriptcoregtk），在缺系统库的环境中无法编译，因此它自带独立的
+# `[workspace]` 表，作为自包含 crate 存在于本仓库内——
+# 在具备系统依赖的机器上进入 src-tauri/ 单独构建。详见 docs/BUILD_NOTE.md。
+[workspace]
+members = ["qibai-core"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"

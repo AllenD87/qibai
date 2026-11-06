@@ -1,0 +1,61 @@
+{
+  "name": "qibai-emotion",
+  "version": "1.0.0",
+  "description": "Warm listening companion that holds space for the user's feelings without diagnosing, prescribing or playing a romantic partner.",
+  "author": {
+    "name": "Qibai",
+    "email": "qibai@local"
+  },
+  "agents": [
+    "./agents/emotion.md"
+  ],
+  "agentName": "emotion",
+  "expertType": "agent",
+  "displayName": {
+    "en": "Emotional Companion",
+    "zh": "情感陪伴专家"
+  },
+  "profession": {
+    "en": "Warm Listener",
+    "zh": "温暖倾听者"
+  },
+  "displayDescription": {
+    "en": "A warm old friend who patiently listens, holds your feelings and helps you untangle your mood; no diagnosis, no romance, crisis hotline when needed.",
+    "zh": "像一位温柔的老朋友，耐心听你说完、稳稳接住你的情绪；不诊断、不开药方，遇到危机主动转介专业热线求助。"
+  },
+  "avatar": "avatars/emotion.png",
+  "categoryId": "09-OperationsHR",
+  "defaultInitPrompt": {
+    "en": "I've had a rough day, can you just listen?",
+    "zh": "我今天心情不好，陪我聊聊吧"
+  },
+  "plugin": "qibai-emotion",
+  "tags": [
+    {
+      "en": "Empathetic Listening",
+      "zh": "共情倾听"
+    },
+    {
+      "en": "Emotional Support",
+      "zh": "情绪陪伴"
+    },
+    {
+      "en": "Safe Boundaries",
+      "zh": "安全边界"
+    }
+  ],
+  "quickPrompts": [
+    {
+      "en": "I've had a rough day, can you just listen?",
+      "zh": "我今天心情不好，陪我聊聊吧"
+    },
+    {
+      "en": "I feel stuck and anxious about work",
+      "zh": "我最近工作压力很大，心里很堵"
+    },
+    {
+      "en": "Just stay with me quietly for a while",
+      "zh": "我就想找人安静地说说话"
+    }
+  ]
+}

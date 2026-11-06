@@ -1,0 +1,29 @@
+{
+  "id": "com.qibai.skill.reminderparse",
+  "type": "skill",
+  "name": "待办解析",
+  "description": "把「明天下午3点开会」这类话解析成结构化待办（日期/时间/事项）。说「使用待办解析，明天下午3点开会提醒我」。配合内置提醒功能使用，只读解析。",
+  "version": "1.0.0",
+  "author": "qibai",
+  "permissions": ["reminder:set"],
+  "entry": {
+    "kind": "command",
+    "command": "run.sh"
+  },
+  "functions": [
+    {
+      "name": "parse_reminder",
+      "description": "解析自然语言待办/提醒文本为结构化 JSON（date/time/when_iso/what），供设置提醒使用",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "用户原话，如「明天下午3点开会提醒我」"
+          }
+        },
+        "required": ["text"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,1222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>元气小小 · 控制台</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="console.css">
+<style>
+/* ===== 技能与专家 tab（沿用既有色板与卡片语汇，仅写增量） ===== */
+#pane-plugins .plg-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap; margin-bottom: 10px;
+}
+#pane-plugins .plg-toolbar .hint { margin: 0; flex: 1; min-width: 200px; }
+#pane-plugins button.primary {
+  min-height: 44px; padding: 0 18px; border-radius: 999px;
+  background: var(--rose); border: 1.5px solid var(--rose); color: #fff;
+  font-size: 13.5px;
+}
+#pane-plugins button.primary:hover { background: var(--rose-deep); border-color: var(--rose-deep); }
+#pane-plugins button.ghost {
+  min-height: 36px; padding: 0 14px; border-radius: 999px;
+  border: 1.5px solid var(--pink-200); background: var(--white);
+  color: var(--text); font-size: 12.5px;
+}
+#pane-plugins button.ghost:hover { border-color: var(--rose); }
+#pane-plugins button.danger-ghost { color: var(--danger); border-color: var(--pink-200); }
+#pane-plugins button.danger-ghost:hover { border-color: var(--danger); background: var(--pink-50); }
+
+#pane-plugins .plg-list {
+  display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 6px;
+}
+@media (min-width: 560px) {
+  #pane-plugins .plg-list { grid-template-columns: repeat(2, 1fr); }
+}
+#pane-plugins .plg-card {
+  border: 1.5px solid var(--pink-200); border-radius: var(--radius-s);
+  background: var(--white); padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 8px; min-width: 0;
+}
+#pane-plugins .plg-card.plg-error { border-color: var(--danger); background: var(--pink-50); }
+#pane-plugins .plg-card.plg-active { border-color: var(--rose); background: var(--pink-50); box-shadow: 0 0 0 2px var(--pink-200); }
+#pane-plugins .plg-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#pane-plugins .plg-name { font-size: 14px; font-weight: 600; color: var(--text); }
+#pane-plugins .plg-ver { font-size: 11px; color: var(--text-soft); }
+#pane-plugins .plg-state {
+  font-size: 10.5px; border-radius: 999px; padding: 1px 8px;
+  border: 1px solid var(--pink-200); color: var(--text-soft);
+}
+#pane-plugins .plg-state.on { color: var(--ok); border-color: var(--ok); }
+#pane-plugins .plg-desc { font-size: 12.5px; color: var(--text); line-height: 1.55; }
+#pane-plugins .plg-error-text {
+  font-size: 12px; color: var(--danger); line-height: 1.55;
+  background: var(--white); border: 1px dashed var(--danger);
+  border-radius: var(--radius-s); padding: 6px 10px;
+}
+#pane-plugins .plg-meta-line { font-size: 11px; color: var(--text-soft); }
+#pane-plugins .plg-perms { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+#pane-plugins .plg-chip {
+  font-size: 11px; color: var(--purple-deep); background: var(--purple-100);
+  border-radius: 999px; padding: 2px 10px;
+}
+#pane-plugins .plg-chip.granted { color: var(--ok); background: #EAF5EF; }
+#pane-plugins .plg-chip.denied { color: var(--text-soft); background: var(--pink-50); text-decoration: line-through; }
+#pane-plugins .plg-perm-actions { display: flex; gap: 6px; align-items: center; }
+#pane-plugins .plg-perm-actions button {
+  min-height: 32px; padding: 0 12px; border-radius: 999px;
+  font-size: 12px; border: 1.5px solid var(--pink-200); background: var(--white); color: var(--text);
+}
+#pane-plugins .plg-perm-actions button.allow { color: var(--ok); border-color: var(--ok); }
+#pane-plugins .plg-perm-actions button.deny { color: var(--text-soft); }
+#pane-plugins .plg-perm-actions button:hover { filter: brightness(.97); }
+#pane-plugins .plg-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 2px;
+}
+#pane-plugins .plg-foot .label-wrap { flex: 1; min-width: 0; }
+#pane-plugins .plg-row { display: flex; align-items: center; gap: 10px; }
+#pane-plugins .plg-empty {
+  font-size: 12.5px; color: var(--text-soft); padding: 14px 4px; text-align: center;
+}
+#pane-plugins .plg-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+#pane-plugins .plg-sys {
+  font-size: 12px; color: var(--text-soft); line-height: 1.55;
+  background: var(--purple-100); border-radius: var(--radius-s); padding: 8px 10px;
+}
+
+/* ===== F6：设置项子 Tab 分组（声音/行为/通用），复用现有色板 ===== */
+.set-subtabs { display: flex; gap: 8px; margin: 4px 0 14px; flex-wrap: wrap; }
+.set-subtab {
+  min-height: 34px; padding: 0 18px; border-radius: 999px;
+  border: 1.5px solid var(--pink-200); background: var(--white);
+  color: var(--text); font-size: 13px; cursor: pointer;
+}
+.set-subtab:hover { border-color: var(--rose); }
+.set-subtab.active { background: var(--rose); border-color: var(--rose); color: #fff; }
+/* 仅显示当前分组的卡片；save-bar 无 data-setgroup，始终可见 */
+#pane-settings .settings-card[data-setgroup] { display: none; }
+#pane-settings.set-group-voice   .settings-card[data-setgroup="voice"]    { display: block; }
+#pane-settings.set-group-behavior .settings-card[data-setgroup="behavior"] { display: block; }
+#pane-settings.set-group-general .settings-card[data-setgroup="general"] { display: block; }
+/* v11：顶部免提快捷开关 */
+.ct-hf {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 44px; padding: 0 12px; margin-right: 8px;
+  border-radius: 999px; border: 1.5px solid var(--pink-200);
+  background: var(--white); color: var(--text); font-size: 12.5px;
+  cursor: pointer; white-space: nowrap;
+}
+.ct-hf:hover { border-color: var(--rose); }
+.ct-hf.hf-on { background: var(--rose); border-color: var(--rose); color: #fff; }
+.ct-hf svg { width: 16px; height: 16px; }
+</style>
+</head>
+<body class="console-body">
+
+<!-- ================= 顶部标题栏 ================= -->
+<header class="console-titlebar">
+  <div class="ct-left">
+    <svg class="ct-logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21c-4.2 0-7.5-2.8-7.5-6.5S7.8 7.4 12 7.4s7.5 3.2 7.5 7.1S16.2 21 12 21zm-3.2-9.3a.9.9 0 1 0 0-1.8.9.9 0 0 0 0 1.8zm3.2 0a.9.9 0 1 0 0-1.8.9.9 0 0 0 0 1.8zm3.2 0a.9.9 0 1 0 0-1.8.9.9 0 0 0 0 1.8z"/></svg>
+    <h1>元气小小 · 控制台</h1>
+  </div>
+  <button id="btnHfQuick" class="ct-hf" type="button" title="免提聆听开关（点击切换；也可语音说「打开免提/关闭免提/切换免提」）">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4M8 22h8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    <span id="hfQuickLabel">免提关</span>
+  </button>
+  <button id="btnCloseConsole" class="ct-close" title="关闭控制台">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+  </button>
+</header>
+
+<!-- ================= Tab 栏 ================= -->
+<nav class="console-tabs" id="tabBar" role="tablist" aria-label="功能页签">
+  <button class="ctab active" data-tab="chat" type="button">聊天</button>
+  <button class="ctab" data-tab="roles" type="button">角色</button>
+  <button class="ctab" data-tab="intimacy" type="button">亲密度</button>
+  <button class="ctab" data-tab="events" type="button">事件</button>
+  <button class="ctab" data-tab="settings" type="button">设置</button>
+  <button class="ctab" data-tab="vault" type="button">保险箱</button>
+  <button class="ctab" data-tab="social" type="button">社交</button>
+  <button class="ctab" data-tab="pk" type="button">猜拳</button>
+  <button class="ctab" data-tab="plugins" type="button">技能与专家</button>
+  <button class="ctab" data-tab="codecheck" type="button">代码检查</button>
+  <button class="ctab" data-tab="tasks" type="button">任务</button>
+</nav>
+
+<!-- ================= 主区（单页多视图） ================= -->
+<main class="console-main">
+
+  <!-- ===== 聊天 tab ===== -->
+  <section class="console-pane" id="pane-chat">
+    <div class="chat-panel console-chat">
+      <div class="chat-header-row">
+        <span class="chat-header-title">对话记录</span>
+        <button id="btnClearChat" class="clear-chat-btn" type="button" title="清空聊天记录（可选择是否连记忆一起清）">清空聊天</button>
+      </div>
+      <div id="chatScroll" class="chat-scroll" aria-live="polite" aria-label="对话记录"></div>      <div id="llmStatusLine" class="llm-status-line">LLM 状态：空闲</div>
+      <div id="ttsIndicator" class="tts-indicator" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4z" fill="currentColor"/><path d="M15 9a4.2 4.2 0 0 1 0 6M17.5 6.5a8 8 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <span id="ttsIndicatorText">正在朗读…</span>
+      </div>
+      <div id="thinkingTip" class="thinking-tip">
+        元气小小正在思考<span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      </div>
+      <div class="chat-input-row">
+        <input id="chatInput" type="text" placeholder="和元气小小说点什么…" autocomplete="off" aria-label="对话输入">
+        <button id="sendBtn" class="send" type="button" aria-label="发送">发送</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 角色 tab ===== -->
+  <section class="console-pane" id="pane-roles">
+    <div class="settings-card">
+      <h2>形象选择（主角色立绘）</h2>
+      <div class="persona-grid" id="personaGrid">
+        <button type="button" class="persona-card" data-key="gudian">
+          <img src="assets/personas/gudian/character.png" alt="古典佳人">
+          <span class="p-name">古典佳人</span>
+          <span class="p-desc">默认 · 温婉古典</span>
+        </button>
+        <button type="button" class="persona-card" data-key="dushi">
+          <img src="assets/personas/dushi/character.png" alt="都市女性">
+          <span class="p-name">都市女性</span>
+          <span class="p-desc">知性职场</span>
+        </button>
+        <button type="button" class="persona-card" data-key="wenrou">
+          <img src="assets/personas/wenrou/character.png" alt="温柔">
+          <span class="p-name">温柔</span>
+          <span class="p-desc">温暖恬静</span>
+        </button>
+        <button type="button" class="persona-card" data-key="huopo">
+          <img src="assets/personas/huopo/character.png" alt="活泼">
+          <span class="p-name">活泼</span>
+          <span class="p-desc">元气灵动</span>
+        </button>
+        <button type="button" class="persona-card" data-key="reqing">
+          <img src="assets/personas/reqing/character.png" alt="热情时尚">
+          <span class="p-name">热情时尚</span>
+          <span class="p-desc">优雅名媛</span>
+        </button>
+      </div>
+      <div class="hint" style="margin-top:8px;">点选形象立即设为主角色并生效。</div>
+    </div>
+
+    <div class="settings-card">
+      <h2>角色管理</h2>
+      <div class="mgmt-list" id="mgmtList"></div>
+      <div class="hint" style="margin-top:8px;">
+        「设为主角色」决定桌宠窗口的立绘；「召唤上桌 / 送走」决定小伙伴是否在桌面陪伴你；主角色常驻不可送走。
+      </div>
+    </div>
+
+    <div class="settings-card">
+      <h2>角色关系</h2>
+      <div id="relationList"></div>
+    </div>
+  </section>
+
+  <!-- ===== 亲密度 tab ===== -->
+  <section class="console-pane" id="pane-intimacy">
+    <!-- 升级/解锁通知 banner（JS 填充，默认隐藏） -->
+    <div id="intiBanner" class="inti-banner" hidden></div>
+
+    <div class="settings-card">
+      <h2>选择角色</h2>
+      <div class="guest-chips" id="intiChips"></div>
+      <div class="hint" style="margin-top:8px;">每位角色独立亲密度：积分、等级、解锁状态与纪念日互不影响。</div>
+    </div>
+
+    <div class="settings-card">
+      <div class="inti-level-row">
+        <div class="inti-badge" id="intiBadge">
+          <span class="inti-badge-lv" id="intiBadgeLv">L1</span>
+        </div>
+        <div class="inti-level-info">
+          <div class="inti-level-name" id="intiLevelName">初识</div>
+          <div class="inti-level-desc" id="intiLevelDesc">加载中…</div>
+        </div>
+      </div>
+      <div class="inti-prog"><div class="inti-prog-fill" id="intiProgFill"></div></div>
+      <div class="inti-prog-text" id="intiProgText">—</div>
+      <div class="inti-stats">
+        <span id="intiPoints">总积分 0</span>
+        <span id="intiDaily">今日已得 0/60</span>
+      </div>
+    </div>
+
+    <div class="settings-card">
+      <h2>解锁树</h2>
+      <div id="intiUnlockList"></div>
+    </div>
+
+    <div class="settings-card">
+      <h2>成就徽章</h2>
+      <div class="inti-ach-grid" id="intiAchGrid"></div>
+    </div>
+
+    <div class="settings-card">
+      <h2>每日任务</h2>
+      <div class="inti-task-list" id="intiTasks"></div>
+      <div class="hint" style="margin-top:6px;">任务自动完成，完成一个亲密度 +5。</div>
+    </div>
+
+    <div class="settings-card" id="annivCard">
+      <h2>纪念日</h2>
+      <div class="anniv-row">
+        <input id="annivMonth" type="number" min="1" max="12" placeholder="月" inputmode="numeric">
+        <input id="annivDay" type="number" min="1" max="31" placeholder="日" inputmode="numeric">
+        <button id="btnAnnivSave" class="primary" type="button">保存</button>
+        <button id="btnAnnivClear" type="button">清除</button>
+      </div>
+      <div class="hint" id="annivNote" style="margin-top:8px;"></div>
+    </div>
+  </section>
+
+  <!-- ===== 事件 tab ===== -->
+  <section class="console-pane" id="pane-events">
+    <div class="settings-card">
+      <h2>事件日志（时间倒序）</h2>
+      <div class="event-list" id="eventListBox"></div>
+    </div>
+  </section>
+
+  <!-- ===== 设置 tab ===== -->
+  <section class="console-pane set-group-voice" id="pane-settings">
+    <!-- F6：设置项子 Tab 分组（声音 / 行为 / 通用） -->
+    <div class="set-subtabs" id="setSubBar" role="tablist" aria-label="设置分组">
+      <button class="set-subtab active" data-setstab="voice" type="button">声音</button>
+      <button class="set-subtab" data-setstab="behavior" type="button">行为</button>
+      <button class="set-subtab" data-setstab="general" type="button">通用</button>
+    </div>
+
+    <!-- 模型与接口 -->
+    <div class="settings-card" data-setgroup="general">
+      <h2>模型与接口</h2>
+      <div class="field">
+        <label for="setProvider">服务商</label>
+        <select id="setProvider">
+          <option value="doubao">豆包 Doubao（默认）</option>
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic Claude</option>
+          <option value="custom">自定义兼容接口</option>
+        </select>
+      </div>
+      <div class="row-2">
+        <div class="field">
+          <label for="setModel">模型名称</label>
+          <input id="setModel" type="text" placeholder="doubao-pro-32k">
+        </div>
+        <div class="field">
+          <label for="setBaseUrl">Base URL</label>
+          <input id="setBaseUrl" type="text" placeholder="https://openai.app.msh.team/v1">
+        </div>
+      </div>
+      <div class="field">
+        <label for="setApiKey">API Key</label>
+        <input id="setApiKey" type="password" placeholder="留空则使用环境变量">
+        <div class="hint">也可通过环境变量 <b>DOUBAO_API_KEY</b> 提供；留空时优先读取环境变量。Key 仅保存在本地，不会上传。</div>
+      </div>
+    </div>
+
+    <!-- v45.12：MCP 外部工具服务器 -->
+    <div class="settings-card" data-setgroup="general">
+      <h2>MCP 服务器</h2>
+      <div class="hint" style="margin-bottom:8px;">
+        接入以 <code>mcp__&lt;服务器名&gt;__&lt;工具名&gt;</code> 形式暴露的外部工具。未配置时不启动任何外部进程；
+        仅支持 stdio 本地命令，远程 http 暂不支持。trust=confirm 的工具调用前会先向你确认。
+      </div>
+      <div id="mcpList" style="display:flex;flex-direction:column;gap:8px;"></div>
+      <div id="mcpEmpty" class="hint" style="padding:8px 0;">尚未配置任何 MCP 服务器。</div>
+      <details style="margin-top:10px;">
+        <summary style="cursor:pointer;font-size:13px;">＋ 添加服务器</summary>
+        <div class="row-2" style="margin-top:8px;">
+          <div class="field">
+            <label for="mcpNewName">名称（唯一命名空间）</label>
+            <input id="mcpNewName" type="text" placeholder="fs">
+          </div>
+          <div class="field">
+            <label for="mcpNewCommand">启动命令</label>
+            <input id="mcpNewCommand" type="text" placeholder="npx -y @modelcontextprotocol/server-filesystem">
+          </div>
+        </div>
+        <div class="row-2">
+          <div class="field">
+            <label for="mcpNewArgs">参数（空格分隔，可留空）</label>
+            <input id="mcpNewArgs" type="text" placeholder="/path/to/dir">
+          </div>
+          <div class="field">
+            <label for="mcpNewTrust">信任档位</label>
+            <select id="mcpNewTrust">
+              <option value="confirm" selected>confirm（每次调用先确认）</option>
+              <option value="readonly">readonly（只读工具自动放行）</option>
+            </select>
+          </div>
+        </div>
+        <button id="btnMcpAdd" class="primary" type="button" style="margin-top:6px;">添加并启动</button>
+      </details>
+    </div>
+
+    <!-- 提醒配置 -->
+    <div class="settings-card" data-setgroup="behavior">
+      <h2>定时提醒</h2>
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">久坐提醒</div>
+          <div class="desc">每过一段时间提醒起身活动</div>
+        </div>
+        <div class="switch" id="swSitEnabled" data-on="false"></div>
+        <input id="setSitMin" type="number" min="5" max="240" style="width:70px;">
+      </div>
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">喝水提醒</div>
+          <div class="desc">定时提醒补充水分</div>
+        </div>
+        <div class="switch" id="swWaterEnabled" data-on="false"></div>
+        <input id="setWaterMin" type="number" min="5" max="240" style="width:70px;">
+      </div>
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">护眼提醒</div>
+          <div class="desc">提醒远眺、放松眼睛</div>
+        </div>
+        <div class="switch" id="swEyeEnabled" data-on="false"></div>
+        <input id="setEyeMin" type="number" min="5" max="240" style="width:70px;">
+      </div>
+      <div class="hint" style="margin-top:6px;">右侧数值单位：分钟。</div>
+    </div>
+
+    <!-- 全屏守护（迭代①） -->
+    <div class="settings-card" data-setgroup="behavior">
+      <h2>全屏守护</h2>
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">启用全屏守护</div>
+          <div class="desc">久坐到期后展开全屏休息演出（伴侣陪你休息）</div>
+        </div>
+        <div class="switch" id="swGuardEnabled" data-on="false"></div>
+      </div>
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">久坐间隔</div>
+          <div class="desc">连续工作多久后触发（分钟，5-240）</div>
+        </div>
+        <input id="setGuardSitMin" type="number" min="5" max="240" style="width:70px;">
+      </div>
+      <div class="row-2">
+        <div class="field">
+          <label for="setGuardMode">强制程度</label>
+          <select id="setGuardMode">
+            <option value="light">轻提醒（仅通知）</option>
+            <option value="strong">强提醒（演出可跳过）</option>
+            <option value="lock">守护 + 锁屏</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="setGuardEnd">收尾动作</label>
+          <select id="setGuardEnd">
+            <option value="none">无</option>
+            <option value="sleep">息屏</option>
+            <option value="lock">锁屏</option>
+            <option value="countdown">休息倒计时</option>
+          </select>
+        </div>
+      </div>
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">倒计时秒数</div>
+          <div class="desc">收尾动作为「休息倒计时」时使用（60-300 秒）</div>
+        </div>
+        <input id="setGuardCountdown" type="number" min="60" max="300" style="width:80px;">
+      </div>
+      <div class="hint" style="margin-top:6px;">触发后 30 分钟内为冷却期，重复触发会被拒绝。</div>
+    </div>
+
+    <!-- 语音（迭代②） -->
+    <div class="settings-card" data-setgroup="voice">
+      <h2>语音</h2>
+      <!-- 二次修复①：音色调试 chip 开关（默认关） -->
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">显示音色状态标签</div>
+          <div class="desc">桌宠窗顶部显示「角色·语速·音调」调试 chip（默认关闭，交付态隐藏）</div>
+        </div>
+        <div class="switch" id="swShowVoiceTag" data-on="false"></div>
+      </div>
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">语音朗读</div>
+          <div class="desc">朗读对话回复与提醒播报（无可用引擎时自动静音）</div>
+        </div>
+        <div class="switch" id="swVoiceEnabled" data-on="true"></div>
+      </div>
+      <div class="row-2">
+        <div class="field">
+          <label for="selVoiceEngine">TTS 引擎</label>
+          <select id="selVoiceEngine">
+            <option value="auto">自动选择</option>
+            <option value="local">本地系统 TTS</option>
+            <option value="cloud">云端 TTS</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="selVoiceScope">朗读范围</label>
+          <select id="selVoiceScope">
+            <option value="all">全部</option>
+            <option value="reminders">仅提醒</option>
+            <option value="chat">仅对话</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label for="setVoiceVolume">音量 <span class="slider-val" id="setVoiceVolumeVal">80</span></label>
+        <input id="setVoiceVolume" type="range" min="0" max="100" step="1" value="80">
+      </div>
+      <div class="field">
+        <label for="setVoiceRate">语速 <span class="slider-val" id="setVoiceRateVal">1.00</span></label>
+        <input id="setVoiceRate" type="range" min="0.5" max="2.0" step="0.1" value="1.0">
+      </div>
+      <div class="row-2">
+        <div class="field">
+          <label for="setCloudProvider">云端 TTS 服务商</label>
+          <select id="setCloudProvider">
+            <option value="doubao">豆包</option>
+            <option value="volcano">火山</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="setCloudVoice">音色 ID</label>
+          <input id="setCloudVoice" type="text" placeholder="音色 ID，留空用默认">
+        </div>
+      </div>
+      <div class="field">
+        <label for="setCloudKey">云端 TTS Key</label>
+        <input id="setCloudKey" type="password" placeholder="留空则读取环境变量">
+      </div>
+      <div class="hint" id="voiceStatusHint" style="margin-top:6px;">正在检测语音引擎状态…</div>
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">语音输入（STT）</div>
+          <div class="desc">麦克风转文字（可选增强，不可用时自动降级）</div>
+        </div>
+        <div class="switch" id="swSttEnabled" data-on="false"></div>
+      </div>
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">语音唤醒（免提聆听）</div>
+          <div class="desc">麦克风常开监听唤醒词，说「元气小小」进入免提对话；支持语音「结束/拜拜」退出。音频仅在本地 whisper 识别，不上传。</div>
+        </div>
+        <div class="switch" id="swWakeEnabled" data-on="false"></div>
+      </div>
+      <div class="row-2">
+        <div class="field">
+          <label for="setWakeWord">唤醒词</label>
+          <input id="setWakeWord" type="text" placeholder="元气小小">
+        </div>
+      </div>
+      <div class="hint" id="wakeStatusHint" style="margin-top:6px;">正在检测免提聆听状态…</div>
+      <div class="row-2">
+        <div class="field">
+          <label for="setSttProvider">STT 服务商</label>
+          <select id="setSttProvider">
+            <option value="doubao">豆包</option>
+            <option value="volcano">火山</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="setSttKey">STT Key</label>
+          <input id="setSttKey" type="password" placeholder="留空则读取环境变量">
+        </div>
+      </div>
+      <div class="row-2">
+        <div class="field">
+          <label for="setSttDevice">麦克风</label>
+          <select id="setSttDevice" class="select-s">
+            <option value="">自动选择（推荐）</option>
+          </select>
+          <button type="button" id="sttDeviceRefresh" class="mini-btn">刷新</button>
+        </div>
+        <div class="field">
+          <label>扬声器（输出设备）</label>
+          <select id="audioOutputSelect">
+            <option value="default">系统默认</option>
+          </select>
+          <div style="margin-top:6px;display:flex;gap:8px;align-items:center;">
+            <button type="button" id="btnAudioTest" class="mini-btn">测试输出设备</button>
+            <span id="audioTestResult" class="hint" style="font-size:12px;"></span>
+          </div>
+          <div id="audioOutputs" class="hint" style="font-size:12px;line-height:1.5;"></div>
+          <div class="hint" style="font-size:11px;margin-top:2px;">选择后建议点「测试输出设备」对账实际落点（pactl list sink-inputs）。</div>
+          <details style="margin-top:6px;">
+            <summary style="font-size:12px;cursor:pointer;">音频诊断（最近 20 条日志）</summary>
+            <div id="audioDiagLog" style="font-family:monospace;font-size:11px;background:#0b0b0b;color:#9ae6a0;padding:6px;margin-top:4px;max-height:160px;overflow:auto;"></div>
+          </details>
+        </div>
+        <div class="field">
+          <label>搜索引擎</label>
+          <select id="searchEngineSelect">
+            <option value="auto">自动（百度优先）</option>
+            <option value="baidu">百度</option>
+            <option value="360">360</option>
+            <option value="sogou">搜狗</option>
+          </select>
+          <div class="hint" style="font-size:12px;line-height:1.5;">自动 = 先百度，没结果再 360，最后搜狗；指定 = 只用这一个，搜不到会直接说。</div>
+        </div>
+        <div class="field">
+          <label>上下文预算 tokens</label>
+          <input type="number" id="ctxBudgetTokens" min="1000" max="64000" value="8000">
+          <div class="hint" style="font-size:12px;">1000–64000，默认 8000。超出时按最近轮数截断。</div>
+        </div>
+        <div class="field">
+          <label>最近保留轮数</label>
+          <input type="number" id="ctxRecentRounds" min="5" max="200" value="10">
+          <div class="hint" style="font-size:12px;">5–200，默认 10。</div>
+        </div>
+        <div class="field">
+          <label>任务步数上限 / 分钟上限</label>
+          <div style="display:flex;gap:8px;">
+            <input type="number" id="taskMaxSteps" min="1" max="200" value="20" style="flex:1;">
+            <input type="number" id="taskMaxMinutes" min="1" max="180" value="30" style="flex:1;">
+          </div>
+          <div class="hint" style="font-size:12px;">默认 20 步 / 30 分钟，超出自动中断。</div>
+        </div>
+        <div class="field">
+          <label>知识库</label>
+          <div id="kbFoldersList" style="margin-bottom:6px;"></div>
+          <div style="display:flex;gap:8px;margin-bottom:8px;">
+            <input type="text" id="kbFolderInput" placeholder="/path/to/docs" style="flex:1;">
+            <button type="button" id="btnKbAdd" class="mini-btn">添加目录</button>
+            <button type="button" id="btnKbReindex" class="mini-btn">重新索引</button>
+          </div>
+          <div id="kbStatus" class="hint" style="font-size:12px;"></div>
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <label style="flex:1;font-size:12px;">Top-K
+              <input type="number" id="kbTopK" min="1" max="20" value="6" style="width:100%;">
+            </label>
+            <label style="flex:1;font-size:12px;">块长(字)
+              <input type="number" id="kbChunkChars" min="500" max="800" value="700" style="width:100%;">
+            </label>
+            <label style="flex:1;font-size:12px;">块上限
+              <input type="number" id="kbMaxChunks" min="1000" max="100000" value="20000" style="width:100%;">
+            </label>
+          </div>
+          <div class="hint" style="font-size:12px;">纯本地索引，不上传、不联网；P1 用 BM25 关键词检索，不做语义向量。</div>
+        </div>
+      </div>
+      <div class="hint" id="sttStatusHint" style="margin-top:6px;">正在检测语音输入状态…</div>
+      <div class="hint" style="margin-top:6px;opacity:.85;">
+        语音数据仅在本地处理；云端引擎仅发送当前朗读的文本片段。Key 仅保存在本机设置文件中，不会上传。
+      </div>
+
+      <!-- v18.8-fix8 · 语音诊断（每 1s 刷新，定位"听不到"链路） -->
+      <div style="margin-top:14px;padding:10px 12px;border:1px solid #e5d9c8;border-radius:8px;background:#fdf9f2;">
+        <div style="font-weight:600;margin-bottom:6px;">语音诊断 <span id="diagStateDot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#aaa;"></span></div>
+        <table style="width:100%;font-size:12px;line-height:1.8;color:#5a4a3a;">
+          <tr><td style="width:88px;">采集设备</td><td id="diagDevice">—</td></tr>
+          <tr><td>监听状态</td><td id="diagState">—</td></tr>
+          <tr><td>麦克风能量</td><td id="diagRms">—（说话时应跳动 &gt;0.005）</td></tr>
+          <tr><td>断句次数</td><td id="diagVad">0（说话停顿后应 +1）</td></tr>
+          <tr><td>最近转写</td><td id="diagText">—（应有你刚说的话）</td></tr>
+          <tr><td>朗读播放</td><td id="diagTtsPlayback">—</td></tr>
+        </table>
+        <div style="font-size:11px;opacity:.7;margin-top:4px;">
+          诊断法：① 设备应是 pulse/default 而非 hw:；② 说话时能量数值跳动；③ 停顿后断句 +1；④ 转写出现你的话。哪一步停住，问题就在哪一环。
+        </div>
+        <div style="margin-top:6px;">
+          <button type="button" id="btnTtsTest" class="mini-btn">播放测试音（880Hz·0.5s）</button>
+          <span id="ttsTestResult" style="font-size:11px;color:#7a6a5a;margin-left:6px;"></span>
+        </div>
+      </div>
+
+      <!-- v20 · STT 引擎自愈卡片（voice_diag.stt_engine；缺失时红色指引+下载链接） -->
+      <div id="sttEngineCard" hidden style="margin-top:10px;padding:10px 12px;border:1px solid #e5d9c8;border-radius:8px;background:#fdf9f2;">
+        <div style="font-weight:600;margin-bottom:6px;">STT 引擎 <span id="sttEngineDot" style="font-size:12px;"></span></div>
+        <table style="width:100%;font-size:12px;line-height:1.8;color:#5a4a3a;">
+          <tr><td style="width:88px;">whisper-server</td><td id="sttRowServer">—</td></tr>
+          <tr><td>whisper-cli</td><td id="sttRowCli">—</td></tr>
+          <tr><td>ggml 模型</td><td id="sttRowModel">—</td></tr>
+        </table>
+        <div id="sttEngineGuide" hidden style="margin-top:8px;padding:8px;border-radius:6px;background:#fbeaea;border:1px solid #e8c4c4;">
+          <div id="sttEngineReason" style="font-size:12px;color:#a33;"></div>
+          <div id="sttEngineCwd" style="font-size:11px;color:#7a5a5a;margin-top:4px;word-break:break-all;"></div>
+          <div id="sttEngineLinks" style="margin-top:6px;font-size:12px;"></div>
+        </div>
+      </div>
+
+      <!-- 迭代⑤ · 角色专属音色（5 张卡，JS 按 get_personas 渲染回填） -->
+      <div class="voice-persona-block">
+        <div class="voice-persona-block-title">角色音色</div>
+        <div class="voice-persona-block-desc">
+          每个角色独立音色：按性格自动匹配，或切换为「自定义」手动微调音高 / 语速。
+        </div>
+        <div id="personaVoiceCards" class="voice-persona-cards"></div>
+      </div>
+    </div>
+
+    <!-- 隐私与纯净模式 -->
+    <div class="settings-card" data-setgroup="behavior">
+      <h2>隐私与模式</h2>
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">年龄确认（已满 18 岁）</div>
+          <div class="desc">确认后解锁全部聊天话题</div>
+        </div>
+        <div class="switch" id="swAgeConfirmed" data-on="false"></div>
+      </div>
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">未成年人纯净模式</div>
+          <div class="desc">开启后内容严格全龄友好，过滤一切成人类话题</div>
+        </div>
+        <div class="switch" id="swPureMode" data-on="false"></div>
+      </div>
+      <!-- v20：桌宠贴边吸附开关 -->
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">桌宠贴边吸附</div>
+          <div class="desc">拖动元气小小到屏幕边缘附近时自动贴边整理（按显示器工作区计算）</div>
+        </div>
+        <div class="switch" id="swSnapEdge" data-on="true"></div>
+      </div>
+    </div>
+
+    <!-- 技能授权 -->
+    <div class="settings-card" id="skillsCard" data-setgroup="behavior">
+      <h2>技能授权</h2>
+      <div class="gate-lock-banner" id="skillsLockBanner" hidden>🔒 助理技能需亲密度 L4 解锁</div>
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">技能总开关</div>
+          <div class="desc">关闭后所有本地技能均不可用</div>
+        </div>
+        <div class="switch" id="swSkillsTotal" data-on="false"></div>
+      </div>
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">打开应用（launch_app）</div>
+          <div class="desc">元气小小可帮你启动常用程序</div>
+        </div>
+        <div class="switch" id="swSkillLaunch" data-on="false"></div>
+      </div>
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">打开文件夹（open_folder）</div>
+          <div class="desc">元气小小可帮你打开本地目录</div>
+        </div>
+        <div class="switch" id="swSkillFolder" data-on="false"></div>
+      </div>
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">设置提醒（set_reminder）</div>
+          <div class="desc">元气小小可创建新的定时提醒</div>
+        </div>
+        <div class="switch" id="swSkillReminder" data-on="false"></div>
+      </div>
+      <div class="hint" style="margin-top:8px;">
+        涉及外部动作的<b>危险操作</b>（如打开应用/文件夹）每次执行前都会弹出确认框，需你手动允许。
+      </div>
+    </div>
+
+    <!-- 关于与更新（迭代⑥） -->
+    <div class="settings-card" id="aboutCard" data-setgroup="general">
+      <h2>关于与更新</h2>
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">检查更新</div>
+          <div class="desc" id="updStatus">启动时已自动静默检查；有新版本会下载并提示安装</div>
+        </div>
+        <button class="primary" id="btnCheckUpdate" type="button">检查更新</button>
+      </div>
+      <div class="hint" style="margin-top:6px;">更新流程只上报当前版本号并校验签名，不包含你的任何个人数据。</div>
+      <div class="hint" style="margin-top:10px;">关于作者：董阿伦 · 电话 15712751280 · 邮箱 alunupc@126.com</div>
+    </div>
+
+    <!-- 保存 -->
+    <div class="save-bar">
+      <button class="save" id="btnSave" type="button">保存更改</button>
+      <span class="saved-tip" id="savedTip">已保存 ✓</span>
+    </div>
+  </section>
+
+  <!-- ===== 保险箱 tab（迭代③） ===== -->
+  <section class="console-pane" id="pane-vault">
+    <!-- 门控锁定横幅（gated 时常显；解锁后隐藏） -->
+    <div id="vaultGatedBanner" class="vault-gated-banner" hidden>
+      🔒 亲密度达到 L4（贴心）后解锁本地密码保险箱
+    </div>
+    <!-- 状态容器：JS 按 vault_status 渲染 5 态之一（gated/unset/locked/unlocked） -->
+    <div id="vaultBody"></div>
+    <!-- 导入备份的隐藏 file input（前端读文本后调 vault_import_payload） -->
+    <input id="vaultFileInput" type="file" accept=".qbkv,application/json,.json" hidden>
+  </section>
+
+  <!-- ===== 社交 tab（迭代④：星球广场 × 同城灯塔） ===== -->
+  <section class="console-pane" id="pane-social">
+    <!-- 连接状态条 -->
+    <div class="ns-conn-bar">
+      <span class="ns-conn-dot" id="nsConnDot"></span>
+      <span class="ns-conn-text" id="nsConnText">离线模式 · 配置服务器后启用联网</span>
+      <input id="nsServerUrl" type="text" value="http://127.0.0.1:8787" placeholder="http://127.0.0.1:8787" autocomplete="off">
+      <button id="btnNsConnect" class="primary" type="button">连接</button>
+    </div>
+
+    <!-- 子视图切换（planet / city，默认 planet） -->
+    <div class="ns-subtabs">
+      <button class="ns-subtab active" data-view="planet" type="button">星球广场</button>
+      <button class="ns-subtab" data-view="city" type="button">同城灯塔</button>
+    </div>
+
+    <!-- 离线提示（未连接时常显） -->
+    <div id="nsOfflineHint" class="ns-offline-hint">离线模式 · 配置服务器后启用联网</div>
+
+    <!-- ===== 星球广场视图 ===== -->
+    <div class="ns-view" id="nsViewPlanet">
+      <!-- 我的光点 + 灵魂标签 -->
+      <div class="settings-card ns-mycard">
+        <h2>我的光点</h2>
+        <div class="ns-myrow">
+          <span class="ns-dot" id="nsMyDot"></span>
+          <span class="ns-my-name" id="nsMyName">星客</span>
+          <span class="ns-online-tag" id="nsMyOnline">离线</span>
+        </div>
+        <div class="ns-tag-group">
+          <div class="ns-tag-title">性格标签</div>
+          <div class="ns-tag-chips" id="nsTagsPersonality"></div>
+          <input id="nsCustomPersonality" class="ns-custom-input" type="text" maxlength="8" placeholder="自定义标签（8 字内）" autocomplete="off">
+        </div>
+        <div class="ns-tag-group">
+          <div class="ns-tag-title">兴趣标签</div>
+          <div class="ns-tag-chips" id="nsTagsInterests"></div>
+          <input id="nsCustomInterests" class="ns-custom-input" type="text" maxlength="8" placeholder="自定义标签（8 字内）" autocomplete="off">
+        </div>
+        <div class="ns-tag-group">
+          <div class="ns-tag-title">状态标签</div>
+          <div class="ns-tag-chips" id="nsTagsStatus"></div>
+          <input id="nsCustomStatus" class="ns-custom-input" type="text" maxlength="8" placeholder="自定义标签（8 字内）" autocomplete="off">
+        </div>
+        <div class="ns-tag-actions">
+          <button id="btnNsSaveProfile" class="primary" type="button">保存我的光点</button>
+        </div>
+      </div>
+
+      <!-- 漫游浏览 -->
+      <div class="settings-card">
+        <h2>漫游浏览</h2>
+        <div class="ns-roam-actions">
+          <button id="btnNsRoam" class="primary" type="button">刷新漫游</button>
+          <button id="btnNsMatch" type="button">智能匹配</button>
+        </div>
+        <div id="nsRoamList" class="ns-soul-list"></div>
+      </div>
+    </div>
+
+    <!-- ===== 同城灯塔视图 ===== -->
+    <div class="ns-view" id="nsViewCity" hidden>
+      <div class="settings-card">
+        <h2>同城灯塔</h2>
+        <div class="field">
+          <label for="nsCityInput">我的城市（仅城市分组，绝不采集定位）</label>
+          <input id="nsCityInput" type="text" maxlength="12" placeholder="例：石家庄" autocomplete="off">
+        </div>
+        <div class="ns-city-chips" id="nsCityChips"></div>
+        <div class="ns-tag-actions">
+          <button id="btnNsCityGo" class="primary" type="button">看看同城灵魂</button>
+        </div>
+        <div id="nsCityList" class="ns-soul-list"></div>
+      </div>
+      <div class="settings-card">
+        <h2>话题墙 · 即将上线</h2>
+        <div id="nsTopicsList" class="ns-placeholder-list"></div>
+      </div>
+      <div class="settings-card">
+        <h2>活动预告 · 即将上线</h2>
+        <div id="nsEventsList" class="ns-placeholder-list"></div>
+      </div>
+    </div>
+
+    <!-- 光点详情浮层 -->
+    <div id="nsSoulModal" class="ns-modal" hidden>
+      <div class="ns-modal-card">
+        <div class="ns-modal-head">
+          <span class="ns-dot" id="nsDetailDot"></span>
+          <span id="nsDetailName">—</span>
+          <button class="ns-modal-close" id="nsDetailClose" type="button" aria-label="关闭">×</button>
+        </div>
+        <div id="nsDetailBody" class="ns-modal-body"></div>
+        <div class="ns-modal-actions">
+          <button id="btnNsLike" class="primary" type="button">点亮</button>
+          <button id="btnNsMessage" type="button">发消息</button>
+          <button id="btnNsReport" type="button">举报</button>
+          <button id="btnNsBlock" class="ns-danger-btn" type="button">拉黑</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 匿名聊天窗口 -->
+    <div id="nsChatModal" class="ns-modal" hidden>
+      <div class="ns-modal-card ns-chat-card">
+        <div class="ns-modal-head">
+          <span class="ns-dot" id="nsChatDot"></span>
+          <span id="nsChatName">—</span>
+          <button class="ns-modal-close" id="nsChatClose" type="button" aria-label="关闭">×</button>
+        </div>
+        <div id="nsChatScroll" class="ns-chat-scroll"></div>
+        <div class="ns-chat-input-row">
+          <input id="nsChatInput" type="text" maxlength="500" placeholder="说点什么…（对方仅看到昵称与光点色）" autocomplete="off">
+          <button id="btnNsSend" class="primary" type="button">发送</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 首次隐私提示弹窗 -->
+    <div id="nsPrivacyModal" class="ns-modal ns-privacy-modal" hidden>
+      <div class="ns-modal-card">
+        <h3>社交隐私说明</h3>
+        <ul class="ns-privacy-list">
+          <li>匿名默认：你以随机匿名 ID 进入，仅展示自定义昵称与光点色。</li>
+          <li>不采集位置：同城仅按你手填的城市分组，绝不获取 GPS 定位。</li>
+          <li>举报 / 拉黑机制：任何用户可举报或拉黑对方，拉黑后双向屏蔽。</li>
+          <li>未成年人纯净模式：开启后列表仅显示昵称与光点色，隐藏标签与城市。</li>
+        </ul>
+        <div class="ns-purity-row">
+          <div class="switch" id="swNsPure" data-on="false"></div>
+          <span>开启未成年人纯净模式</span>
+        </div>
+        <div class="ns-privacy-actions">
+          <button id="btnNsPrivacyOk" class="primary" type="button">我已满 18 岁，开始漫游</button>
+          <button id="btnNsPrivacyMinor" type="button">我是未成年人，开启纯净模式</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 猜拳 tab ===== -->
+  <section class="console-pane" id="pane-pk">
+    <div class="settings-card">
+      <h2>选择在场客人</h2>
+      <div class="guest-chips" id="guestChips"></div>
+      <div class="hint" style="margin-top:8px;">客人来自「角色」页召唤上桌的小伙伴（主角色自动排除）。</div>
+    </div>
+
+    <div class="settings-card">
+      <h2>互动</h2>
+      <div class="pk-action-row">
+        <button id="btnGreet" class="primary" type="button">串门寒暄</button>
+        <button id="btnPkStart" type="button">猜拳（进入对局）</button>
+      </div>
+    </div>
+
+    <div class="settings-card">
+      <h2>对局区</h2>
+      <div class="pk-arena">
+        <div class="pk-fighter">
+          <span class="pk-name" id="kMainName">元气小小（你）</span>
+          <div class="pk-hand" id="kMainHand"></div>
+        </div>
+        <div class="pk-vs">VS</div>
+        <div class="pk-fighter">
+          <span class="pk-name" id="kGuestName">客人</span>
+          <div class="pk-hand" id="kGuestHand"></div>
+        </div>
+      </div>
+      <div class="pk-result" id="kResult">选择客人后，点下方手势开始对局</div>
+      <div id="kLines" class="pk-log"></div>
+      <div class="pk-foot" style="margin-top:10px;">
+        <span id="kRemaining">今日剩余 3 次</span>
+      </div>
+      <div class="pk-moves-row" id="pkMoves">
+        <button type="button" data-move="rock">石头</button>
+        <button type="button" data-move="scissors">剪刀</button>
+        <button type="button" data-move="paper">布</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 技能与专家 tab（插件化契约 §5） ===== -->
+  <section class="console-pane" id="pane-plugins">
+    <!-- v45.8：顶部安装入口 -->
+    <div class="settings-card">
+      <h2>安装技能</h2>
+      <div class="plg-toolbar">
+        <button id="btnSkillInstallUrl" class="primary" type="button">从链接安装</button>
+        <button id="btnSkillInstallFile" class="primary" type="button">从文件安装</button>
+        <button id="btnSkillOpenDir" type="button">打开技能目录</button>
+      </div>
+      <input id="skillUrlInput" type="text" placeholder="https://example.com/skill.zip" style="margin-top:8px;width:100%;display:none;">
+      <input id="skillFileInput" type="file" accept=".zip" hidden>
+    </div>
+
+    <!-- 段①：内置技能（数据来自 get_skills_status，开关语义同设置页） -->
+    <div class="settings-card">
+      <h2>内置技能</h2>
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">技能总开关</div>
+          <div class="desc">关闭后所有本地技能均不可用</div>
+        </div>
+        <div class="switch" id="pbSwTotal" data-on="false"></div>
+      </div>
+      <div id="pbBuiltinRows"></div>
+      <div class="hint" style="margin-top:8px;">
+        内置技能受信任、权限已默认授予；<b>执行命令</b>属危险操作，每次执行前仍会逐次确认。
+      </div>
+    </div>
+
+    <!-- 段②：插件技能（plugin_list，type=skill 且 builtin=false） -->
+    <div class="settings-card">
+      <h2>插件技能</h2>
+      <div class="plg-toolbar">
+        <span class="hint">外部插件安装后默认停用，需逐项授权权限后开启。</span>
+        <button id="btnPluginInstall" class="primary" type="button">安装插件</button>
+      </div>
+      <div id="pbPluginList" class="plg-list"></div>
+      <input id="pluginFileInput" type="file" hidden>
+    </div>
+
+    <!-- 段②b：连接器（MCP / HTTP 自定义连接器，T4） -->
+    <div class="settings-card">
+      <h2>连接器（MCP / HTTP）</h2>
+      <div class="hint" style="margin-bottom:8px;">
+        连接器把外部 MCP stdio 服务器或 HTTP 端点接入技能链：添加后自动注册进 LLM 工具表，
+        权限自动授予（MCP→command:run / HTTP→network:read），调用仍走危险命令逐次审批。
+      </div>
+      <div class="conn-form">
+        <div class="row-3">
+          <div class="field">
+            <label for="connKind">类型</label>
+            <select id="connKind">
+              <option value="mcp">MCP（stdio 服务器）</option>
+              <option value="http">HTTP 端点</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="connId">ID（字母数字下划线）</label>
+            <input id="connId" type="text" placeholder="my_mcp">
+          </div>
+          <div class="field">
+            <label for="connName">名称</label>
+            <input id="connName" type="text" placeholder="我的 MCP 连接器">
+          </div>
+        </div>
+        <div class="field">
+          <label for="connDesc">描述</label>
+          <input id="connDesc" type="text" placeholder="这个连接器提供什么能力">
+        </div>
+        <div id="connMcpFields" class="row-2">
+          <div class="field">
+            <label for="connCommand">启动命令</label>
+            <input id="connCommand" type="text" placeholder="python3 /path/to/server.py">
+          </div>
+          <div class="field">
+            <label for="connArgs">参数（空格分隔，可选）</label>
+            <input id="connArgs" type="text" placeholder="--port 8080">
+          </div>
+        </div>
+        <div id="connHttpFields" class="field" style="display:none;">
+          <label for="connUrl">端点 URL</label>
+          <input id="connUrl" type="text" placeholder="https://example.com/api/tool">
+        </div>
+        <div class="plg-toolbar" style="margin-top:10px;">
+          <span class="hint">添加即自动授权并启用；移除会删除物化目录与配置。</span>
+          <button id="btnConnAdd" class="primary" type="button">添加连接器</button>
+        </div>
+      </div>
+      <div id="pbConnectorList" class="plg-list" style="margin-top:10px;"></div>
+    </div>
+
+    <!-- 段②c：技能包（.qbpk 打包 / 导入 / 导出，T4） -->
+    <div class="settings-card">
+      <h2>技能包（.qbpk）</h2>
+      <div class="plg-toolbar">
+        <span class="hint">技能包是把插件技能打包分发的 zip 文件：导入后安全校验并安装，可再导出分享。</span>
+        <button id="btnPackInstall" class="primary" type="button">导入技能包</button>
+      </div>
+      <div id="pbSkillPackList" class="plg-list"></div>
+      <input id="packFileInput" type="file" hidden>
+    </div>
+
+    <!-- 段③：专家（expert_list） -->
+    <div class="settings-card">
+      <h2>专家</h2>
+      <div class="hint" style="margin-bottom:8px;">
+        专家接管对话人设与技能白名单；同一时间仅启用一位，停用即恢复默认人设。
+      </div>
+      <div id="pbExpertList" class="plg-list"></div>
+    </div>
+  </section>
+
+  <!-- ===== 代码检查 tab（迭代①） ===== -->
+  <section class="console-pane" id="pane-codecheck">
+    <div class="settings-card">
+      <h2>代码检查（只读 · 本地隐私优先）</h2>
+      <div class="field">
+        <label for="ccPath">文件路径（留空则检查下方代码片段）</label>
+        <input id="ccPath" type="text" placeholder="例：qibai-core/tests/fixtures/bad.js">
+      </div>
+      <div class="row-2">
+        <div class="field">
+          <label for="ccLang">代码语言</label>
+          <select id="ccLang">
+            <option value="auto">自动识别</option>
+            <option value="javascript">JavaScript</option>
+            <option value="python">Python</option>
+            <option value="json">JSON</option>
+            <option value="typescript">TypeScript</option>
+            <option value="rust">Rust</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>&nbsp;</label>
+          <div class="cc-run-row">
+            <button id="ccRun" class="primary" type="button">运行检查</button>
+            <button id="ccRerun" type="button">重新检查</button>
+          </div>
+        </div>
+      </div>
+      <div class="field">
+        <label for="ccSnippet">代码片段</label>
+        <textarea id="ccSnippet" rows="7" placeholder="粘贴要检查的代码片段…"></textarea>
+      </div>
+      <div class="hint" style="margin-top:6px;">
+        检查全程<b>只读</b>：不写文件、不上传代码；浏览器演示模式按关键词返回冻结形状报告。
+      </div>
+    </div>
+
+    <div class="settings-card">
+      <h2>检查报告</h2>
+      <div id="ccEmpty" class="cc-empty">尚未运行检查。输入路径或粘贴代码片段后点「运行检查」。</div>
+      <div id="ccSummary" class="cc-summary" hidden></div>
+      <div id="ccMeta" class="cc-meta" hidden></div>
+      <div id="ccIssues" class="cc-issues"></div>
+    </div>
+  </section>
+
+  <!-- ===== 任务面板（P0 骨架，IPC 名以 core 最终为准） ===== -->
+  <section class="console-pane" id="pane-tasks">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <span class="chat-header-title">任务</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <label style="font-size:12px;color:#6b7280;">并行上限</label>
+        <input type="number" id="taskParallelMax" min="1" max="8" value="3" style="width:56px;">
+        <button type="button" id="btnTasksRefresh" class="mini-btn">刷新</button>
+      </div>
+    </div>
+    <div id="tasksList" class="tasks-list"></div>
+    <div id="tasksEmpty" class="hint" style="margin-top:20px;text-align:center;">还没有任务。跟小小提一个多步目标，它会先给你一份计划。</div>
+
+    <!-- 任务详情（侧拉/内联） -->
+    <div id="taskDetail" hidden style="margin-top:14px;border:1px solid #e5d9c8;border-radius:8px;padding:12px;background:#fdf9f2;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <strong id="taskDetailTitle">—</strong>
+        <button type="button" id="btnTaskDetailClose" class="mini-btn">关闭</button>
+      </div>
+      <div id="taskPartialBadge" hidden style="margin-top:6px;display:inline-block;background:#f59e0b;color:#fff;font-size:12px;padding:2px 8px;border-radius:10px;">部分完成</div>
+      <div id="taskDetailMeta" class="hint" style="margin-top:6px;"></div>
+      <!-- v45.13：并行总览条 done/total + running/limit -->
+      <div id="taskParallelBar" style="margin-top:10px;display:none;">
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:#6b7280;margin-bottom:4px;">
+          <span id="taskParallelProgressText">0/0</span>
+          <span id="taskParallelRunningText">运行 0/3</span>
+        </div>
+        <div style="height:8px;background:#efe6d8;border-radius:4px;overflow:hidden;">
+          <div id="taskParallelProgressFill" style="height:100%;width:0%;background:#10b981;border-radius:4px;transition:width .3s;"></div>
+        </div>
+      </div>
+      <!-- v45.13：并行组（每组一行，分支为 chip） -->
+      <div id="taskParallelGroups" style="margin-top:10px;display:none;"></div>
+      <div id="taskFailedReasons" style="margin-top:8px;display:none;"></div>
+      <div id="taskDetailSteps" style="margin-top:10px;"></div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+        <button type="button" id="btnTaskStart" class="primary mini-btn" disabled>开始</button>
+        <button type="button" id="btnTaskPause" class="mini-btn" disabled>暂停</button>
+        <button type="button" id="btnTaskResume" class="mini-btn" disabled>继续</button>
+        <button type="button" id="btnTaskCancel" class="danger-ghost mini-btn" disabled>取消</button>
+        <button type="button" id="btnTaskRerunFailed" class="mini-btn" disabled>从失败步重跑</button>
+      </div>
+      <div class="hint" id="taskPlanWarning" style="margin-top:8px;color:#b45309;"></div>
+    </div>
+  </section>
+
+  <!-- 计划确认模态（步骤可改/删/调序） -->
+  <div id="planConfirmModal" class="clear-modal-mask" hidden>
+    <div class="clear-modal-panel" style="max-width:520px;">
+      <h3 style="margin:0 0 10px;">确认执行计划</h3>
+      <div id="planStepsList" style="max-height:300px;overflow:auto;border:1px solid #e5d9c8;border-radius:6px;padding:8px;"></div>
+      <div class="hint" style="margin:8px 0;">未确认前「开始」按钮禁用；改计划后版本+1，需重新确认。</div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;">
+        <button type="button" id="btnPlanCancel" class="mini-btn">取消</button>
+        <button type="button" id="btnPlanConfirm" class="primary mini-btn">确认执行</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 高危动作确认模态 -->
+  <div id="actionConfirmModal" class="clear-modal-mask" hidden>
+    <div class="clear-modal-panel" style="max-width:460px;">
+      <h3 style="margin:0 0 10px;" id="actionConfirmTitle">需要确认</h3>
+      <div class="row"><span class="k">动作</span><span id="actionConfirmKind">—</span></div>
+      <div class="row"><span class="k">目标</span><span id="actionConfirmTarget">—</span></div>
+      <div class="row"><span class="k">风险</span><span id="actionConfirmRisk">—</span></div>
+      <div class="row"><span class="k">所属任务</span><span id="actionConfirmTask">—</span></div>
+      <label id="actionRememberWrap" style="display:none;margin-top:10px;font-size:13px;">
+        <input type="checkbox" id="actionRemember"> 本任务内不再问
+      </label>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+        <button type="button" id="btnActionAllow" class="mini-btn">允许</button>
+        <button type="button" id="btnActionDeny" class="primary mini-btn">拒绝</button>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- ================= toast 容器 ================= -->
+<div id="toastBox" class="toast-box"></div>
+
+<!-- ================= 技能审批全页 overlay ================= -->
+<div id="approvalModal" class="approval-modal">
+  <div class="approval-card">
+    <h3>需要你的确认</h3>
+    <div class="skill-name" id="approvalSkill">skill</div>
+    <p id="approvalDesc"></p>
+    <div class="approval-actions">
+      <button class="deny" id="approvalDeny" type="button">拒绝</button>
+      <button class="allow" id="approvalAllow" type="button">允许本次</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= v45.7 清空聊天确认模态 ================= -->
+<div id="confirmClearChat" class="clear-modal" hidden>
+  <div class="clear-modal-mask" data-close="1"></div>
+  <div class="clear-modal-card" role="dialog" aria-labelledby="clearChatTitle">
+    <h3 id="clearChatTitle">清空聊天记录</h3>
+    <p class="clear-modal-desc">将删除本地保存的对话历史。建议选「只清聊天记录」保留角色记忆与亲密度。</p>
+    <p class="clear-modal-err" id="clearChatErr" hidden></p>
+    <div class="clear-modal-actions">
+      <button id="btnClearOnly" class="clear-btn primary" type="button">只清聊天记录</button>
+      <button id="btnClearAll" class="clear-btn danger" type="button">连角色记忆一起清（不可恢复）</button>
+      <button id="btnClearCancel" class="clear-btn ghost" type="button">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= v45.8 技能安装确认模态 ================= -->
+<div id="skillInstallModal" class="clear-modal" hidden>
+  <div class="clear-modal-mask" data-close="1"></div>
+  <div class="clear-modal-card" role="dialog" aria-labelledby="skillInstallTitle">
+    <h3 id="skillInstallTitle">安装技能</h3>
+    <div id="skillInstallBody" class="skill-install-body"></div>
+    <div class="clear-modal-actions">
+      <button id="btnSkillInstallConfirm" class="clear-btn primary" type="button">安装</button>
+      <button id="btnSkillInstallCancel" class="clear-btn danger" type="button">取消</button>
+    </div>
+  </div>
+</div>
+
+<script src="tauri-bridge.js?v=4"></script>
+<script src="console.js?v=4"></script>
+</body>
+</html>

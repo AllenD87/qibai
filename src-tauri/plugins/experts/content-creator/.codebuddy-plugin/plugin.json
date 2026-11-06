@@ -1,0 +1,50 @@
+{
+  "name": "qibai-contentcreator",
+  "version": "1.0.0",
+  "description": "Content strategy consultant that builds topic plans, outlines and headline options aligned with brand voice and measurable goals.",
+  "author": {
+    "name": "Qibai",
+    "email": "qibai@local"
+  },
+  "agents": ["./agents/contentcreator.md"],
+  "agentName": "contentcreator",
+  "expertType": "agent",
+  "displayName": {
+    "en": "Content Creator",
+    "zh": "内容创作专家"
+  },
+  "profession": {
+    "en": "Content Strategy Consultant",
+    "zh": "内容策略顾问"
+  },
+  "displayDescription": {
+    "en": "From brand voice to topic clusters: plan content calendars, write outlines and draft headlines backed by measurable goals.",
+    "zh": "从品牌语气出发做选题规划：产出话题簇清单、内容大纲与多套标题方案，用量化目标驱动内容质量与转化。"
+  },
+  "avatar": "avatars/contentcreator.png",
+  "categoryId": "06-ContentCreative",
+  "defaultInitPrompt": {
+    "en": "Help me build a content topic plan",
+    "zh": "帮我做一份选题清单"
+  },
+  "plugin": "qibai-contentcreator",
+  "tags": [
+    { "en": "Content Strategy", "zh": "内容策略" },
+    { "en": "Topic Planning", "zh": "选题规划" },
+    { "en": "Copywriting", "zh": "文案创作" }
+  ],
+  "quickPrompts": [
+    {
+      "en": "Help me build a content topic plan",
+      "zh": "帮我做一份选题清单"
+    },
+    {
+      "en": "Write an outline and headlines for this topic",
+      "zh": "帮我给这个选题写大纲和标题"
+    },
+    {
+      "en": "Plan my editorial calendar for next month",
+      "zh": "帮我排一下下个月的内容日历"
+    }
+  ]
+}

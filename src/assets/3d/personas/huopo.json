@@ -1,0 +1,17 @@
+{
+  "key": "huopo",
+  "displayName": "活泼",
+  "personality": "元气满满，默认登场主形象",
+  "sourceImage": "assets/ai_char/huopo_raw.png",
+  "params": {
+    "hairColor": 12610091,
+    "skinTint": 16506066,
+    "clothMain": 15246141,
+    "clothTrim": 3820154,
+    "outlineColor": 11557408,
+    "rampStyle": 2,
+    "idleAmplitude": 1.0,
+    "headTilt": 0.12
+  },
+  "notes": "橙棕双马尾+姜黄连帽卫衣+藏青百褶裙；2 阶高对比卡通感；chibi 3 头身（整体非均匀缩放：头×1.25、腿长×0.7）；idleAmplitude 拉满。"
+}

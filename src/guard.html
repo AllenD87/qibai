@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>元气小小 · 全屏守护</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='11' fill='%23D17397'/%3E%3Ccircle cx='12' cy='12' r='4' fill='%23FFF6FA'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="guard.css?v=2">
+  <!-- Tauri 桥接层：提供 QibaiBridge.listen / invoke；浏览器环境自动走 mock -->
+  <script src="tauri-bridge.js?v=2"></script>
+</head>
+<body>
+
+  <!-- ================= 待机态：无 guard-start 信号时显示 ================= -->
+  <section id="standby" class="standby">
+    <div class="standby-card">
+      <div class="standby-badge">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+          <path d="M12 3a9 9 0 1 0 9 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="12" cy="12" r="3.2" fill="currentColor"/>
+        </svg>
+      </div>
+      <h1 class="standby-title">等待守护信号</h1>
+      <p class="standby-desc">久坐到期或伴侣主动召唤时，这里会展开全屏守护演出。</p>
+      <p class="standby-status">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="standby-status-text">监听中 · qibai://guard-start</span>
+      </p>
+      <button id="demo-btn" class="demo-btn" type="button">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path d="M8 5v14l11-7z" fill="currentColor"/>
+        </svg>
+        浏览器演示：播放完整演出
+      </button>
+      <button id="exit-btn" class="exit-btn" type="button">退出守护</button>
+      <p class="standby-note">演示在本地直接播放完整演出流程，不依赖后端、不读取真实屏幕。</p>
+    </div>
+  </section>
+
+  <!-- ================= 演出舞台 ================= -->
+  <div id="stage" class="stage" hidden>
+    <!-- 底图：payload.screenshot(data URL) 或 CSS 模拟桌面（纯视觉占位） -->
+    <div id="desktop" class="desktop" aria-hidden="true">
+      <div class="fake-win fake-win-a"></div>
+      <div class="fake-win fake-win-b"></div>
+      <div class="fake-win fake-win-c"></div>
+      <div class="fake-win-tag">模拟桌面 · 视觉占位</div>
+    </div>
+
+    <!-- 碎裂特效画布 -->
+    <canvas id="fx" class="fx" aria-hidden="true"></canvas>
+
+    <!-- 伴侣 -->
+    <div id="persona-wrap" class="persona-wrap" hidden>
+      <img id="persona" class="persona" alt="伴侣角色" draggable="false">
+      <!-- 图片加载失败时的 CSS 占位脸 -->
+      <div id="persona-fallback" class="persona-fallback" hidden aria-hidden="true">
+        <svg viewBox="0 0 120 120" width="120" height="120">
+          <circle cx="60" cy="60" r="52" fill="#FBD3E4"/>
+          <circle cx="44" cy="54" r="5" fill="#5A4A56"/>
+          <circle cx="76" cy="54" r="5" fill="#5A4A56"/>
+          <path d="M46 76 Q60 88 74 76" fill="none" stroke="#5A4A56" stroke-width="4" stroke-linecap="round"/>
+        </svg>
+      </div>
+    </div>
+
+    <!-- 气泡 -->
+    <div id="bubble" class="bubble" hidden>
+      <p id="bubble-text"></p>
+    </div>
+
+    <!-- 系统动作结果提示 -->
+    <div id="toast" class="toast" hidden></div>
+
+    <!-- 休息倒计时遮罩 -->
+    <div id="countdown" class="countdown" hidden>
+      <div class="countdown-card">
+        <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        </svg>
+        <div id="countdown-num" class="countdown-num">02:00</div>
+        <p class="countdown-desc">休息一下，看看远处，放松眼睛</p>
+      </div>
+    </div>
+
+    <!-- 跳过按钮：全程常驻，热区 ≥44px -->
+    <button id="skip-btn" class="skip-btn" type="button">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+        <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+      </svg>
+      跳过
+    </button>
+  </div>
+
+  <script src="guard.js?v=2"></script>
+</body>
+</html>

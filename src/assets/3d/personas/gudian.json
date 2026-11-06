@@ -1,0 +1,17 @@
+{
+  "key": "gudian",
+  "displayName": "古典",
+  "personality": "温婉端庄，云淡风轻",
+  "sourceImage": "assets/ai_char/gudian_raw.png",
+  "params": {
+    "hairColor": 2763315,
+    "skinTint": 16180184,
+    "clothMain": 15659760,
+    "clothTrim": 12178383,
+    "outlineColor": 8030858,
+    "rampStyle": 3,
+    "idleAmplitude": 0.4,
+    "headTilt": -0.08
+  },
+  "notes": "月白汉服广袖+淡青云纹镶边；白玉平安扣阶段二作独立装饰 mesh 挂 neck 节点；低饱和 3 阶柔化 toon。"
+}
