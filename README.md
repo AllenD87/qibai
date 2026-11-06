@@ -13,11 +13,10 @@
 
 <br/>
 
-<img src="docs/images/demo-pet.gif" width="300" alt="桌宠窗：气泡、表情、一键换角色">
-<img src="docs/images/demo-console.gif" width="628" alt="控制台 11 个页签">
+<img src="docs/images/demo-console.gif" width="860" alt="控制台：11 个页签一览">
 
 <br/>
-<sub><b>界面实录</b>：左 · 桌宠窗（气泡对话 / 表情演出 / 热换角色）　右 · 控制台 11 个页签（真实页面渲染录制）</sub>
+<sub><b>界面实录</b>：真实前端页面渲染录制 —— 聊天 / 角色 / 亲密度 / 事件 / 设置 / 技能与专家 / 代码检查 / 任务，点开就是真界面</sub>
 
 </div>
 
