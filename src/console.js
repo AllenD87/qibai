@@ -4672,7 +4672,9 @@
         foldersEl.innerHTML = '<div class="hint" style="font-size:12px;">还没有知识库目录。加一个文件夹，小小就能在里面找资料。</div>';
       }
       const err = s.last_error ? `<span style="color:#b91c1c;">${s.last_error}</span>` : '';
-      const when = s.indexed_at ? ' · 上次索引 ' + new Date(s.indexed_at).toLocaleString() : '';
+      // 后端 indexed_at 是 Unix 秒；万一有的是毫秒也兼容
+      const ts = s.indexed_at > 1e12 ? s.indexed_at : s.indexed_at * 1000;
+      const when = s.indexed_at ? ' · 上次索引 ' + new Date(ts).toLocaleString('zh-CN') : '';
       statusEl.innerHTML = `文件 ${s.files || 0} · 块 ${s.chunks || 0}${when} ${err}`;
       refreshEmbed();
     } catch (e) {

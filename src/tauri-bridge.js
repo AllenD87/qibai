@@ -3055,6 +3055,28 @@
     );
   }
 
+  // P2：知识库 mock 状态（仅在浏览器演示模式下有意义）
+  const mockKb = {
+    folders: ['/Users/you/Documents/notes'],
+    files: 12, chunks: 40, indexed_at: Math.floor(Date.now() / 1000),
+    embed: false, embedEnabled: true, weight: 0.45,
+  };
+  function mockKbFetch() {
+    return new Promise((resolve, reject) => {
+      let done = 0;
+      const total = 94851877;
+      const timer = setInterval(() => {
+        done = Math.min(total, done + total / 12);
+        mockEmit('kb:embed_progress', { done, total, pct: Math.round(done * 100 / total) });
+        if (done >= total) {
+          clearInterval(timer);
+          mockKb.embed = true;
+          resolve({ ok: true, model: 'bge-small-zh-v1.5', dir: '/mock/qibai/embed/bge-small-zh-v1.5' });
+        }
+      }, 150);
+    });
+  }
+
   function mockInvoke(cmd, args) {
   try {
     switch (cmd) {
@@ -3337,6 +3359,46 @@
         return mockNsEvents();
       case 'netsocial_cache_clear':
         return mockNsCacheClear();
+      // P2 知识库（浏览器演示模式的内存假实现；真机走 Rust 侧同名命令）
+      case 'kb_status':
+        return Promise.resolve({
+          folders: mockKb.folders, files: mockKb.files, chunks: mockKb.chunks,
+          indexed_at: mockKb.indexed_at, last_error: null,
+          embed_model: mockKb.embed ? 'bge-small-zh-v1.5' : null,
+          embed_chunks: mockKb.embed ? mockKb.chunks : 0,
+          embed_note: null,
+        });
+      case 'kb_embed_status':
+        return Promise.resolve({
+          enabled: mockKb.embedEnabled, installed: mockKb.embed, loaded: mockKb.embed,
+          model: 'bge-small-zh-v1.5', dim: 512, max_tokens: 128,
+          dir: '/mock/qibai/embed/bge-small-zh-v1.5',
+          vector_chunks: mockKb.embed ? mockKb.chunks : 0,
+          vector_model: mockKb.embed ? 'bge-small-zh-v1.5' : null,
+          hybrid_weight: mockKb.weight,
+          hint: mockKb.embed ? '' : '点「下载向量模型」约 91 MB，装完立刻生效；不装也能用纯 BM25。',
+        });
+      case 'kb_add_folder':
+        mockKb.folders.push(args.path);
+        mockKb.files = mockKb.folders.length * 12;
+        mockKb.chunks = mockKb.folders.length * 40;
+        mockKb.indexed_at = Math.floor(Date.now() / 1000);
+        return Promise.resolve({ ok: true });
+      case 'kb_remove_folder':
+        mockKb.folders = mockKb.folders.filter((f) => f !== args.path);
+        return Promise.resolve({ ok: true });
+      case 'kb_reindex':
+        mockKb.indexed_at = Math.floor(Date.now() / 1000);
+        return Promise.resolve({
+          files: mockKb.files, chunks: mockKb.chunks, indexed_at: mockKb.indexed_at,
+          embed_model: mockKb.embed ? 'bge-small-zh-v1.5' : null,
+          embed_chunks: mockKb.embed ? mockKb.chunks : 0,
+          embed_note: mockKb.embed ? null : '未安装向量模型，本次走纯 BM25',
+        });
+      case 'kb_embed_fetch':
+        return mockKbFetch();
+      case 'kb_search':
+        return Promise.resolve([]);
       default:
         return Promise.reject(new Error('[mock] unknown command: ' + cmd));
     }
