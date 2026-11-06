@@ -62,7 +62,9 @@
   /* ============================================================
    * Tab 切换（单页多视图；hash 同步 #tab=xxx）
    * ============================================================ */
-  const TABS = ['chat', 'roles', 'intimacy', 'events', 'settings', 'vault', 'social', 'pk', 'plugins', 'codecheck'];
+  // v45.14：补 tasks——控制台 11 个页签此前只有 10 个在允许表里，
+  // 点「任务」会被 switchTab 兜底成 chat，任务页永远进不去。
+  const TABS = ['chat', 'roles', 'intimacy', 'events', 'settings', 'vault', 'social', 'pk', 'plugins', 'codecheck', 'tasks'];
   let currentTab = 'chat';
 
   function switchTab(name) {
@@ -118,6 +120,7 @@
     else if (name === 'vault') loadVaultTab();
     else if (name === 'social') loadSocialTab();
     else if (name === 'plugins') loadPluginsTab(); // 技能与专家（契约 §5）
+    else if (name === 'tasks') { if (window.__tasksRefresh) window.__tasksRefresh(); } // v45.14：任务页在切进来时拉一次列表
   }
 
   $('tabBar').addEventListener('click', (e) => {
@@ -192,6 +195,53 @@
     return withBr.replace(/__QIBBLOCK(\d+)__/g, (_, i) => blocks[Number(i)] || '');
   }
 
+  // v45.14：执行留痕接线——core 每轮都会 emit qibai://executions，
+  // 但此前前端没有任何监听，「本轮执行（N）」折叠块永远挂不出来。
+  // 事件可能早于气泡到达（send_message 还没返回），也可能晚于气泡，
+  // 所以两条路都接：先到 → 存 pendingExec，气泡落地时挂；后到 → 挂到最后一条 assistant 气泡。
+  let pendingExec = [];
+  let lastAssistantRow = null;
+  let lastSendAt = 0;
+
+  function attachExecutionFold(row, items) {
+    if (!row || !Array.isArray(items) || !items.length) return;
+    if (row.querySelector('details.bubble-exec')) return; // 同一气泡只挂一次
+    const det = document.createElement('details');
+    det.className = 'bubble-exec';
+    det.style.cssText = 'margin-top:4px;font-size:11px;color:#6b7280;';
+    det.innerHTML = `<summary style="cursor:pointer;">本轮执行（${items.length}）</summary>`;
+    items.forEach((ex) => {
+      ex = ex || {};
+      const line = document.createElement('div');
+      line.style.cssText = 'padding:2px 0;border-top:1px dashed #e5e7eb;';
+      const args = (ex.args && typeof ex.args === 'object') ? JSON.stringify(ex.args) : String(ex.args || '');
+      const short = args.length > 40 ? args.slice(0, 40) + '…' : args;
+      const ok = ex.ok !== false;
+      line.innerHTML = `<span style="color:${ok ? '#16a34a' : '#b91c1c'};">${ok ? '✓' : '✗'}</span> ` +
+        `<b>${ex.tool || '?'}</b> <span style="color:#374151;">${short}</span>`;
+      if (ex.source) {
+        const sb = document.createElement('span');
+        sb.style.cssText = 'margin-left:6px;padding:0 4px;background:#eef2ff;color:#3730a3;border-radius:3px;font-size:10px;';
+        sb.textContent = ex.source;
+        line.appendChild(sb);
+      }
+      if (args.length > 40) {
+        const full = document.createElement('div');
+        full.style.cssText = 'color:#6b7280;white-space:pre-wrap;word-break:break-all;';
+        full.textContent = args;
+        line.appendChild(full);
+      }
+      if (!ok && ex.error) {
+        const err = document.createElement('div');
+        err.style.cssText = 'color:#b91c1c;white-space:pre-wrap;word-break:break-all;';
+        err.textContent = '错误：' + ex.error;
+        line.appendChild(err);
+      }
+      det.appendChild(line);
+    });
+    row.appendChild(det);
+  }
+
   function appendBubble(role, content, doScroll = true, meta = null) {
     const scroll = $('chatScroll');
     const row = document.createElement('div');
@@ -222,34 +272,17 @@
     row.appendChild(nm);
     row.appendChild(b);
 
-    // v45.11：本轮执行留痕——折叠列表（工具名 / 参数摘要 / 成功✓或失败✗+错误原文）
-    if (role === 'assistant' && meta && Array.isArray(meta.executions) && meta.executions.length) {
-      const det = document.createElement('details');
-      det.style.cssText = 'margin-top:4px;font-size:11px;color:#6b7280;';
-      det.innerHTML = `<summary style="cursor:pointer;">本轮执行（${meta.executions.length}）</summary>`;
-      meta.executions.forEach((ex) => {
-        const line = document.createElement('div');
-        line.style.cssText = 'padding:2px 0;border-top:1px dashed #e5e7eb;';
-        const args = (ex.args && typeof ex.args === 'object') ? JSON.stringify(ex.args) : String(ex.args || '');
-        const short = args.length > 40 ? args.slice(0, 40) + '…' : args;
-        const ok = ex.ok !== false;
-        line.innerHTML = `<span style="color:${ok ? '#16a34a' : '#b91c1c'};">${ok ? '✓' : '✗'}</span> ` +
-          `<b>${ex.tool || '?'}</b> <span style="color:#374151;">${short}</span>`;
-        if (args.length > 40) {
-          const full = document.createElement('div');
-          full.style.cssText = 'color:#6b7280;white-space:pre-wrap;word-break:break-all;';
-          full.textContent = args;
-          line.appendChild(full);
-        }
-        if (!ok && ex.error) {
-          const err = document.createElement('div');
-          err.style.cssText = 'color:#b91c1c;white-space:pre-wrap;word-break:break-all;';
-          err.textContent = '错误：' + ex.error;
-          line.appendChild(err);
-        }
-        det.appendChild(line);
-      });
-      row.appendChild(det);
+    // v45.11 / v45.14：本轮执行留痕——优先用调用方传入的 meta，
+    // 否则消费 core 广播时缓存的 pendingExec（详见 attachExecutionFold）。
+    if (role === 'assistant') {
+      lastAssistantRow = row;
+      let items = [];
+      if (meta && Array.isArray(meta.executions) && meta.executions.length) {
+        items = meta.executions;
+      } else if (pendingExec.length) {
+        items = pendingExec.splice(0, pendingExec.length);
+      }
+      if (items.length) attachExecutionFold(row, items);
     }
 
     // v45.8：assistant 消息带来源 URL → 在气泡下方渲染可点来源列表
@@ -368,6 +401,11 @@
     $('sendBtn').disabled = true;
     $('chatInput').disabled = true;
     appendBubble('user', text);
+    // v45.14：新一轮开始，清掉上轮残留的执行留痕缓存与气泡指针，
+    // 防止 core 抢先 emit 的 executions 被挂到上一轮气泡上。
+    pendingExec = [];
+    lastAssistantRow = null;
+    lastSendAt = Date.now();
     $('chatInput').value = '';
     try {
       // v21：Tauri 权威语音路由 voice_ui_dispatch——命中（切 tab/操作类指令）→ toast 提示并 return，不走 LLM。
@@ -1552,6 +1590,22 @@
   });
   listen('qibai://tts-interrupted', () => {
     toast('已停止朗读（检测到你说话）');
+  });
+
+  // v45.14：core 的工具执行留痕（engine 每轮 emit）——接到气泡折叠块上。
+  // 时序有两种：① 事件先到（send_message 还没返回）→ 缓存，等气泡落地时消费；
+  // ② 事件后到（气泡已在）→ 挂到最近一条 assistant 气泡上（限制在本次发送后 60s 内，避免挂到陈年旧消息）。
+  listen('qibai://executions', (ev) => {
+    const p = (ev && ev.payload) || {};
+    const items = Array.isArray(p.items) ? p.items : [];
+    if (!items.length) return;
+    let target = (lastAssistantRow && lastAssistantRow.isConnected) ? lastAssistantRow : null;
+    if (!target && Date.now() - lastSendAt < 60000) {
+      const rows = document.querySelectorAll('#chatScroll .bubble-row.role');
+      target = rows.length ? rows[rows.length - 1] : null;
+    }
+    if (target) attachExecutionFold(target, items);
+    else pendingExec = pendingExec.concat(items);
   });
 
   listen('qibai://codecheck-run', (ev) => {
@@ -4159,7 +4213,11 @@
   }
 
   document.addEventListener('DOMContentLoaded', init);
-})();
+
+  // v45.14：以下四个尾部模块（任务面板 / 计划确认+高危模态 / 知识库设置 / 音频诊断）
+  // 原先是写在主 IIFE 之外的顶层代码，却直接引用 IIFE 内的 $/invoke/listen/toast —
+  // 浏览器里一进就是 ReferenceError（$ is not defined），四块功能等于从来没跑起来。
+  // 这里不再提前闭合 IIFE，让它们留在同一作用域内。
 
 // ===== P0 任务面板骨架（IPC 名以 core 最终为准，先按 task_list/task_get/task_*_control 约定） =====
 (async function initTasksPanel() {
@@ -4613,4 +4671,7 @@
       btn.textContent = old;
     }
   };
+})();
+
+// 主 IIFE 收口（见上：尾部四个模块已并入同一作用域）
 })();

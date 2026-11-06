@@ -92,11 +92,19 @@ pub fn search(chunks: &[Chunk], query: &str, top_k: usize) -> Vec<KbHit> {
 }
 
 fn snippet(text: &str, query: &str, max: usize) -> String {
-    let qfirst = query.chars().next().unwrap_or(' ');
-    let idx = text.find(qfirst).unwrap_or(0);
-    let start = idx.saturating_sub(50);
-    let end = (start + max).min(text.chars().count());
-    text.chars().skip(start).take(end - start).collect()
+    // v45.14：窗口统一在「字符」空间算。旧实现拿 str::find 的**字节**偏移当字符下标，
+    // 中文文档里 end < start 会让 end - start 下溢（debug 直接 panic），
+    // 表现为「检索一段中文就崩」；英文文本字节≈字符才碰巧不炸。
+    let chars: Vec<char> = text.chars().collect();
+    let q: Vec<char> = query.chars().take(40).collect();
+    let center = if q.is_empty() {
+        0
+    } else {
+        chars.windows(q.len()).position(|w| w == q.as_slice()).unwrap_or(0)
+    };
+    let start = center.saturating_sub(50);
+    let end = (start + max).min(chars.len());
+    chars[start..end].iter().collect()
 }
 
 #[cfg(test)]
@@ -105,6 +113,15 @@ mod tests {
 
     fn mk(path: &str, text: &str) -> Chunk {
         Chunk { file_path: path.into(), char_offset: 0, heading_path: vec![], text: text.into() }
+    }
+
+    #[test]
+    fn snippet_chinese_near_tail_no_panic() {
+        // 命中位置靠后 + 中文多字节：旧实现会在这里 subtract overflow panic。
+        let text = format!("{}关键词{}", "前".repeat(80), "后".repeat(80));
+        let s = snippet(&text, "关键词", 60);
+        assert!(s.chars().count() <= 60, "截图不应超长，got {}", s.chars().count());
+        assert!(s.contains("关键词"), "截图应包含命中词，got {}", s);
     }
 
     #[test]
