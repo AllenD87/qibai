@@ -74,7 +74,7 @@ jobs:
       - name: qibai-core cargo test (portable subset)
         working-directory: qibai-core
         run: |
-          cargo test --locked \
+          cargo test --locked -- \
             --skip fileops:: \
             --skip mcp_client:: \
             --skip skill_adapter:: \
