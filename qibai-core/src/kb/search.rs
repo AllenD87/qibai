@@ -157,6 +157,34 @@ pub fn search_hybrid(
         .collect()
 }
 
+/// 把命中渲染成交给 LLM 的参考资料行：`[相对路径 · 标题路径] 片段`，逐条按字符预算收口。
+///
+/// - `per_hit_chars`：单条片段最多保留多少字符（超出用「…」结尾）
+/// - `budget`：整批总字符上限，放不下的条目直接丢弃（宁可少给，不撑爆上下文）
+pub fn render_hits(hits: &[KbHit], per_hit_chars: usize, budget: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut used = 0usize;
+    for h in hits {
+        let head = if h.heading_path.is_empty() {
+            h.file_path.clone()
+        } else {
+            format!("{} · {}", h.file_path, h.heading_path.join(" > "))
+        };
+        let mut body: String = h.snippet.chars().take(per_hit_chars).collect();
+        if h.snippet.chars().count() > per_hit_chars {
+            body.push('…');
+        }
+        let line = format!("[{head}] {body}");
+        let cost = line.chars().count();
+        if used + cost > budget && !out.is_empty() {
+            break;
+        }
+        used += cost;
+        out.push(line);
+    }
+    out
+}
+
 fn snippet(text: &str, query: &str, max: usize) -> String {
     // v45.14：窗口统一在「字符」空间算。旧实现拿 str::find 的**字节**偏移当字符下标，
     // 中文文档里 end < start 会让 end - start 下溢（debug 直接 panic），
@@ -179,6 +207,39 @@ mod tests {
 
     fn mk(path: &str, text: &str) -> Chunk {
         Chunk { file_path: path.into(), char_offset: 0, heading_path: vec![], text: text.into() }
+    }
+
+    #[test]
+    fn render_hits_prefixes_heading_and_truncates() {
+        let hits = vec![KbHit {
+            file_path: "docs/笔记.md".into(),
+            char_offset: 0,
+            heading_path: vec!["第一章".into(), "小节".into()],
+            score: 1.0,
+            snippet: "很".repeat(30),
+        }];
+        let out = render_hits(&hits, 10, 2400);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].starts_with("[docs/笔记.md · 第一章 > 小节] "), "{}", out[0]);
+        assert!(out[0].ends_with('…'), "超长片段应带省略号：{}", out[0]);
+        // 前缀 + 10 字 + 省略号
+        assert!(out[0].chars().count() <= 40, "{}", out[0]);
+    }
+
+    #[test]
+    fn render_hits_stops_at_budget_but_keeps_first() {
+        let mk = |n: usize| KbHit {
+            file_path: format!("f{n}.md"),
+            char_offset: 0,
+            heading_path: vec![],
+            score: 1.0,
+            snippet: "x".repeat(200),
+        };
+        let hits: Vec<KbHit> = (0..4).map(mk).collect();
+        let out = render_hits(&hits, 200, 300);
+        assert_eq!(out.len(), 1, "预算只够一条时应只保留首条");
+        let out2 = render_hits(&hits, 200, 10);
+        assert_eq!(out2.len(), 1, "预算再小也保留首条，不能返回空");
     }
 
     #[test]

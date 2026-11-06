@@ -1626,7 +1626,7 @@ pub(crate) fn reset_plan_for_rerun(
         };
         // 重建索引后同步向量（模型缺席/推理失败只降级，不打断 reindex）
         let note = match self.kb_sync_vectors(&idx) {
-            Ok(0) => Some("未安装向量模型，检索走纯 BM25（跑 fetch_embed_model.sh 可开启语义检索）".to_string()),
+            Ok(0) => Some("未安装向量模型，检索走纯 BM25（控制台点「下载向量模型」即可开启语义检索）".to_string()),
             Ok(_) => None,
             Err(e) => {
                 eprintln!("[qibai] kb: 向量化失败，退回纯 BM25: {e}");
@@ -1665,7 +1665,7 @@ pub(crate) fn reset_plan_for_rerun(
             "hint": if installed {
                 if loaded { "" } else { "模型已下载但加载失败，检索走纯 BM25（看日志 [qibai] kb: 向量模型加载失败）" }
             } else {
-                "未安装向量模型：跑 fetch_embed_model.sh 下载后自动开启语义检索；不装也能用纯 BM25"
+                "未安装向量模型：控制台点「下载向量模型」后自动开启语义检索；不装也能用纯 BM25"
             },
         })
     }
@@ -1690,6 +1690,71 @@ pub(crate) fn reset_plan_for_rerun(
         let Some(emb) = crate::kb::embed::cached_default() else { return Ok(0) };
         crate::kb::vectors::sync(&idx.chunks, emb.as_ref() as &dyn crate::kb::embed::TextEmbedder)
             .map_err(|e| e.to_string())
+    }
+
+    /// 对话上下文用的知识库注入。
+    ///
+    /// 先走「索引 + 混合检索」（关键词 + 本地语义向量，语义开关与权重读设置）；
+    /// 索引为空（用户还没加目录 / 还没建索引）才退回旧的 `~/.qibai_kb` 目录扫描，
+    /// 保证老用户升级后行为不倒退。
+    /// 公开预览入口（诊断/示例用）：返回将要注入对话的知识库片段。
+    pub fn kb_context_preview(&self, query: &str) -> Vec<String> {
+        self.kb_context_hits(query)
+    }
+
+    fn kb_context_hits(&self, query: &str) -> Vec<String> {
+        let hits = self.kb_index_hits(query, 5);
+        if !hits.is_empty() {
+            return hits;
+        }
+        kb_search(query)
+    }
+
+    /// 索引侧检索 → 渲染成注入行（单条 ≤700 字、整批 ≤2400 字）。
+    fn kb_index_hits(&self, query: &str, top_k: usize) -> Vec<String> {
+        if query.trim().is_empty() {
+            return Vec::new();
+        }
+        let Ok(idx) = crate::kb::index::load_index() else { return Vec::new() };
+        if idx.chunks.is_empty() {
+            return Vec::new();
+        }
+        let (qvec, vectors) = if self.settings.kb_embed_enabled {
+            let q = crate::kb::embed::cached_default().and_then(|e| {
+                crate::kb::embed::TextEmbedder::embed(&*e, &[query.to_string()])
+                    .ok()
+                    .and_then(|mut v| if v.is_empty() { None } else { Some(v.remove(0)) })
+            });
+            let v = crate::kb::vectors::load()
+                .filter(|v| v.model == crate::kb::embed::MODEL_NAME && v.dim == crate::kb::embed::MODEL_DIM);
+            (q, v)
+        } else {
+            (None, None)
+        };
+        let mut hits = crate::kb::search::search_hybrid(
+            &idx.chunks,
+            query,
+            top_k,
+            qvec.as_deref(),
+            vectors.as_ref(),
+            self.settings.kb_hybrid_weight,
+        );
+        if hits.is_empty() {
+            return Vec::new();
+        }
+        // 只留「够得着榜首」的片段：混合检索里无关块也会拿到一点点余弦分，
+        // 全塞给模型等于往上下文里掺水。低于榜首 45% 且低于 0.2 的丢掉。
+        let top = hits[0].score.max(1e-6);
+        hits.retain(|h| h.score >= 0.2 && h.score >= top * 0.45);
+        if hits.is_empty() {
+            return Vec::new();
+        }
+        eprintln!(
+            "[qibai] kb: context inject path={} hits={}",
+            if vectors.is_some() && qvec.is_some() { "hybrid(bm25+vec)" } else { "bm25" },
+            hits.len()
+        );
+        crate::kb::search::render_hits(&hits, 700, 2400)
     }
 
     pub fn kb_search(&self, query: &str, top_k: Option<usize>) -> Result<Vec<crate::kb::KbHit>, EngineError> {
@@ -2303,16 +2368,17 @@ pub(crate) fn reset_plan_for_rerun(
         if !skill_catalog.is_empty() {
             cap_lines.push(skill_catalog);
         }
-        cap_lines.push("知识库：本地 ~/.qibai_kb（或 QIBAI_KB）文档检索。".to_string());
+        cap_lines.push("知识库：用户自选目录建索引（BM25 + 可选本地语义向量，全程离线）；索引为空时退回 ~/.qibai_kb（或 QIBAI_KB）扫描。".to_string());
         system = format!("{system}\n【可用能力】以下是你当前真实装载的能力（向用户介绍自己时据此如实回答，不要编造没有的能力）：\n{}", cap_lines.join("\n"));
         // v45.10 假完成硬规则（短句，非能力清单）：只有本轮真正成功的工具调用、且产物经校验存在，
         // 才算完成；没执行过就如实说没做，不许嘴上说已完成。
         system.push_str("\n【硬规则】只有本轮真正成功执行、且产物经校验存在的工具调用，才算完成；没执行过就如实说还没做，绝不许说\"已完成/建好了\"而实际没动。");
         // v31：本地知识库检索注入——问题命中 kb 文档片段时作为参考资料给 LLM。
-        let kb_hits = kb_search(text);
+        // P2：先走「索引 + 混合检索」（关键词 + 语义），索引为空才退回旧的 ~/.qibai_kb 扫描。
+        let kb_hits = self.kb_context_hits(text);
         if !kb_hits.is_empty() {
             system = format!(
-                "{system}\n【知识库资料】以下片段来自用户本地知识库（~/.qibai_kb 或 QIBAI_KB），回答请优先结合这些资料；片段不相关时可忽略：\n{}",
+                "{system}\n【知识库资料】以下片段来自用户本地知识库（用户自选目录已建索引，关键词 + 本地语义向量混合检索），回答请优先结合这些资料；片段不相关时可忽略：\n{}",
                 kb_hits.join("\n---\n")
             );
         }
