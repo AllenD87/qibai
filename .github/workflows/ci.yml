@@ -75,7 +75,7 @@ jobs:
         working-directory: qibai-core
         shell: bash          # Windows 默认是 PowerShell，`--` 与反斜杠续行都需要 bash
         run: |
-          cargo test --locked -- \
+          cargo test --locked -- --test-threads=1 \
             --skip fileops:: \
             --skip mcp_client:: \
             --skip skill_adapter:: \
