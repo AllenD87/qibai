@@ -1288,7 +1288,21 @@ async fn task_confirm_action(
     serde_json::to_value(t).map_err(|e| e.to_string())
 }
 
-/// v45.10：从失败步重跑任务（仅 state=failed 时可用）。
+/// v45.14：Workflow 重跑。`from_step` 省略时重跑所有没成功的步；
+/// 传步骤 id 时从该步起重跑（之前 Done 的步与产物保留）。
+#[tauri::command]
+async fn task_rerun(
+    state: tauri::State<'_, AppState>,
+    task_id: String,
+    from_step: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let t = state.engine.lock().await
+        .task_rerun(&task_id, from_step)
+        .map_err(|e| e.to_string())?;
+    serde_json::to_value(t).map_err(|e| e.to_string())
+}
+
+/// v45.10：从失败步重跑任务（保留给老前端；语义等同 task_rerun 的 from_step=None）。
 #[tauri::command]
 async fn task_rerun_failed(
     state: tauri::State<'_, AppState>,
@@ -4304,6 +4318,7 @@ fn main() {
             task_cancel,
             task_confirm_action,
             task_rerun_failed,
+            task_rerun,
             task_set_parallel_max,
             kb_add_folder,
             kb_remove_folder,

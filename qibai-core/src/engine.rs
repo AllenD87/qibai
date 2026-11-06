@@ -1473,42 +1473,122 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
         Ok(t)
     }
 
-    /// v45.9：从第一个 failed 步恢复——该步 attempts=0/error=None/状态回 Pending，
-    /// 任务 Failed → Running，再 spawn_executor 续跑。非法迁移返回 Err。
-    pub fn task_rerun_failed(&mut self, task_id: &str) -> Result<crate::task::Task, EngineError> {
+/// v45.14：重跑时重置计划里该重来的步骤，返回重置了几步。
+///
+/// `from=Some(id)`：该步及其之后的全部重来（依赖它们的自然一起重跑）；
+/// `from=None`：只重置没成功过的步（Failed / Skipped / Pending），Done 保留；
+/// 全 Done 时（对已完成任务点整体重跑）没有任何步可重置，返回 0，由调用方按「全量重跑」处理。
+pub(crate) fn reset_plan_for_rerun(
+    plan: &mut crate::task::Plan,
+    from: Option<&str>,
+) -> Result<usize, EngineError> {
+    let floor: Option<usize> = match from {
+        Some(sid) => Some(
+            plan.steps
+                .iter()
+                .position(|s| s.id == sid)
+                .ok_or_else(|| EngineError::InvalidMove(format!("task_rerun: 找不到步骤 {sid}")))?,
+        ),
+        None => None,
+    };
+    let mut n = 0usize;
+    for (i, s) in plan.steps.iter_mut().enumerate() {
+        let should_reset = match floor {
+            Some(f) => i >= f,
+            None => !s.is_done(),
+        };
+        if !should_reset {
+            continue;
+        }
+        n += 1;
+        s.status = crate::task::StepStatus::Pending;
+        s.attempts = 0;
+        s.error = None;
+        s.result_summary = None;
+        s.started_at = 0;
+        s.ended_at = 0;
+        s.tokens = crate::task::TokenUsage::default();
+        s.artifacts.clear();
+        s.runs.clear();
+    }
+    Ok(n)
+}
+
+    /// v45.14：Workflow 重跑。
+    ///
+    /// - `from_step=Some(id)`：把该步**及其之后**的所有步骤重置为 Pending（依赖它们的
+    ///   天然一起重跑），之前的 Done 步与产物保留；
+    /// - `from_step=None`：只重置「没成功过」的步（Failed / Skipped / Pending），
+    ///   Done 的一律保留；若全部 Done（对已完成任务点重跑）则整体重跑。
+    ///
+    /// 只允许在终态调用（failed / partial / cancelled / done），运行中要求先暂停或取消。
+    /// 重置后任务回 Running 并起后台执行线程。
+    pub fn task_rerun(
+        &mut self,
+        task_id: &str,
+        from_step: Option<String>,
+    ) -> Result<crate::task::Task, EngineError> {
         let store = self.task_store()?.clone();
         let mut t = store.require(task_id)?;
-        if t.status != crate::task::TaskStatus::Failed {
+        if !t.status.is_terminal() {
             return Err(EngineError::InvalidMove(format!(
-                "task_rerun_failed: task {} not in Failed (current={:?})", task_id, t.status
+                "task_rerun: task {} 不在终态（current={:?}），运行中请先暂停或取消",
+                task_id, t.status
             )));
         }
         {
-            let plan = t.plan.as_mut().ok_or_else(|| EngineError::InvalidMove("no plan".into()))?;
-            let first_failed = plan.steps.iter_mut()
-                .find(|s| s.status == crate::task::StepStatus::Failed)
-                .ok_or_else(|| EngineError::InvalidMove("no failed step".into()))?;
-            first_failed.status = crate::task::StepStatus::Pending;
-            first_failed.attempts = 0;
-            first_failed.error = None;
-            first_failed.ended_at = 0;
+            let plan = t
+                .plan
+                .as_mut()
+                .ok_or_else(|| EngineError::InvalidMove("task_rerun: 无 plan".into()))?;
+            let mut reset_n = Self::reset_plan_for_rerun(plan, from_step.as_deref())?;
+            if reset_n == 0 && from_step.is_none() {
+                // 全部步骤都是 Done（对已完成任务点「整体重跑」）：从第一步全量重来
+                if let Some(first_id) = plan.steps.first().map(|s| s.id.clone()) {
+                    reset_n = Self::reset_plan_for_rerun(plan, Some(&first_id))?;
+                }
+            }
+            eprintln!(
+                "[qibai] task: rerun reset {} step(s) from={} task={}",
+                reset_n,
+                from_step.as_deref().unwrap_or("<unsuccessful>"),
+                task_id
+            );
         }
         t.status = crate::task::TaskStatus::Running;
+        t.current_step = 0;
         t.last_error = None;
         t.paused_reason = None;
         t.updated_at = crate::task::now_ms();
         store.save(&t)?;
-        // 续跑 executor（生产：从 settings 建 DoubaoProvider）
+
+        // 与 task_start 一致：测试注入的 provider 优先，否则从 settings 建 DoubaoProvider
         let provider: std::sync::Arc<dyn crate::llm_client::LlmProvider> =
-            match crate::llm_client::DoubaoProvider::from_settings(&self.settings.llm) {
-                Ok(p) => std::sync::Arc::new(p),
-                Err(e) => {
-                    eprintln!("[qibai] task rerun: llm build failed, using NullProvider: {e}");
-                    std::sync::Arc::new(crate::llm_client::NullProvider)
+            if let Some(p) = self.provider_override.take() {
+                std::sync::Arc::from(p)
+            } else {
+                match crate::llm_client::DoubaoProvider::from_settings(&self.settings.llm) {
+                    Ok(p) => std::sync::Arc::new(p),
+                    Err(e) => {
+                        eprintln!("[qibai] task rerun: llm build failed, using NullProvider: {e}");
+                        std::sync::Arc::new(crate::llm_client::NullProvider)
+                    }
                 }
             };
-        crate::task_exec::spawn_executor(store, task_id.to_string(), self.sink_arc(), provider, crate::task_exec::default_whitelist_root());
+        crate::task_exec::spawn_executor(
+            store,
+            task_id.to_string(),
+            self.sink_arc(),
+            provider,
+            crate::task_exec::default_whitelist_root(),
+        );
         Ok(t)
+    }
+
+    /// 兼容旧调用：从第一个失败步重跑（现在走 task_rerun 的 None 语义，
+    /// 会把所有没成功的步一起重置，修掉「只重置第一步、后面的失败步原地复发」的老 bug）。
+    pub fn task_rerun_failed(&mut self, task_id: &str) -> Result<crate::task::Task, EngineError> {
+        self.task_rerun(task_id, None)
     }
 
     // ====== v45.10 P1 知识库 ======
@@ -6532,6 +6612,60 @@ mod v459_task_wiring_tests {
             msg.contains("PlanNotApproved") || msg.contains("InvalidTransition"),
             "msg={msg}"
         );
+    }
+
+    #[test]
+    fn rerun_from_step_resets_that_step_and_after() {
+        let mut plan = crate::task::Plan::default();
+        let mut mk = |id: &str, st: crate::task::StepStatus| crate::task::Step {
+            id: id.into(), title: id.into(), status: st, attempts: 2,
+            error: Some("boom".into()), ended_at: 123, ..Default::default()
+        };
+        plan.steps = vec![
+            mk("s1", crate::task::StepStatus::Done),
+            mk("s2", crate::task::StepStatus::Failed),
+            mk("s3", crate::task::StepStatus::Done),
+        ];
+        let n = Engine::reset_plan_for_rerun(&mut plan, Some("s2")).unwrap();
+        assert_eq!(n, 2, "s2 及之后两步都要重来");
+        assert_eq!(plan.steps[0].status, crate::task::StepStatus::Done, "s1 保持完成");
+        assert_eq!(plan.steps[1].status, crate::task::StepStatus::Pending);
+        assert_eq!(plan.steps[2].status, crate::task::StepStatus::Pending, "s3 虽然 Done 也要重来");
+        assert_eq!(plan.steps[1].attempts, 0);
+        assert!(plan.steps[1].error.is_none());
+        let bad = Engine::reset_plan_for_rerun(&mut plan, Some("nope"));
+        assert!(bad.is_err(), "未知 step id 必须报错");
+    }
+
+    #[test]
+    fn rerun_none_resets_only_unsuccessful_steps() {
+        let mut plan = crate::task::Plan::default();
+        plan.steps = vec![
+            crate::task::Step { id: "s1".into(), status: crate::task::StepStatus::Done, ..Default::default() },
+            crate::task::Step { id: "s2".into(), status: crate::task::StepStatus::Failed, error: Some("x".into()), attempts: 3, ..Default::default() },
+            crate::task::Step { id: "s3".into(), status: crate::task::StepStatus::Skipped, ..Default::default() },
+            crate::task::Step { id: "s4".into(), status: crate::task::StepStatus::Done, ..Default::default() },
+        ];
+        let n = Engine::reset_plan_for_rerun(&mut plan, None).unwrap();
+        assert_eq!(n, 2, "只重置 Failed + Skipped");
+        assert_eq!(plan.steps[0].status, crate::task::StepStatus::Done);
+        assert_eq!(plan.steps[1].status, crate::task::StepStatus::Pending);
+        assert_eq!(plan.steps[2].status, crate::task::StepStatus::Pending);
+        assert_eq!(plan.steps[3].status, crate::task::StepStatus::Done, "后面的 Done 也要保住");
+    }
+
+    #[test]
+    fn rerun_rejects_task_still_running() {
+        let mut e = engine_with_tmp_tasks();
+        let id = e.task_create("跑测试".into(), "跑测试".into(), None).unwrap();
+        {
+            let store = e.task_store().unwrap().clone();
+            let mut t = store.require(&id).unwrap();
+            t.status = crate::task::TaskStatus::Running;
+            store.save(&t).unwrap();
+        }
+        let r = e.task_rerun(&id, None);
+        assert!(r.is_err(), "运行中不许重跑（要先暂停或取消）");
     }
 
     #[test]

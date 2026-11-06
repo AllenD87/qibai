@@ -4350,10 +4350,17 @@
     }
   }
 
+  // v45.14：终态集合 —— 只有终态任务容得下「重跑」（运行中要先暂停/取消）
+  const TERMINAL_STATES = ['failed', 'partial', 'cancelled', 'done'];
+  function st_now(t) { return (t && (t.state || t.status)) || 'draft'; }
+
   async function openDetail(id) {
     currentTaskId = id;
     let t = null;
-    try { t = await invoke('task_get', { id }) || {}; } catch (e) { t = {}; }
+    // 参数名必须是 taskId：Tauri v2 把命令的 snake_case 参数按 camelCase 匹配，
+    // 早先这里写 { id } 落不到 task_id 上，调用直接缺参，又被 try/catch 吞掉——
+    // 表现为「点任务行、详情面板空白」。
+    try { t = await invoke('task_get', { taskId: id }) || {}; } catch (e) { t = {}; }
     detailEl.hidden = false;
     $('taskDetailTitle').textContent = t.title || id;
     const tokens = t.tokens_total || 0;
@@ -4377,6 +4384,25 @@
         err.textContent = `失败原因：${s.error}`;
         div.appendChild(err);
       }
+      // v45.14：Workflow 重跑——终态任务允许从任意一步起重跑（该步及之后一起重来）
+      if (currentTaskId && TERMINAL_STATES.includes(st_now(t)) && (s.id || s.step_id)) {
+        const rerunBtn = document.createElement('button');
+        rerunBtn.type = 'button';
+        rerunBtn.className = 'mini-btn';
+        rerunBtn.style.cssText = 'display:block;margin-top:6px;font-size:12px;';
+        rerunBtn.textContent = '从此步重跑';
+        rerunBtn.onclick = async (ev) => {
+          ev.stopPropagation();
+          try {
+            await invoke('task_rerun', { taskId: currentTaskId, fromStep: s.id || s.step_id });
+            await refreshList();
+            await openDetail(currentTaskId);
+            toast('已从该步重跑');
+          } catch (e) { toast((e && e.message) || e); }
+        };
+        div.appendChild(rerunBtn);
+      }
+
       // runs 折叠
       if (s.runs && s.runs.length) {
         const runsWrap = document.createElement('details');
@@ -4403,7 +4429,9 @@
     $('btnTaskPause').disabled = st !== 'running';
     $('btnTaskResume').disabled = st !== 'paused' && st !== 'interrupted';
     $('btnTaskCancel').disabled = !['running','planned','paused','waiting_confirm'].includes(st);
-    $('btnTaskRerunFailed').disabled = !(st === 'failed' || st === 'partial' || (t.steps||[]).some(s => (s.state||s.status) === 'failed'));
+    // v45.14：终态都能重跑（done 也能整体重来；failed/partial/cancelled 重跑没成功的步）
+    $('btnTaskRerunFailed').disabled = !TERMINAL_STATES.includes(st);
+    $('btnTaskRerunFailed').textContent = st === 'done' ? '整体重跑' : '重跑未完成步';
   }
 
   function bindBtn(id, cmd) {
@@ -4418,7 +4446,7 @@
   bindBtn('btnTaskPause', 'task_pause');
   bindBtn('btnTaskResume', 'task_resume');
   bindBtn('btnTaskCancel', 'task_cancel');
-  bindBtn('btnTaskRerunFailed', 'task_rerun_failed');
+  bindBtn('btnTaskRerunFailed', 'task_rerun');  // v45.14：fromStep 省略=重跑所有没成功的步
   $('btnTaskDetailClose').onclick = () => { detailEl.hidden = true; currentTaskId = null; };
   $('btnTasksRefresh').onclick = refreshList;
 
