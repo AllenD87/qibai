@@ -6,6 +6,8 @@
 
 桌宠窗 + 控制台窗 ｜ Tauri 2 + 纯 Rust 核心 ｜ Windows / macOS / Linux
 
+**简体中文** ｜ [English](README_EN.md)
+
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-24C8DB)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-1.75+-orange)](https://www.rust-lang.org)

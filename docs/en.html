@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qibai · An AI companion in the corner of your desktop</title>
+<meta name="description" content="Qibai (元气小小): a local-first desktop AI companion that chats, listens, remembers and actually does the work. Tauri 2 + pure-Rust core, Windows / macOS / Linux.">
+<meta property="og:title" content="Qibai · An AI companion in the corner of your desktop">
+<meta property="og:description" content="It chats, it listens, it remembers, it acts. Local-first: text never leaves your machine.">
+<meta property="og:image" content="images/personas-all.png">
+<link rel="icon" href="images/personas/huopo.png">
+<link rel="alternate" hreflang="zh-CN" href="index.html">
+<link rel="alternate" hreflang="en" href="en.html">
+<style>
+  :root{
+    --ink:#17181c; --ink-2:#4b4d55; --ink-3:#7c7f88;
+    --paper:#fbf7f3; --card:#ffffff; --line:#ece3da;
+    --coral:#e2574c; --coral-soft:#fdece9; --amber:#f0a32f; --teal:#2f8f83;
+    --r:18px; --shadow:0 10px 30px rgba(23,24,28,.07);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--paper); color:var(--ink); overflow-x:hidden;
+    font-family:"Inter","Segoe UI",system-ui,-apple-system,sans-serif;
+    line-height:1.7; -webkit-font-smoothing:antialiased;
+  }
+  a{color:inherit}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+  header{
+    position:sticky;top:0;z-index:9;background:rgba(251,247,243,.86);
+    backdrop-filter:saturate(160%) blur(10px);border-bottom:1px solid var(--line);
+  }
+  .nav{display:flex;align-items:center;gap:22px;height:62px}
+  .mark{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.02em}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--coral);box-shadow:0 0 0 4px var(--coral-soft)}
+  .nav .sp{flex:1}
+  .nav a.navlink{color:var(--ink-2);font-size:14px;text-decoration:none}
+  .nav a.navlink:hover{color:var(--coral)}
+  .ghost{
+    border:1px solid var(--line);background:#fff;border-radius:999px;
+    padding:7px 16px;font-size:14px;text-decoration:none;color:var(--ink)
+  }
+  .ghost:hover{border-color:var(--coral);color:var(--coral)}
+
+  .hero{padding:64px 0 30px;display:grid;grid-template-columns:1.05fr .95fr;gap:44px;align-items:center}
+  .kick{display:inline-flex;align-items:center;gap:8px;background:var(--coral-soft);color:#b8433a;
+    border-radius:999px;padding:5px 13px;font-size:13px;font-weight:600}
+  h1{font-size:46px;line-height:1.2;margin:16px 0 6px;letter-spacing:-.02em}
+  h1 em{font-style:normal;color:var(--coral)}
+  .sub{font-size:18px;color:var(--ink-2);margin:0 0 24px}
+  .btns{display:flex;flex-wrap:wrap;gap:12px}
+  .btn{
+    display:inline-flex;align-items:center;gap:8px;text-decoration:none;border-radius:999px;
+    padding:12px 22px;font-weight:700;font-size:15px;border:1px solid transparent
+  }
+  .btn.primary{background:var(--coral);color:#fff;box-shadow:0 8px 20px rgba(226,87,76,.25)}
+  .btn.primary:hover{filter:brightness(1.03)}
+  .btn.line{background:#fff;border-color:var(--line);color:var(--ink)}
+  .btn.line:hover{border-color:var(--coral);color:var(--coral)}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+  .chip{font-size:12.5px;color:var(--ink-2);border:1px solid var(--line);background:#fff;border-radius:8px;padding:4px 10px}
+  .heroart{position:relative}
+  .heroart img{width:100%;border-radius:var(--r);border:1px solid var(--line);box-shadow:var(--shadow);display:block}
+  .float{
+    position:absolute;left:-22px;bottom:-26px;width:126px;border-radius:14px;overflow:hidden;
+    border:1px solid var(--line);box-shadow:var(--shadow);background:#fff
+  }
+  .float img{width:100%;display:block}
+  .caption{font-size:12px;color:var(--ink-3);margin:14px 0 0;text-align:left}
+
+  section{padding:52px 0}
+  h2{font-size:26px;margin:0 0 8px;letter-spacing:-.01em}
+  .lead{color:var(--ink-2);margin:0 0 28px;font-size:15.5px}
+  .grid{display:grid;gap:16px;align-items:start}
+  .grid>*{min-width:0}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  .card{
+    background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+    padding:22px;box-shadow:var(--shadow)
+  }
+  .card h3{margin:0 0 8px;font-size:17px}
+  .card p{margin:0;color:var(--ink-2);font-size:14.5px}
+  .tag{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.04em;
+    color:#b8433a;background:var(--coral-soft);border-radius:6px;padding:2px 8px;margin-bottom:12px}
+  .tag.t2{color:#1f6f65;background:#e6f4f1}
+  .tag.t3{color:#8a5a11;background:#fdf0da}
+
+  .shot{background:#fff;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow)}
+  .shot img{width:100%;display:block}
+  .shot img.tall{max-height:520px;object-fit:contain;background:#fbf7f3}
+  .shot .bar{display:flex;align-items:center;gap:7px;padding:10px 14px;border-bottom:1px solid var(--line);background:#fdfbf9}
+  .shot .bar i{width:9px;height:9px;border-radius:50%;background:#e6ddd4;display:block}
+  .shot .bar span{margin-left:8px;font-size:12.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  .split{display:grid;grid-template-columns:1.15fr .85fr;gap:32px;align-items:center}
+  .split>*{min-width:0}
+  .arch-img{width:100%;border-radius:var(--r);border:1px solid var(--line);box-shadow:var(--shadow)}
+  ul.facts{margin:0;padding:0;list-style:none}
+  ul.facts li{padding:14px 0;border-bottom:1px dashed var(--line)}
+  ul.facts li:last-child{border-bottom:0}
+  ul.facts b{display:block;font-size:14.5px}
+  ul.facts span{color:var(--ink-2);font-size:13.5px}
+
+  pre{
+    background:#1c1d22;color:#e9e7e3;border-radius:14px;padding:18px 20px;overflow-x:auto;
+    font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.65;
+    margin:12px 0 0;max-width:100%
+  }
+  pre .c{color:#8f929a}
+  pre .k{color:#ffd48a}
+  .steps{display:grid;gap:18px}
+  .step{display:grid;grid-template-columns:36px 1fr;gap:14px}
+  .step>*{min-width:0}
+  .num{width:30px;height:30px;border-radius:50%;background:var(--coral-soft);color:#b8433a;
+    font-weight:800;display:flex;align-items:center;justify-content:center;font-size:14px}
+  .step h4{margin:2px 0 4px;font-size:15.5px}
+  .step p{margin:0;font-size:13.5px;color:var(--ink-2)}
+
+  .note{background:#fff;border:1px solid var(--line);border-left:4px solid var(--amber);
+    border-radius:12px;padding:16px 18px;font-size:14px;color:var(--ink-2)}
+  .note b{color:var(--ink)}
+
+  footer{border-top:1px solid var(--line);margin-top:20px;padding:34px 0 46px;color:var(--ink-3);font-size:13.5px}
+  footer .cols{display:flex;flex-wrap:wrap;gap:30px;justify-content:space-between}
+  footer a{color:var(--ink-2);text-decoration:none}
+  footer a:hover{color:var(--coral)}
+  @media (max-width:900px){
+    .hero{grid-template-columns:1fr;padding-top:40px;gap:28px}
+    h1{font-size:34px}
+    .g3,.g2,.split{grid-template-columns:1fr}
+    .nav a.navlink{display:none}
+    .float{width:104px;right:-6px;bottom:-12px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap nav">
+    <div class="mark"><span class="dot"></span>Qibai</div>
+    <div class="sp"></div>
+    <a class="navlink" href="#skills">Capabilities</a>
+    <a class="navlink" href="#ui">Interface</a>
+    <a class="navlink" href="#arch">Architecture</a>
+    <a class="navlink" href="#start">Start</a>
+    <a class="navlink" href="index.html">中文</a>
+    <a class="ghost" href="https://github.com/AllenD87/qibai" target="_blank" rel="noopener">GitHub ↗</a>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="hero">
+    <div>
+      <span class="kick">Desktop AI companion · Tauri 2 + pure-Rust core</span>
+      <h1>An <em>AI companion</em><br>in the corner of your desktop</h1>
+      <p class="sub">It chats · It listens · It remembers · It acts.<br>Local-first: indexing and speech run on your machine, and the text never leaves it.</p>
+      <div class="btns">
+        <a class="btn primary" href="https://github.com/AllenD87/qibai" target="_blank" rel="noopener">View the source</a>
+        <a class="btn line" href="https://github.com/AllenD87/qibai/releases" target="_blank" rel="noopener">Assets &amp; models (Releases)</a>
+        <a class="btn line" href="https://weixin.qq.com/sph/AZdiIWOvIU" target="_blank" rel="noopener">Watch the demo</a>
+      </div>
+      <div class="chips">
+        <span class="chip">Windows / macOS / Linux</span>
+        <span class="chip">656 core-library tests</span>
+        <span class="chip">Three-platform CI green</span>
+        <span class="chip">MIT (code)</span>
+      </div>
+    </div>
+    <div class="heroart">
+      <img src="images/demo-console.gif" alt="Console: 11 tabs at a glance">
+      <div class="caption">11 console tabs: chat / characters / intimacy / events / settings / skills / code check / tasks — every one is a real interface</div>
+    </div>
+  </div>
+
+  <section id="skills">
+    <h2>It is not "a chat window with a new skin"</h2>
+    <p class="lead">Chatting, listening, remembering and acting each have their own implementation behind them — not an API wrapped in a popup.</p>
+    <div class="grid g3">
+      <div class="card">
+        <span class="tag">It chats</span>
+        <h3>A stateful desktop pet</h3>
+        <p>Five characters with their own look, personality, intimacy and voice; expressions and motions driven by structured model output; it shows up on its own when you have sat too long, skipped water, or need to rest your eyes.</p>
+      </div>
+      <div class="card">
+        <span class="tag t2">It listens</span>
+        <h3>Speech really runs on your machine</h3>
+        <p>Local whisper transcription, audio never leaves the machine; say the wake word for hands-free mode and VAD splits sentences; barge-in supported, so you can talk while it speaks.</p>
+      </div>
+      <div class="card">
+        <span class="tag t3">It acts</span>
+        <h3>It finishes the job for you</h3>
+        <p>14 built-in skills: scaffold projects, read/write files, run tests, check code, search the web, launch apps; risky operations are confirmed one by one — no confirmation, no execution.</p>
+      </div>
+      <div class="card">
+        <span class="tag t2">It remembers</span>
+        <h3>Context that never blows up, tasks that resume</h3>
+        <p>Four-layer context + token budget + auto compaction + snapshots; long tasks propose a plan first, can be paused and resumed, run in parallel along a dependency graph, and can be re-run from a given step.</p>
+      </div>
+      <div class="card">
+        <span class="tag t3">Extensible</span>
+        <h3>Capabilities grow from outside</h3>
+        <p>Skill packs install from a zip, expert plugins swap persona and tool whitelist, standard stdio MCP, and custom connectors you add with a single entry in the console.</p>
+      </div>
+      <div class="card">
+        <span class="tag">Guarded</span>
+        <h3>Off by default, refused out of bounds</h3>
+        <p>File operations stay inside whitelisted directories; commands and writes are approved per action and recorded; screen capability is off by default and its actions must be triggered by your voice or your click.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Knowledge base: from "searchable in a panel" to "actually used in conversation"</h2>
+    <p class="lead">Directory-level indexing + chunking + BM25; add one 512-dim local vector model and it upgrades to hybrid keyword + semantic retrieval.</p>
+    <div class="split">
+      <div class="shot">
+        <div class="bar"><i></i><i></i><i></i><span>Console · Settings · Knowledge base</span></div>
+        <img src="images/kb-context.png" alt="Knowledge base panel: index status, hybrid retrieval weight and conversation citation notes">
+      </div>
+      <ul class="facts">
+        <li><b>Ask "why is my computer so slow"</b><span>and it still hits the passage that says "the machine runs slower and slower" — because of semantics, not literal matching.</span></li>
+        <li><b>Index once, cite automatically</b><span>Hits are handed to the model during conversation; weakly related chunks are filtered out by a threshold, so no dilution.</span></li>
+        <li><b>Works without the model too</b><span>Pure BM25 keyword retrieval, no downgrade in function; the model is about 91 MB and downloads in-app with one click.</span></li>
+        <li><b>Never leaves the machine</b><span>Indexing, embedding and retrieval all run locally — not a single byte of text goes out.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="ui">
+    <h2>Interface footage</h2>
+    <p class="lead">These are not design mockups — they were recorded from the rendered front-end pages.</p>
+    <div class="grid g2">
+      <div class="shot">
+        <div class="bar"><i></i><i></i><i></i><span>Characters: click to switch — look / personality / voice all change together</span></div>
+        <img src="images/demo-roles.gif" alt="Character switching demo">
+      </div>
+      <div class="shot">
+        <div class="bar"><i></i><i></i><i></i><span>Skills &amp; experts: toggle each capability, risky ones approved per action</span></div>
+        <img src="images/demo-skills.gif" alt="Skill toggles demo">
+      </div>
+    </div>
+    <div style="margin-top:16px" class="shot">
+      <div class="bar"><i></i><i></i><i></i><span>Five characters: Classic / Urban / Gentle / Lively / Chic</span></div>
+      <img src="images/personas-all.png" alt="Five character portraits">
+    </div>
+  </section>
+
+  <section id="arch">
+    <h2>Architecture</h2>
+    <p class="lead">Shell and kernel fully separated: all business logic lives in one Rust crate with no GUI dependency, so changing the shell costs no rewrite.</p>
+    <img class="arch-img" src="images/architecture.png" alt="Qibai four-layer architecture">
+    <div class="grid g3" style="margin-top:20px">
+      <div class="card"><h3>A pure-Rust core</h3><p><code>qibai-core</code> has zero GUI dependencies and 656 tests that run without a graphics environment; Tauri today, CLI or a server tomorrow — not one line of logic changes.</p></div>
+      <div class="card"><h3>One source of state</h3><p>Conversation, tasks, performance and window state all live in the engine; the front end only reads a projection, so there is no "two copies drifting apart".</p></div>
+      <div class="card"><h3>Minimal outbound by default</h3><p>MCP ships with an empty config, so no subprocess starts; only conversations you explicitly trigger send the necessary text to the LLM, with your own key.</p></div>
+    </div>
+  </section>
+
+  <section id="start">
+    <h2>Quick start</h2>
+    <p class="lead">The repo ships no model weights and no artwork frames (size and licensing), so pull them from upstream official releases with the scripts.</p>
+    <div class="steps">
+      <div class="step"><div class="num">1</div><div>
+        <h4>Prerequisites</h4>
+        <p>Rust 1.75+ and Git; on Linux you also need webkit2gtk 4.1 and related system libraries, on macOS the Xcode command line tools, on Windows the MSVC toolchain.</p>
+      </div></div>
+      <div class="step"><div class="num">2</div><div>
+        <h4>Fetch the large resources</h4>
+        <p>Models, the STT binary and the five characters' artwork and motion frames are all kept out of the repo; two scripts cover each side and are idempotent.</p>
+<pre><span class="c"># Models and speech binaries</span>
+bash fetch_resources.sh
+<span class="c"># Character artwork and motion frames (3 volumes → md5 → concat → extract)</span>
+bash fetch_personas.sh</pre>
+      </div></div>
+      <div class="step"><div class="num">3</div><div>
+        <h4>Test / build</h4>
+<pre><span class="c"># Core library unit tests</span>
+cargo test -p qibai-core
+<span class="c"># Build</span>
+cd src-tauri &amp;&amp; <span class="k">cargo build --release</span>
+<span class="c"># Package an installer (needs cargo-tauri)</span>
+cargo tauri build</pre>
+      </div></div>
+      <div class="step"><div class="num">4</div><div>
+        <h4>Enter your API key</h4>
+        <p>On first launch, open the console → Settings and enter your LLM API key (Doubao Ark by default, or any OpenAI-compatible endpoint). The key stays local and never reaches the logs.</p>
+      </div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="note">
+      <b>Privacy boundaries, up front:</b> conversations, settings, memory and tasks are all stored in the local data directory — no sync, no upload. The only thing that goes out is the conversation request you explicitly trigger.
+      File reads and writes are restricted to whitelisted directories, refused otherwise; unconfirmed risky operations are not executed and are recorded.
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap cols">
+    <div>
+      <div class="mark" style="font-size:15px;margin-bottom:8px"><span class="dot"></span>Qibai · 元气小小</div>
+      <div>It chats · It listens · It remembers · It acts</div>
+    </div>
+    <div>
+      <div><a href="https://github.com/AllenD87/qibai" target="_blank" rel="noopener">Repository</a> · <a href="https://github.com/AllenD87/qibai/releases" target="_blank" rel="noopener">Releases</a> · <a href="https://github.com/AllenD87/qibai/actions" target="_blank" rel="noopener">CI status</a></div>
+      <div style="margin-top:6px"><a href="https://github.com/AllenD87/qibai/blob/main/LICENSE" target="_blank" rel="noopener">Code: MIT</a> · <a href="https://github.com/AllenD87/qibai/blob/main/docs/ASSETS.md" target="_blank" rel="noopener">Artwork licence</a> · <a href="https://github.com/AllenD87/qibai/blob/main/THIRD-PARTY-NOTICES.md" target="_blank" rel="noopener">Third-party licences</a></div>
+    </div>
+    <div style="max-width:360px">
+      Artwork is not covered by MIT; contact the author for commercial use. Third-party components follow their own licences. This project is all-ages content.
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
