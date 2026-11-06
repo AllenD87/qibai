@@ -10,6 +10,7 @@
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-24C8DB)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-1.75+-orange)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#快速开始)
+[![CI](https://github.com/AllenD87/qibai/actions/workflows/ci.yml/badge.svg)](https://github.com/AllenD87/qibai/actions/workflows/ci.yml)
 
 <br/>
 
