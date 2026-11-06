@@ -4,7 +4,7 @@
 
 | 类别 | 内容 | 存放位置（本地） | 是否在仓库内 |
 |---|---|---|---|
-| 角色立绘 / 动作帧 | 5 个角色，共 204 张 PNG | `src/assets/personas/<角色>/` | ❌ 不在仓库（631 MB） |
+| 角色立绘 / 动作帧 | 5 个角色，共 120 张 PNG | `src/assets/personas/<角色>/` | ❌ 不在仓库（478 MB） |
 | 预览图 | 5 张单角色全身图 + 1 张五角色横排，合计约 550 KB | `docs/images/` | ✅ 在仓库 |
 | 3D / AI 辅助小图 | 头像、图标、界面点缀 | `src/assets/ai_char*`、`src/assets/3d` | ✅ 在仓库（合计约 20 MB 以内） |
 | 应用图标 | 三平台图标 | `src-tauri/icons/` | ✅ 在仓库 |
@@ -22,33 +22,62 @@ docs/images/personas-all.png      ← 五角色横排，README 展示用
 
 ## 二、为什么全量帧不放仓库
 
-204 张 PNG 合计 **631 MB**：
+120 张 PNG 合计 **478 MB**：
 
-| 角色 | 体积 |
-|---|---:|
-| 温柔 `wenrou` | 249 MB |
-| 活泼 `huopo` | 101 MB |
-| 古典 `gudian` | 101 MB |
-| 热情 `reqing` | 95 MB |
-| 都市 `dushi` | 87 MB |
+| 角色 | 体积 | 帧数 |
+|---|---:|---:|
+| 古典 `gudian` | 101 MB | 24 |
+| 活泼 `huopo` | 101 MB | 24 |
+| 温柔 `wenrou` | 96 MB | 24 |
+| 热情 `reqing` | 95 MB | 24 |
+| 都市 `dushi` | 87 MB | 24 |
 
-放进普通 git 会让任何一次 `git clone` 拉 600 MB+，仓库永久臃肿；放 Git LFS 会吃掉免费 1 GB 配额。因此：
+放进普通 git 会让任何一次 `git clone` 拉近 500 MB，仓库永久臃肿；放 Git LFS 会吃掉免费 1 GB 配额。因此：
 
 - **仓库只放预览图**（`docs/images/personas/`，合计 < 2 MB）；
-- **全量帧作为 GitHub Release 附件**分发（`personas_frames_v<版本>.zip`，必要时分卷）；
-- 用 `fetch_personas.sh` 一键拉取到 `src/assets/personas/`。
+- **全量帧作为 GitHub Release 附件**分发，按 160 MB 分卷（GitHub 单文件上限 2 GB，分卷主要是为了断点续传与失败重试）；
+- 用 `fetch_personas.sh` 一键拉取、校验、解压到 `src/assets/personas/`。
 
 ## 三、获取全量帧
 
 ```bash
-# 从最新 Release 拉取（脚本随仓库提供）
+# 一条命令搞定：下载 → 逐卷 md5 校验 → 拼接 → 整包校验 → 解压（实测 54 秒）
 bash fetch_personas.sh
 
-# 或手动：下载 Release 里的 personas_frames_*.zip 后
-unzip personas_frames_v0.1.0.zip -d src/assets/personas/
+# 已装过、想重下覆盖
+bash fetch_personas.sh --force
+
+# 换版本
+QIBAI_PERSONAS_TAG=v0.2.0 bash fetch_personas.sh
 ```
 
-目录必须保持 `<角色>/<动作>/<帧>.png` 结构，否则前端加载不到图。
+脚本需要 `curl` + `unzip`，md5 优先用 `md5sum`（Linux）/ `md5`（macOS），都没有时跳过校验并提示。
+
+**手动方式**（万一脚本跑不通）：
+
+```bash
+BASE=https://github.com/AllenD87/qibai/releases/download/v0.1.0/personas_frames_v0.1.0.zip
+for i in 0 1 2; do curl -fL -o part$i "$BASE.part$i"; done
+cat part0 part1 part2 > personas_frames_v0.1.0.zip
+md5sum personas_frames_v0.1.0.zip    # 应为 e6aafa6ff36334c15b7cb07c921510f2
+unzip personas_frames_v0.1.0.zip -d src/assets
+```
+
+当前版本 `v0.1.0` 的三个分卷（各卷 md5 供排错用）：
+
+| 分卷 | 大小 | md5 |
+|---|---:|---|
+| `personas_frames_v0.1.0.zip.part0` | 160 MB | `490606a16d885d76c5e9cf6ac929838f` |
+| `personas_frames_v0.1.0.zip.part1` | 160 MB | `c9aca441173567297fc1e629b195a9bb` |
+| `personas_frames_v0.1.0.zip.part2` | 157 MB | `1bf02aa4abb6cdcbbe994396c900c9a6` |
+
+目录必须保持 `<角色>/<动作>/<帧>.png` 结构（`poses/`、`expressions/`），否则前端按
+`assets/personas/<角色>/<动作>/<帧>.png` 相对路径加载不到图。
+
+> 注意：作者工作目录里的 `personas/wenrou/` 下曾混入过另外四个角色的**旧版帧副本**
+> （`wenrou/{gudian,dushi,huopo,reqing}/`，约 165 MB，与实际角色目录的帧不一致）。
+> 那是早期批量生成时工作目录写错留下的，应用不会按这个路径取图，所以**发布包已排除它们**，
+> 只保留五个角色的正式目录。如果你手上是原始工程目录，可以自行删掉这四个嵌套目录省 165 MB。
 
 ## 四、授权（**重要，与代码的 MIT 分开**）
 

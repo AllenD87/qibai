@@ -297,6 +297,14 @@ bash fetch_resources.sh
 
 资源全部来自上游官方 release / HuggingFace，脚本可重复执行（幂等）。
 
+**角色立绘与动作帧**（五个角色共 120 张 PNG，478 MB）同样不进仓库，从 Release 分卷拉：
+
+```bash
+bash fetch_personas.sh     # 下载 3 个分卷 → 逐卷 md5 校验 → 拼接 → 解压到 src/assets/personas/
+```
+
+约 1 分钟完成，脚本幂等（已装过会跳过）。不拉也能启动，但桌宠立绘会是空图。
+
 ### 3. 跑测试
 
 ```bash
