@@ -1,5 +1,12 @@
 # 第三方组件与许可声明 / Third-Party Notices
 
+[中文](#中文) ｜ [English](#english)
+
+---
+
+<a id="中文"></a>
+## 中文
+
 本仓库自身源码以 **MIT** 发布（见 `LICENSE`，纯 MIT 正文，便于平台自动识别）。
 
 > **许可范围划分**（`LICENSE` 只覆盖代码）：
@@ -10,9 +17,7 @@
 
 > ⚠️ **标【待核实】的条目，公开前请以你实际使用的版本内附 LICENSE 为准**，本表只记录预期的上游许可，不作为法律结论。
 
----
-
-## 一、语音链路
+### 一、语音链路
 
 | 组件 | 版本 / 形态 | 预期许可 | 仓库内是否分发 | 说明 |
 |---|---|---|---|---|
@@ -24,7 +29,7 @@
 | **bge-small-zh-v1.5**（向量模型） | `model.onnx` 91 MB + `vocab.txt` | MIT（BAAI，上游 `BAAI/bge-small-zh-v1.5`） | ❌ 不进安装包、不入库 | 知识库语义检索用；用户在应用内按需下载（Release `kb-model-v1` 仅做镜像分发，权重版权归原作者） |
 | **espeak-ng** | 二进制 + `share/` 语音数据（13 MB） | **GPL-3.0** | ❌ 不入库，建议用户用系统包管理器安装 | 以独立可执行程序调用；若你选择分发二进制，须同时提供许可文本与源码获取方式 |
 
-## 二、Rust 依赖（主要项，均由 `Cargo.lock` 锁定）
+### 二、Rust 依赖（主要项，均由 `Cargo.lock` 锁定）
 
 | Crate | 用途 | 预期许可 |
 |---|---|---|
@@ -40,20 +45,18 @@
 | `directories` / `thiserror` / `async-trait` / `base64` / `zip` | 路径、错误、trait、编码、打包 | MIT / Apache-2.0 |
 | `gtk` / `gdk`（仅 Linux） | X11 窗口表面重绘 | MIT |
 
-## 三、Node 依赖（`server/`）
+### 三、Node 依赖（`server/`）
 
 | 包 | 用途 | 许可 |
 |---|---|---|
 | `ws` | WebSocket 服务端 | MIT |
 | `node:sqlite` | 内置数据库（Node ≥ 22.5 自带） | 随 Node 分发（MIT 类） |
 
-## 四、美术素材
+### 四、美术素材
 
 立绘、动作帧、表情、图标由生成式模型产出，**不属于第三方开源组件**，权利与授权见 `docs/ASSETS.md`。
 
----
-
-## 五、分发时的义务清单
+### 五、分发时的义务清单
 
 如果你要发布**安装包**（而不只是源码），额外需要：
 
@@ -62,3 +65,67 @@
 3. 若打包了 piper 音色 → 确认其许可允许再分发；
 4. 若打包了 whisper 二进制 → 附 MIT 版权声明；
 5. 若打包了模型权重 → 附来源与许可说明。
+
+---
+
+<a id="english"></a>
+## English
+
+This repository's own source is released under **MIT** (see `LICENSE`, which contains the plain MIT text so platforms can detect it automatically).
+
+> **How the licence scopes divide** (`LICENSE` covers code only):
+> - Artwork (character art / motion frames / expressions / icons) is **not** covered by MIT — see `docs/ASSETS.md`;
+> - The third-party components below follow **their own licences**.
+
+The components below are provided by third parties and follow **their own licences**. This repository does not bundle their binaries or weights — it only provides fetch scripts or a runtime calling convention.
+
+> ⚠️ **For items marked [TO VERIFY], before publishing, defer to the LICENSE bundled with the version you actually use.** This table records the expected upstream licence only and is not a legal conclusion.
+
+### 1. Speech pipeline
+
+| Component | Version / form | Expected licence | Distributed in repo | Notes |
+|---|---|---|---|---|
+| **whisper.cpp** | Build artefacts `libwhisper.so.1.9.5`, `whisper-server`, `whisper-cli` | MIT (upstream `ggml-org/whisper.cpp`) [TO VERIFY for the fork you use] | ❌ downloaded from the official release by `fetch_resources.sh` | Called as a separate process / shared library, not inlined source |
+| **Whisper model weights** `ggml-base.bin` / `ggml-small.bin` | 142 MB / ~466 MB | MIT (OpenAI Whisper weights) | ❌ downloaded by script from `hf-mirror.com/ggerganov/whisper.cpp` | Required on first run |
+| **sherpa-onnx / Paraformer** | `paraformer.onnx` (233 MB) | Apache-2.0 [TO VERIFY] | ❌ not in repo | Alternative Chinese streaming recogniser |
+| **piper** engine | Executable | MIT | ❌ | Local offline TTS |
+| **piper voice** `zh_CN-huayan-medium.onnx` | 61 MB | **Each voice has its own licence; some are non-commercial only** [MUST VERIFY] | ❌ not in repo; users should download it themselves from `rhasspy/piper-voices` | **If this voice is non-commercial only, it must not ship inside an installer for this project** |
+| **bge-small-zh-v1.5** (embedding model) | `model.onnx` 91 MB + `vocab.txt` | MIT (BAAI, upstream `BAAI/bge-small-zh-v1.5`) | ❌ not in the installer, not in repo | Used for knowledge-base semantic retrieval; downloaded on demand in-app (the `kb-model-v1` release only mirrors it; copyright stays with the original authors) |
+| **espeak-ng** | Binary + `share/` voice data (13 MB) | **GPL-3.0** | ❌ not in repo; users should install it via the system package manager | Called as a separate executable; if you choose to distribute the binary you must also supply the licence text and how to obtain the source |
+
+### 2. Rust dependencies (main ones, all pinned by `Cargo.lock`)
+
+| Crate | Purpose | Expected licence |
+|---|---|---|
+| `tauri` / `tauri-build` / `tauri-plugin-*` | App shell, tray, notifications, autostart, clipboard, updater | MIT / Apache-2.0 |
+| `serde` / `serde_json` | Serialisation | MIT / Apache-2.0 |
+| `tokio` / `tokio-tungstenite` / `futures-util` | Async runtime, WebSocket | MIT |
+| `reqwest` (`rustls-tls`) | HTTP client | MIT / Apache-2.0 |
+| `cpal` / `rodio` / `rubato` | Audio capture, playback, resampling | MIT / Apache-2.0 |
+| `sonora` | Pure-Rust port of WebRTC AEC3 (echo cancellation) | [TO VERIFY] |
+| `tract-onnx` | Pure-Rust ONNX inference (local embedding model, no C/C++ dependency) | MIT / Apache-2.0 |
+| `aes-gcm` / `pbkdf2` / `sha2` / `rand` / `zeroize` | Local vault encryption | MIT / Apache-2.0 |
+| `keyring` | System keychain | MIT / Apache-2.0 |
+| `directories` / `thiserror` / `async-trait` / `base64` / `zip` | Paths, errors, traits, encoding, packaging | MIT / Apache-2.0 |
+| `gtk` / `gdk` (Linux only) | X11 window surface redraw | MIT |
+
+### 3. Node dependencies (`server/`)
+
+| Package | Purpose | Licence |
+|---|---|---|
+| `ws` | WebSocket server | MIT |
+| `node:sqlite` | Built-in database (ships with Node ≥ 22.5) | Distributed with Node (MIT-like) |
+
+### 4. Artwork
+
+Character art, motion frames, expressions and icons are produced by generative models and are **not third-party open-source components**; rights and permissions are described in `docs/ASSETS.md`.
+
+### 5. Obligations when distributing
+
+If you publish an **installer** (not just source), you additionally need to:
+
+1. Include this file and `LICENSE`;
+2. If you bundled the espeak-ng binary → include the full GPL-3.0 text and where to obtain the source;
+3. If you bundled piper voices → confirm their licences permit redistribution;
+4. If you bundled the whisper binary → include the MIT copyright notice;
+5. If you bundled model weights → include their origin and licence.
