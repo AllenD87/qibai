@@ -1,0 +1,50 @@
+name: 功能建议 / Feature request
+description: 提出一个具体的能力或体验改进 / Propose a concrete capability or UX improvement
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        本项目对方向的取舍原则：**本地优先、隐私边界清晰、能力真能用、不做擦边内容。**
+        明显违背这几条的建议会被直接关闭，请先看 `README.md` 与 `docs/开源策略` 里的边界说明。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你想解决的问题 / The problem
+      description: 现在哪里别扭、卡住、缺一环；描述场景而不是描述方案
+      placeholder: "我在让它跑测试时，必须每次手点确认，批量场景太慢……"
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 你建议怎么做 / Proposed solution
+      description: 越具体越好；如果有替代方案也列出来
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 涉及模块 / Area
+      options:
+        - 对话与记忆（chat / memory）
+        - 语音（STT / TTS / 免提）
+        - 技能与专家（skills / experts）
+        - MCP 与连接器 / MCP & connectors
+        - 知识库 / knowledge base
+        - 任务与 Workflow / tasks
+        - 界面与交互 / UI
+        - 安装与跨平台 / install & platform
+        - 文档 / docs
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundary
+    attributes:
+      label: 边界自查 / Boundary check
+      options:
+        - label: 这个建议不会让本地数据在未获用户触发时出网 / Keeps local-first guarantees
+          required: true
+        - label: 这个建议不要求默认放开执行类权限 / Does not require default-open execution permission
+          required: true

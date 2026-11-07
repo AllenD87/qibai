@@ -3,7 +3,7 @@
 # -----------------------------------------------------------------------------
 # 触发条件：push 到任意分支 / 任意 pull_request
 # 矩阵：    ubuntu-latest / windows-latest / macos-latest
-# 职责：    跑 qibai-core 单测（保持 648 条基线只增不减）+ server 单测
+# 职责：    跑 qibai-core 单测（保持 656 条基线只增不减）+ server 单测
 #           不产物、不签名、不发布、不依赖任何 secret
 # 备注：    ubuntu-latest 当前为 24.04，WebKitGTK 4.1 包名 libwebkit2gtk-4.1-dev
 #           已对照 Tauri 2 官方前置依赖核实。

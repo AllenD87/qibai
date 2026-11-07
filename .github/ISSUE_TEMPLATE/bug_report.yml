@@ -1,0 +1,72 @@
+name: 缺陷报告 / Bug report
+description: 报告一个可复现的问题（请先脱敏日志与截图）/ Report a reproducible problem
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请确认：**日志、截图、对话内容里没有你的 API Key、真实姓名、本机路径以外的隐私信息。**
+        Please make sure no API keys, real names or private data are included in logs or screenshots.
+  - type: input
+    id: version
+    attributes:
+      label: 版本 / Version
+      description: 应用版本号或 commit sha（About 页或 `git log -1` 可见）
+      placeholder: "v0.1.0 / 435968d"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: 平台 / Platform
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - 其他 / Other
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: 现象 / What happens
+      description: 实际看到什么，涉及哪个窗口（桌宠窗 / 控制台）或哪个页签
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      description: 从干净启动开始，一步一步写；能稳定复现请注明成功率
+      placeholder: |
+        1. 启动应用
+        2. 打开控制台 → 技能与专家
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果 / Expected
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志与截图 / Logs and screenshots
+      description: 已脱敏的日志片段、控制台输出或截图；大文件请贴链接
+      render: text
+    validations:
+      required: false
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 自查 / Pre-flight
+      options:
+        - label: 我已搜索现有 issue，确认不是重复提交 / I searched existing issues
+          required: true
+        - label: 我已脱敏日志与截图，未包含密钥或他人隐私 / I removed keys and private data
+          required: true
+        - label: 这不是安全漏洞（安全问题请走 SECURITY.md 的私密渠道）/ This is not a security report
+          required: true

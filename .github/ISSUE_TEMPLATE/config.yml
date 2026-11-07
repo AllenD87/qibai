@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 安全问题 / Security report
+    url: https://github.com/AllenD87/qibai/security/advisories/new
+    about: 请勿用公开 issue 报漏洞，走私密 advisory 或 SECURITY.md 里的邮箱
+  - name: 使用与讨论 / Discussions
+    url: https://github.com/AllenD87/qibai/discussions
+    about: 安装、配置、用法类问题优先在 Discussions 提问

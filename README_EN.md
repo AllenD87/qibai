@@ -439,7 +439,7 @@ Issues and PRs are welcome. Three ground rules:
 2. **New capabilities ship off by default**: any new execution-type capability starts disabled, behind a whitelist and a confirmation gate.
 3. **No large files in git**: anything over 5 MB per file goes through a Release or a download script.
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for details.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for details. Report vulnerabilities privately via [`SECURITY.md`](SECURITY.md) — never in a public issue; taking part in discussions means you accept [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
 ---
 
