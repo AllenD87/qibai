@@ -5,6 +5,7 @@
 #   silero VAD         端点检测
 # 标点模型 ct-punc（≈281MB）为可选：冒烟/联调不需要，需要时手补。
 # 网络：GitHub 走 gh-proxy.com 前缀。幂等：已存在即跳过。
+# 注意：权威入口是根目录 `fetch_resources.sh`（含 sha256 校验与镜像回退），本脚本为旧入口。
 # ============================================================
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

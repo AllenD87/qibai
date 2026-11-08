@@ -7,7 +7,9 @@
 #   1) whisper.cpp 二进制（whisper-server / whisper-cli，Linux x64/arm64）
 #   2) 中文 STT 模型（默认 ggml-small.bin，中文最佳性价比）
 #   3) 组装 espeak-ng 离线语音包（tts-espeak/，含中文语音数据；无 root 权限也能装）
-#   4) 可选：piper 中文离线模型（edge-tts 在线不可用时的本地女声）
+#   3b) 可选：piper 中文离线模型（edge-tts 在线不可用时的本地女声）
+#   4) sherpa-onnx 中文 STT（paraformer-zh int8 + VAD + 标点，~450MB，可跳过）
+# 说明：sherpa 是可选后端（默认仍走 whisper）；不想占空间可设 QIBAI_SKIP_SHERPA=1 跳过。
 # 用法：解压全量包后，在工程根运行：  bash fetch_resources.sh
 # 可重跑：已下载的部分自动跳过（幂等）。
 # ============================================================
@@ -180,6 +182,108 @@ else
   warn "  · 或设 QIBAI_TTS_ESPEAK_DIR 指向已有的 espeak-ng 目录后重启应用"
 fi
 
+# ---------- 4. sherpa-onnx 中文 STT（paraformer-zh int8 + VAD + 标点；可选后端） ----------
+#  目标布局（qibai-core/src/sherpa_engine.rs 只认这几个文件名）：
+#    src-tauri/models/sherpa/paraformer.onnx  tokens.txt  vad.onnx  punc.onnx(可选)
+#  sha256 已按上游 release 实测值内置；上游若换包会校验失败 → 用 QIBAI_SHA_CHECK=0 跳过校验重试。
+SHERPA_DIR="$MODEL_DIR/sherpa"
+SHERPA_BASE="${QIBAI_SHERPA_BASE:-https://github.com/k2-fsa/sherpa-onnx/releases/download}"
+SHERPA_MIRROR="${QIBAI_SHERPA_MIRROR:-https://gh-proxy.com/https://github.com/k2-fsa/sherpa-onnx/releases/download}"
+PF_TGZ="$SHERPA_BASE/asr-models/sherpa-onnx-paraformer-zh-2023-09-14.tar.bz2"
+VAD_ONNX="$SHERPA_BASE/asr-models/silero_vad.onnx"
+PUNC_TGZ="$SHERPA_BASE/punctuation-models/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12.tar.bz2"
+PF_DIR=sherpa-onnx-paraformer-zh-2023-09-14
+PUNC_DIR=sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12
+PF_PKG_SHA=9c49fd9c6fb63de8e18c1054cf3d100f804741b7e608e187923cd8ff09fa9f03
+PF_SHA=f36a0433bcf096bd6d6f11b80a3ac8bed110bdca632fe0d731df8d1a84475945
+TOKENS_SHA=59aba8873a2ed1e122c25fee421e25f283b63290efbde85c1f01a853d83cb6e6
+VAD_SHA=9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6
+PUNC_SHA=e93593a6dbd69a07f8734ef269dbe861a379755f8d1c8354719432116f2c44bd
+
+sha_of() {  # 兼容 Linux(sha256sum) / macOS(shasum)
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}';
+  else shasum -a 256 "$1" | awk '{print $1}'; fi
+}
+check_sha() {  # $1 文件 $2 期望值 $3 说明；返回 0=通过
+  [[ "${QIBAI_SHA_CHECK:-1}" = "0" ]] && { warn "$3：已按 QIBAI_SHA_CHECK=0 跳过校验"; return 0; }
+  local got; got="$(sha_of "$1")"
+  if [[ "$got" = "$2" ]]; then say "$3 sha256 校验通过"; return 0; fi
+  warn "$3 sha256 不匹配（上游可能已换包）"
+  warn "  期望 $2"
+  warn "  实际 $got"
+  warn "  确认无误可加 QIBAI_SHA_CHECK=0 重跑"
+  return 1
+}
+fetch() {  # $1 目标文件 $2 主 URL $3 镜像 URL $4 超时秒
+  if curl -fL --retry 3 --max-time "$4" -o "$1" "$2"; then return 0; fi
+  warn "主源失败，改用镜像：$3"
+  curl -fL --retry 3 --max-time "$4" -o "$1" "$3"
+}
+
+if [[ "${QIBAI_SKIP_SHERPA:-0}" = "1" ]]; then
+  warn "已按 QIBAI_SKIP_SHERPA=1 跳过 sherpa 模型（STT 将回退 whisper）"
+elif [[ -s "$SHERPA_DIR/paraformer.onnx" && -s "$SHERPA_DIR/tokens.txt" && -s "$SHERPA_DIR/vad.onnx" ]]; then
+  say "sherpa 模型已存在，跳过（paraformer.onnx + tokens.txt + vad.onnx）"
+else
+  mkdir -p "$SHERPA_DIR"
+  SH_TMP="$(mktemp -d /tmp/qibai-sherpa-XXXXXX)"
+  if [[ ! -s "$SHERPA_DIR/paraformer.onnx" || ! -s "$SHERPA_DIR/tokens.txt" ]]; then
+    say "下载 sherpa paraformer-zh（tar.bz2 ≈223MB，解包后 onnx ≈232MB）…"
+    if fetch "$SH_TMP/pf.tar.bz2" "$PF_TGZ" "$SHERPA_MIRROR/asr-models/sherpa-onnx-paraformer-zh-2023-09-14.tar.bz2" 2400 \
+       && tar xjf "$SH_TMP/pf.tar.bz2" -C "$SH_TMP"; then
+      if check_sha "$SH_TMP/pf.tar.bz2" "$PF_PKG_SHA" "paraformer 包"; then
+        if check_sha "$SH_TMP/$PF_DIR/model.int8.onnx" "$PF_SHA" "paraformer.onnx" \
+           && check_sha "$SH_TMP/$PF_DIR/tokens.txt" "$TOKENS_SHA" "tokens.txt"; then
+          cp "$SH_TMP/$PF_DIR/model.int8.onnx" "$SHERPA_DIR/paraformer.onnx"
+          cp "$SH_TMP/$PF_DIR/tokens.txt" "$SHERPA_DIR/tokens.txt"
+          say "paraformer.onnx + tokens.txt 就位（$(du -h "$SHERPA_DIR/paraformer.onnx" | cut -f1)）"
+        fi
+      else
+        warn "paraformer 包校验失败，暂不落盘；如需强制使用：QIBAI_SHA_CHECK=0 bash fetch_resources.sh"
+      fi
+    else
+      warn "paraformer 下载/解压失败，可稍后重跑，或手动下载：$PF_TGZ"
+    fi
+  fi
+  if [[ ! -s "$SHERPA_DIR/vad.onnx" ]]; then
+    say "下载 silero VAD（≈0.6MB）…"
+    if fetch "$SH_TMP/vad.onnx" "$VAD_ONNX" "$SHERPA_MIRROR/asr-models/silero_vad.onnx" 300 \
+       && check_sha "$SH_TMP/vad.onnx" "$VAD_SHA" "vad.onnx"; then
+      cp "$SH_TMP/vad.onnx" "$SHERPA_DIR/vad.onnx"; say "vad.onnx 就位"
+    else
+      warn "VAD 下载或校验失败：$VAD_ONNX"
+    fi
+  fi
+  if [[ ! -s "$SHERPA_DIR/punc.onnx" ]]; then
+    say "下载 ct-punc 标点模型（tar.bz2 ≈281MB，可选）…"
+    if fetch "$SH_TMP/punc.tar.bz2" "$PUNC_TGZ" "$SHERPA_MIRROR/punctuation-models/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12.tar.bz2" 2400 \
+       && tar xjf "$SH_TMP/punc.tar.bz2" -C "$SH_TMP"; then
+      if check_sha "$SH_TMP/$PUNC_DIR/model.onnx" "$PUNC_SHA" "punc.onnx"; then
+        cp "$SH_TMP/$PUNC_DIR/model.onnx" "$SHERPA_DIR/punc.onnx"; say "punc.onnx 就位（可选，用于标点恢复）"
+      else
+        warn "标点模型校验失败，已跳过（识别仍可用，只是无标点）"
+      fi
+    else
+      warn "标点模型下载失败，已跳过（识别仍可用，只是无标点）"
+    fi
+  fi
+  rm -rf "$SH_TMP"
+  if [[ -s "$SHERPA_DIR/paraformer.onnx" && -s "$SHERPA_DIR/tokens.txt" && -s "$SHERPA_DIR/vad.onnx" ]]; then
+    say "sherpa 模型就绪：$SHERPA_DIR（STT_ENGINE=paraformer 可强制启用，不设则资源齐全时自动优先）"
+  else
+    warn "sherpa 模型未齐全（缺 paraformer.onnx / tokens.txt / vad.onnx 之一），STT 仍可用 whisper"
+  fi
+fi
+# python 运行时（sherpa_stt.py 依赖 sherpa-onnx wheel，onnxruntime 随包）
+if [[ -s "$SHERPA_DIR/paraformer.onnx" ]]; then
+  if python3 -c "import sherpa_onnx" >/dev/null 2>&1; then
+    say "python sherpa-onnx 运行时可用 ✓"
+  else
+    warn "缺少 python 运行时 sherpa-onnx（paraformer 后端需要）："
+    warn "  pip3 install sherpa-onnx    # 或加 -i https://mirrors.aliyun.com/pypi/simple/"
+  fi
+fi
+
 # ---------- 4.（可选）piper 中文离线模型 ----------
 if [[ ! -f "$MODEL_DIR/zh_CN-huayan-medium.onnx" ]]; then
   warn "可选：本地离线 TTS（piper）模型未安装。如需离线女声："
@@ -193,6 +297,12 @@ missing=""
 [[ -x "$BIN_DIR/whisper-cli" ]]   || missing="$missing whisper-cli"
 [[ -f "$MODEL_DIR/$pick_model" ]] || missing="$missing $pick_model"
 espeak_bundle_ok || missing="$missing tts-espeak(espeak-ng 语音包)"
+# sherpa 是可选后端：只报状态，不算缺失，避免默认流程被它拖住
+if [[ -s "$SHERPA_DIR/paraformer.onnx" && -s "$SHERPA_DIR/tokens.txt" && -s "$SHERPA_DIR/vad.onnx" ]]; then
+  say "可选后端 sherpa 模型齐全 ✓（不设 STT_ENGINE 时资源齐全会自动优先 paraformer）"
+else
+  warn "可选后端 sherpa 模型未齐全（不影响 whisper）；需要时重跑本脚本，或 QIBAI_SKIP_SHERPA=1 明确跳过"
+fi
 if [[ -n "$missing" ]]; then
   warn "以下资源仍未就位：$missing"
   warn "  · 重跑： bash fetch_resources.sh（已成功的部分会自动跳过）"

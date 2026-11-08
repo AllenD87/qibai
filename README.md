@@ -296,6 +296,7 @@ bash fetch_resources.sh
 - whisper.cpp 二进制 → `src-tauri/whisper-bin/`
 - 中文 STT 模型 → `src-tauri/models/ggml-small.bin`（可用 `QIBAI_WHISPER_MODEL=ggml-base.bin` 换小模型，142 MB）
 - 组装 **espeak-ng 离线语音包** → `src-tauri/tts-espeak/`（Debian 包直接解包，无需 sudo/root；含中英文语音数据，约 26 MB）
+- 可选：**sherpa-onnx 中文 STT** → `src-tauri/models/sherpa/`（paraformer-zh int8 + VAD + 标点，约 514 MB，逐文件 sha256 校验；不想要可 `QIBAI_SKIP_SHERPA=1` 跳过，STT 自动回退 whisper）
 
 资源全部来自上游官方 release / HuggingFace，脚本可重复执行（幂等）。
 

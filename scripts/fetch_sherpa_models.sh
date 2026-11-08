@@ -7,6 +7,8 @@
 #       固定文件名查找（见 qibai-core/src/sherpa_engine.rs）：
 #         paraformer.onnx  tokens.txt  vad.onnx  punc.onnx
 # 用法：工程根运行  bash scripts/fetch_sherpa_models.sh
+# 注意：权威入口已合并为根目录 `fetch_resources.sh`（同一套下载 + sha256 校验 +
+#       镜像回退 + QIBAI_SKIP_SHERPA 开关）。本脚本保留兼容与快速单拉，逻辑较旧、无校验。
 # 可重跑：已存在的文件自动跳过（幂等）。
 # 网络：GitHub 走 gh-proxy.com 前缀（沙盒/内网无 GitHub 直连时）。
 #

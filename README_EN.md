@@ -296,6 +296,7 @@ It downloads:
 - the whisper.cpp binary → `src-tauri/whisper-bin/`
 - the Chinese STT model → `src-tauri/models/ggml-small.bin` (swap to a smaller model with `QIBAI_WHISPER_MODEL=ggml-base.bin`, 142 MB)
 - and assembles the **bundled espeak-ng speech pack** → `src-tauri/tts-espeak/` (unpacked straight from Debian packages, no sudo needed; Chinese + English voice data, ~26 MB)
+- optionally the **sherpa-onnx Chinese STT** models → `src-tauri/models/sherpa/` (paraformer-zh int8 + VAD + punctuation, ~514 MB, per-file sha256 verified; set `QIBAI_SKIP_SHERPA=1` to skip and STT falls back to whisper)
 
 Everything comes from upstream official releases / HuggingFace, and the script is idempotent.
 
