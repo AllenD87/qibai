@@ -216,7 +216,10 @@
      * Legibility audit of the frame just rendered.
      * Returns safe-area violations, text overlaps, and undersized type.
      */
-    audit(margin = 0.06, minSize = 28) {
+    audit(margin = 0.06, minSize = null) {
+      // 28px is the 1080p baseline; scale with the short edge so 720p/540p
+      // previews are judged by proportion, not by absolute pixels.
+      const base = minSize || Math.max(14, 28 * Math.min(this.width, this.height) / 1080);
       const mx = this.width * margin, my = this.height * margin;
       const issues = [];
       const t = this._texts;
@@ -224,12 +227,15 @@
         if (b.x < mx || b.y < my || b.x + b.w > this.width - mx || b.y + b.h > this.height - my) {
           issues.push({ type: 'safe-area', text: b.text, box: [b.x, b.y, b.w, b.h].map(Math.round) });
         }
-        if (b.size < minSize) issues.push({ type: 'tiny-type', text: b.text, size: b.size });
+        if (b.size < base) issues.push({ type: 'tiny-type', text: b.text, size: Math.round(b.size) });
       }
       for (let i = 0; i < t.length; i++) {
         for (let j = i + 1; j < t.length; j++) {
           const a = t[i], b = t[j];
           if (a.group && a.group === b.group) continue; // same line/block: typeset overlap is intentional
+          // Crossfades make one side faint; only judge overlap when both are
+          // stably visible, otherwise every shot transition reads as a defect.
+          if ((a.alpha ?? 1) < 0.55 || (b.alpha ?? 1) < 0.55) continue;
           const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
           const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
           if (ox > 4 && oy > 4) issues.push({ type: 'text-overlap', texts: [a.text, b.text], overlap: [Math.round(ox), Math.round(oy)] });
