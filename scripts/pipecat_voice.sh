@@ -5,7 +5,7 @@
 # 服务：ws://127.0.0.1:8765/v1/realtime（OpenAI Realtime 兼容）
 # 依赖：pip install -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com -r src-tauri/pipecat/requirements.txt（阿里云镜像）
 # 模型：src-tauri/models/sherpa/（paraformer.onnx + tokens.txt + silero_vad.onnx）
-#       首次运行前先跑 scripts/download_sherpa_models.sh 补齐（≈233MB）
+#       首次运行前先跑根目录 fetch_resources.sh 补齐（sherpa 为可选后端，≈514MB）
 # 环境变量：
 #   QIBAI_REALTIME_PORT  默认 8765
 #   QIBAI_LLM_BASE_URL   默认 http://100.92.2.152:8080/v1

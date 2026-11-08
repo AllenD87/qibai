@@ -16,16 +16,16 @@ src-tauri/pipecat/
   tests/          pytest（协议/状态机/ws 冒烟）
   requirements.txt
 scripts/pipecat_voice.sh          启动脚本
-scripts/download_sherpa_models.sh  模型补齐（≈233MB，不进增量包）
+bash fetch_resources.sh             资源补齐（sherpa 模型 ≈514MB，可选后端；不进增量包）
 ```
 
 ## 部署
 ```bash
 pip install -r src-tauri/pipecat/requirements.txt
-bash scripts/download_sherpa_models.sh      # ≈233MB：paraformer.int8 + silero VAD
+bash fetch_resources.sh                     # 首次补齐资源；已有则跳过（sherpa 可选）
 bash scripts/pipecat_voice.sh              # ws://127.0.0.1:8765/v1/realtime
 ```
-环境变量：`QIBAI_REALTIME_PORT`(8765) / `QIBAI_LLM_BASE_URL`(http://100.92.2.152:8080/v1) / `QIBAI_LLM_MODEL`(Qwen3.6-35B-A3B)。
+环境变量：`QIBAI_REALTIME_PORT`(8765) / `QIBAI_LLM_BASE_URL`(你的 OpenAI 兼容端点，如 http://127.0.0.1:8080/v1) / `QIBAI_LLM_MODEL`(Qwen3.6-35B-A3B)。
 
 ## 依赖与模型体积
 | 项 | 体积 |

@@ -1,30 +1,15 @@
 #!/usr/bin/env bash
 # ============================================================
-# 元气小小 · sherpa-onnx 模型补齐脚本（≈233MB，不进增量包）
-#   paraformer-zh int8  主识别模型
-#   silero VAD         端点检测
-# 标点模型 ct-punc（≈281MB）为可选：冒烟/联调不需要，需要时手补。
-# 网络：GitHub 走 gh-proxy.com 前缀。幂等：已存在即跳过。
-# 注意：权威入口是根目录 `fetch_resources.sh`（含 sha256 校验与镜像回退），本脚本为旧入口。
+# 兼容入口（已合并）：sherpa-onnx 模型补齐（≈233MB 主模型 + 可选标点）
+# ------------------------------------------------------------
+# 实现已合并到仓库根 `fetch_resources.sh`（sha256 校验 + 镜像回退 + 开关齐全），
+# 本脚本只转发，保留旧路径以兼容 `src-tauri/pipecat/README.md`、`scripts/pipecat_voice.sh`
+# 等历史引用，避免两处逻辑各自漂移。
+#
+# 用法：工程根运行  bash scripts/download_sherpa_models.sh
+#       （补齐全部缺失资源；已存在的自动跳过，幂等）
 # ============================================================
-set -uo pipefail
+set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEST="$ROOT/src-tauri/models/sherpa"
-mkdir -p "$DEST"
-GH="https://gh-proxy.com/https://github.com/k2-fsa/sherpa-onnx/releases/download"
-cd "$DEST"
-
-if [ ! -f silero_vad.onnx ]; then
-  echo "[sherpa] 下载 silero VAD (~0.6MB)"
-  curl -sL -o silero_vad.onnx "$GH/asr-models/silero_vad.onnx"
-fi
-
-if [ ! -f paraformer.onnx ]; then
-  echo "[sherpa] 下载 paraformer-zh int8 (~233MB)"
-  curl -sL -o paraformer.tgz "$GH/asr-models/sherpa-onnx-paraformer-zh-2023-09-14.tar.bz2"
-  tar xjf paraformer.tgz
-  cp sherpa-onnx-paraformer-zh-2023-09-14/model.int8.onnx paraformer.onnx
-  cp sherpa-onnx-paraformer-zh-2023-09-14/tokens.txt tokens.txt
-  rm -rf paraformer.tgz sherpa-onnx-paraformer-zh-2023-09-14
-fi
-echo "[sherpa] 完成：$(du -sh "$DEST" | cut -f1)"
+echo "[download_sherpa_models] 该入口已合并，转发到根目录 fetch_resources.sh（含 sha256 校验与镜像回退）" >&2
+exec bash "$ROOT/fetch_resources.sh" "$@"
