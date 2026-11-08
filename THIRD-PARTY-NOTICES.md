@@ -15,17 +15,17 @@
 
 下列组件由第三方提供，适用其**各自许可**。仓库不打包这些组件的二进制与权重，仅提供获取脚本或运行时调用方式。
 
-> ⚠️ **标【待核实】的条目，公开前请以你实际使用的版本内附 LICENSE 为准**，本表只记录预期的上游许可，不作为法律结论。
+> ✅ 语音链路 4 条与 `sonora` 的许可已按上游 LICENSE / 模型页核对（2026-11）。仍建议公开前复核心版本内附 LICENSE；本表为事实记录，不构成法律结论。
 
 ### 一、语音链路
 
 | 组件 | 版本 / 形态 | 预期许可 | 仓库内是否分发 | 说明 |
 |---|---|---|---|---|
-| **whisper.cpp** | 编译产物 `libwhisper.so.1.9.5`、`whisper-server`、`whisper-cli` | MIT（上游 `ggml-org/whisper.cpp`）【待核实你所用 fork】 | ❌ 由 `fetch_resources.sh` 从官方 release 下载 | 调用方式为独立进程 / 动态库，非源码内联 |
+| **whisper.cpp** | 编译产物 `libwhisper.so.1.9.5`、`whisper-server`、`whisper-cli` | **MIT**（已核对上游 `ggml-org/whisper.cpp` 的 LICENSE 原文） | ❌ 由 `fetch_resources.sh` 从官方 release（tag `b5454`）下载 | 本项目**未改造源码、非自建 fork**，只用官方预编译二进制；以独立进程 / 动态库调用 |
 | **Whisper 模型权重** `ggml-base.bin` / `ggml-small.bin` | 142 MB / ~466 MB | MIT（OpenAI Whisper 权重） | ❌ 脚本从 `hf-mirror.com/ggerganov/whisper.cpp` 下载 | 首次运行必须下载 |
-| **sherpa-onnx / Paraformer** | `paraformer.onnx`（233 MB） | Apache-2.0【待核实】 | ❌ 不入库 | 备用中文流式识别引擎 |
+| **sherpa-onnx / Paraformer** | `paraformer.onnx`（233 MB）+ `tokens.txt`、`vad.onnx`、`punc.onnx` | **Apache-2.0**（已核对 `k2-fsa/sherpa-onnx` 的 LICENSE；模型页标注 `license: apache-2.0`） | ❌ 不入库，由 `fetch_resources.sh` 下载并逐文件 sha256 校验 | 备用中文离线识别引擎（paraformer-zh int8） |
 | **piper** 引擎 | 可执行程序 | MIT | ❌ | 本地离线 TTS |
-| **piper 音色** `zh_CN-huayan-medium.onnx` | 61 MB | **各音色独立许可，部分限非商用**【必须核实】 | ❌ 不入库，建议用户自行从 `rhasspy/piper-voices` 下载 | **若该音色限非商用，不得随本项目安装包分发** |
+| **piper 音色** `zh_CN-huayan-medium.onnx` | 61 MB | 仓库整体 MIT；但该音色 MODEL_CARD 记载训练数据集 `PlayVoice/HuaYan_TTS` 许可为 **Unknown** | ❌ 不入库、不随安装包分发；用户自行从 `rhasspy/piper-voices` 下载并自判用途 | **结论：不做商用授权保证**；本项目默认 TTS 走 espeak-ng（捆绑）+ edge-tts（在线），piper 仅作可选本地女声 |
 | **bge-small-zh-v1.5**（向量模型） | `model.onnx` 91 MB + `vocab.txt` | MIT（BAAI，上游 `BAAI/bge-small-zh-v1.5`） | ❌ 不进安装包、不入库 | 知识库语义检索用；用户在应用内按需下载（Release `kb-model-v1` 仅做镜像分发，权重版权归原作者） |
 | **espeak-ng** | 二进制 + `espeak-ng-data` 语音数据（约 26 MB，解包到 `src-tauri/tts-espeak/`） | **GPL-3.0** | ❌ 不入库，`fetch_resources.sh` 从 Debian 官方包（`deb.debian.org`，1.52.0）解包组装，无需 sudo | 以独立可执行程序调用；若你选择把该二进制一起分发，须同时提供 GPL-3.0 全文与源码获取地址（https://github.com/espeak-ng/espeak-ng） |
 
@@ -38,7 +38,7 @@
 | `tokio` / `tokio-tungstenite` / `futures-util` | 异步运行时、WebSocket | MIT |
 | `reqwest`（`rustls-tls`） | HTTP 客户端 | MIT / Apache-2.0 |
 | `cpal` / `rodio` / `rubato` | 音频采集、播放、重采样 | MIT / Apache-2.0 |
-| `sonora` | WebRTC AEC3 纯 Rust 移植（回声消除） | 【待核实】 |
+| `sonora` | WebRTC AEC3 纯 Rust 移植（回声消除） | **BSD-3-Clause**（crates.io `sonora 0.3.0`） |
 | `tract-onnx` | 纯 Rust ONNX 推理（本地向量模型，免 C/C++ 依赖） | MIT / Apache-2.0 |
 | `aes-gcm` / `pbkdf2` / `sha2` / `rand` / `zeroize` | 本地保险箱加密 | MIT / Apache-2.0 |
 | `keyring` | 系统钥匙串 | MIT / Apache-2.0 |
@@ -79,17 +79,17 @@ This repository's own source is released under **MIT** (see `LICENSE`, which con
 
 The components below are provided by third parties and follow **their own licences**. This repository does not bundle their binaries or weights — it only provides fetch scripts or a runtime calling convention.
 
-> ⚠️ **For items marked [TO VERIFY], before publishing, defer to the LICENSE bundled with the version you actually use.** This table records the expected upstream licence only and is not a legal conclusion.
+> ✅ Licences for the four speech-pipeline items and `sonora` were checked against upstream LICENSE files / model pages (Nov 2026). Re-check the bundled LICENSE of the exact version before publishing; this table is a factual record, not a legal conclusion.
 
 ### 1. Speech pipeline
 
 | Component | Version / form | Expected licence | Distributed in repo | Notes |
 |---|---|---|---|---|
-| **whisper.cpp** | Build artefacts `libwhisper.so.1.9.5`, `whisper-server`, `whisper-cli` | MIT (upstream `ggml-org/whisper.cpp`) [TO VERIFY for the fork you use] | ❌ downloaded from the official release by `fetch_resources.sh` | Called as a separate process / shared library, not inlined source |
+| **whisper.cpp** | Build artefacts `libwhisper.so.1.9.5`, `whisper-server`, `whisper-cli` | **MIT** (upstream `ggml-org/whisper.cpp` LICENSE checked) | ❌ downloaded by `fetch_resources.sh` from the official release (tag `b5454`) | **No source fork or modification** — official prebuilt binaries only, called as a separate process / shared library |
 | **Whisper model weights** `ggml-base.bin` / `ggml-small.bin` | 142 MB / ~466 MB | MIT (OpenAI Whisper weights) | ❌ downloaded by script from `hf-mirror.com/ggerganov/whisper.cpp` | Required on first run |
-| **sherpa-onnx / Paraformer** | `paraformer.onnx` (233 MB) | Apache-2.0 [TO VERIFY] | ❌ not in repo | Alternative Chinese streaming recogniser |
+| **sherpa-onnx / Paraformer** | `paraformer.onnx` (233 MB) + `tokens.txt`, `vad.onnx`, `punc.onnx` | **Apache-2.0** (`k2-fsa/sherpa-onnx` LICENSE checked; model card states `license: apache-2.0`) | ❌ not in repo; downloaded and sha256-verified by `fetch_resources.sh` | Alternative Chinese offline recogniser (paraformer-zh int8) |
 | **piper** engine | Executable | MIT | ❌ | Local offline TTS |
-| **piper voice** `zh_CN-huayan-medium.onnx` | 61 MB | **Each voice has its own licence; some are non-commercial only** [MUST VERIFY] | ❌ not in repo; users should download it themselves from `rhasspy/piper-voices` | **If this voice is non-commercial only, it must not ship inside an installer for this project** |
+| **piper voice** `zh_CN-huayan-medium.onnx` | 61 MB | Repo as a whole is MIT; this voice's MODEL_CARD lists its training dataset `PlayVoice/HuaYan_TTS` as **Unknown** | ❌ not in repo, not shipped in installers; users download from `rhasspy/piper-voices` and judge their own use | **Conclusion: no commercial clearance is asserted**; default TTS is espeak-ng (bundled) + edge-tts (online); piper is optional |
 | **bge-small-zh-v1.5** (embedding model) | `model.onnx` 91 MB + `vocab.txt` | MIT (BAAI, upstream `BAAI/bge-small-zh-v1.5`) | ❌ not in the installer, not in repo | Used for knowledge-base semantic retrieval; downloaded on demand in-app (the `kb-model-v1` release only mirrors it; copyright stays with the original authors) |
 | **espeak-ng** | Binary + `espeak-ng-data` voice data (~26 MB, unpacked into `src-tauri/tts-espeak/`) | **GPL-3.0** | ❌ not in repo; `fetch_resources.sh` assembles it from official Debian packages (`deb.debian.org`, 1.52.0) without sudo | Called as a separate executable; if you choose to ship that binary too, include the full GPL-3.0 text and the source URL (https://github.com/espeak-ng/espeak-ng) |
 
@@ -102,7 +102,7 @@ The components below are provided by third parties and follow **their own licenc
 | `tokio` / `tokio-tungstenite` / `futures-util` | Async runtime, WebSocket | MIT |
 | `reqwest` (`rustls-tls`) | HTTP client | MIT / Apache-2.0 |
 | `cpal` / `rodio` / `rubato` | Audio capture, playback, resampling | MIT / Apache-2.0 |
-| `sonora` | Pure-Rust port of WebRTC AEC3 (echo cancellation) | [TO VERIFY] |
+| `sonora` | Pure-Rust port of WebRTC AEC3 (echo cancellation) | **BSD-3-Clause** (crates.io `sonora 0.3.0`) |
 | `tract-onnx` | Pure-Rust ONNX inference (local embedding model, no C/C++ dependency) | MIT / Apache-2.0 |
 | `aes-gcm` / `pbkdf2` / `sha2` / `rand` / `zeroize` | Local vault encryption | MIT / Apache-2.0 |
 | `keyring` | System keychain | MIT / Apache-2.0 |
