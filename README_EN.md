@@ -368,7 +368,7 @@ Found a security issue? Use **Security → Private vulnerability reporting** —
 
 ## Interface gallery: GIFs and screenshots
 
-**Video**: [Qibai demo on WeChat Channels](https://weixin.qq.com/sph/AZdiIWOvIU) (opens inside WeChat)
+**Video**: [30s feature demo (1080p MP4, 29.8s)](https://github.com/AllenD87/qibai/releases/download/v0.1.0/qibai-30s-demo-1080p.mp4) · [full 4m25s cut on WeChat Channels](https://weixin.qq.com/sph/AZdiIWOvIU) (opens inside WeChat)
 
 ### GIF 1 · Pet window: bubble chat → expression performance → live character swap
 

@@ -368,7 +368,7 @@ cargo tauri build
 
 ## 界面实录：动图与截图
 
-**视频介绍**：[元气小小 · 视频号演示](https://weixin.qq.com/sph/AZdiIWOvIU)（微信视频号，需在微信内打开）
+**视频介绍**：[30 秒功能演示（1080p MP4，29.8s）](https://github.com/AllenD87/qibai/releases/download/v0.1.0/qibai-30s-demo-1080p.mp4) · [视频号完整版（4 分 25 秒）](https://weixin.qq.com/sph/AZdiIWOvIU)（后者需在微信内打开）
 
 ### 动图 1 · 桌宠窗：气泡对话 → 表情演出 → 热换角色
 
