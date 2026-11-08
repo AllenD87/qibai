@@ -766,6 +766,7 @@ pub async fn run_agent_loop(
                     // 假完成闸门
                     if let Some(fixed) = false_completion_guard(&parsed.reply, tools_ok) {
                         parsed.reply = fixed;
+                        parsed.false_completion = true;
                     }
                     eprintln!("[qibai] llm 解析回复前40={}", parsed.reply.chars().take(40).collect::<String>());
                     return Ok((parsed, last_skill, executions));
@@ -775,6 +776,7 @@ pub async fn run_agent_loop(
                     .map_err(|e| LlmError::Api(e.to_string()))?;
                 if let Some(fixed) = false_completion_guard(&parsed.reply, tools_ok) {
                     parsed.reply = fixed;
+                    parsed.false_completion = true;
                 }
                 eprintln!("[qibai] llm 解析回复前40={}", parsed.reply.chars().take(40).collect::<String>());
                 return Ok((parsed, last_skill, executions));
@@ -783,6 +785,7 @@ pub async fn run_agent_loop(
                 .map_err(|e| LlmError::Api(e.to_string()))?;
             if let Some(fixed) = false_completion_guard(&parsed.reply, tools_ok) {
                 parsed.reply = fixed;
+                parsed.false_completion = true;
             }
             eprintln!("[qibai] llm 解析回复前40={}", parsed.reply.chars().take(40).collect::<String>());
             return Ok((parsed, last_skill, executions));
@@ -826,6 +829,7 @@ pub async fn run_agent_loop(
                             emotion: crate::enums::Emotion::Worried,
                             action: None,
                             ui_cmd: None,
+                            false_completion: false,
                         },
                         last_skill,
                         executions,

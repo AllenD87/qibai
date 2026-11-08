@@ -150,7 +150,7 @@ It is not "a chat window with a new skin", and it is not "an API wrapped in a po
 | Dimension | The usual approach | Qibai |
 |---|---|---|
 | **Architecture** | Business logic inside Tauri commands; change the shell and rewrite everything | A pure-Rust core crate with no GUI dependency — testable and evolvable on its own |
-| **Testing** | Click through it manually | **656 automated tests** in the core library (`cargo test -p qibai-core`) |
+| **Testing** | Click through it manually | **666 automated tests** in the core library (`cargo test -p qibai-core`): 656 pass on a clean checkout, 7 need the local speech bundle / whisper model (not shipped in the repo), 3 are ignored by default |
 | **Voice** | Everything delegated to a cloud API | Local whisper transcription + local TTS fallback; cloud is just an option |
 | **Permissions** | The model does whatever it wants | Off by default + whitelist + **per-action confirmation** for risky steps; out-of-bounds is refused |
 | **Context** | Dump everything into one prompt | Four layers + budget + compaction + snapshots |
@@ -220,7 +220,7 @@ Not nouns on a roadmap — code in this repo that runs and is tested today.
 
 | Direction | What is already done | Why it counts as forward-looking |
 |---|---|---|
-| **Kernel and shell fully separated** | `qibai-core` is pure Rust with zero GUI dependencies; 656 tests run without a graphics environment | Changing shells costs nothing: Tauri today, CLI / server / mobile tomorrow — not one line of business logic changes |
+| **Kernel and shell fully separated** | `qibai-core` is pure Rust with zero GUI dependencies; 656 tests run without a graphics environment (7 more need local speech assets) | Changing shells costs nothing: Tauri today, CLI / server / mobile tomorrow — not one line of business logic changes |
 | **LLM output as "structured performance"** | The model returns a 4-tuple at once: **text / expression / motion / skill**, which the kernel turns into a performance queue and tool calls | Makes "acting convincingly" data that can be composed, replayed and tested, instead of random sprite swaps |
 | **Four-layer context + budget compaction + snapshots** | System / session / retrieval / immediate layering, auto compaction over budget, session state restorable from snapshot | Long conversations never blow the window or lose the setup, and interrupted tasks resume |
 | **Local voice stack + barge-in** | Local whisper transcription, sherpa VAD sentence splitting, Rust-ported AEC3 echo cancellation | You can interrupt while it speaks; audio stays on the machine and needs no cloud speech API |

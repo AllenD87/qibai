@@ -197,6 +197,8 @@ pub struct ParsedReply {
     pub action: Option<Action>,
     /// LLM 附带的功能调度指令（原始 JSON，执行端做白名单校验）。
     pub ui_cmd: Option<serde_json::Value>,
+    /// 假完成护栏是否命中：回复已被改写成「未执行」说明，前端据此挂警示标。
+    pub false_completion: bool,
 }
 
 /// 剥掉可能的 ```json ... ``` 围栏后解析。
@@ -231,6 +233,7 @@ pub fn parse_reply(content: &str) -> Result<ParsedReply, PersonaError> {
                 emotion,
                 action,
                 ui_cmd: raw.ui_cmd,
+                false_completion: false,
             });
         }
     }
@@ -251,6 +254,7 @@ pub fn parse_reply(content: &str) -> Result<ParsedReply, PersonaError> {
                     emotion,
                     action,
                     ui_cmd: raw.ui_cmd,
+                    false_completion: false,
                 });
             }
         }
@@ -264,6 +268,7 @@ pub fn parse_reply(content: &str) -> Result<ParsedReply, PersonaError> {
             emotion: Emotion::default(),
             action: None,
             ui_cmd: None,
+            false_completion: false,
         });
     }
     // 标准 JSON 解析失败或字段缺失 → 全文当回复（fix20 容错延续）
@@ -273,6 +278,7 @@ pub fn parse_reply(content: &str) -> Result<ParsedReply, PersonaError> {
         emotion: Emotion::default(),
         action: None,
         ui_cmd: None,
+        false_completion: false,
     })
 }
 

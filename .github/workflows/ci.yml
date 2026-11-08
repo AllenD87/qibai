@@ -3,7 +3,7 @@
 # -----------------------------------------------------------------------------
 # 触发条件：push 到任意分支 / 任意 pull_request
 # 矩阵：    ubuntu-latest / windows-latest / macos-latest
-# 职责：    跑 qibai-core 单测（保持 656 条基线只增不减）+ server 单测
+# 职责：    跑 qibai-core 单测（保持 666 条基线只增不减）+ server 单测
 #           不产物、不签名、不发布、不依赖任何 secret
 # 备注：    ubuntu-latest 当前为 24.04，WebKitGTK 4.1 包名 libwebkit2gtk-4.1-dev
 #           已对照 Tauri 2 官方前置依赖核实。
@@ -69,7 +69,8 @@ jobs:
       # 5) qibai-core 单测（可移植子集）
       #    这里刻意跳过一批「依赖真实桌面运行时」的用例：需要本机 espeak/whisper 二进制、
       #    真实 $HOME 目录、可并发的外部子进程、系统级白名单路径等，GitHub Runner 上没有这些前提。
-      #    它们在开发机上仍由 cargo test 全量执行（本地实测 648 条 / 646 通过）。
+      #    全量 `cargo test` 本机实测 666 条：656 通过 / 7 条因缺本地语音包·模型失败 / 3 条 ignored；
+      #    CI 这份可移植子集实测 530 条全绿。
       #    跳过项按模块前缀 + 单条精确匹配，新增桌面耦合用例时补一行即可。
       - name: qibai-core cargo test (portable subset)
         working-directory: qibai-core

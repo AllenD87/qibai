@@ -420,7 +420,8 @@
       }
       const res = await invokeTimeout(invoke('send_message', { text }), 130000, '大模型');
       const replyText = (res && res.reply) || '（…）';
-      appendBubble('assistant', replyText);
+      // v45.15：把 core 的假完成标记透传给气泡——护栏命中时挂「⚠ 未执行 · 声称已完成」小标
+      appendBubble('assistant', replyText, true, (res && res.markers) ? { markers: res.markers } : null);
       // v20：乐观追加后请求一次合并刷新（150ms debounce）——全量渲染以落库为准，
       // 消除「事件先到、乐观回复后补」造成的尾部重复气泡
       requestConversationReload();

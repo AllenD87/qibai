@@ -117,6 +117,9 @@ pub struct SendMessageOutput {
     /// v18.8-fix28f：流式是否已逐段朗读（tauri 层据此决定是否 Rust 端兜底播放）。
     #[serde(skip)]
     pub streamed: bool,
+    /// v45.15：假完成护栏标记。命中时前端气泡挂「⚠ 未执行 · 声称已完成」小标。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub markers: Option<serde_json::Value>,
 }
 
 /// 一次朗读请求（迭代②）：由 `Engine::tts_decide` 决策产出，
@@ -3032,6 +3035,11 @@ pub(crate) fn reset_plan_for_rerun(
                     secret_entry_id: None,
                     speak_text: Some(parsed.reply),
                     streamed,
+                    markers: if parsed.false_completion {
+                        Some(serde_json::json!({"false_completion": true}))
+                    } else {
+                        None
+                    },
                 })
             }
             Err(e) => {
@@ -3185,6 +3193,7 @@ pub(crate) fn reset_plan_for_rerun(
             secret_entry_id,
             speak_text,
             streamed: false,
+            markers: None,
         }))
     }
 
@@ -6778,7 +6787,7 @@ mod v459_task_wiring_tests {
     #[test]
     fn rerun_from_step_resets_that_step_and_after() {
         let mut plan = crate::task::Plan::default();
-        let mut mk = |id: &str, st: crate::task::StepStatus| crate::task::Step {
+        let mk = |id: &str, st: crate::task::StepStatus| crate::task::Step {
             id: id.into(), title: id.into(), status: st, attempts: 2,
             error: Some("boom".into()), ended_at: 123, ..Default::default()
         };
@@ -7076,4 +7085,30 @@ mod save_settings_partial_tests {
         // 待确认项已消费，不残留
         assert!(e.mcp_pending.lock().unwrap().is_empty());
     }
+
+    // v45.15：假完成标记的序列化契约——命中才带 markers，未命中不出现该键。
+    #[test]
+    fn false_completion_markers_serialize_only_when_hit() {
+        let base = || SendMessageOutput {
+            reply: "我没有真正执行这一步".into(),
+            emotion: Emotion::Worried,
+            action: None,
+            skill: None,
+            ui_cmd: None,
+            secret: None,
+            secret_entry_id: None,
+            speak_text: None,
+            streamed: false,
+            markers: Some(serde_json::json!({"false_completion": true})),
+        };
+        let hit = serde_json::to_value(base()).unwrap();
+        assert_eq!(hit["markers"]["false_completion"], serde_json::json!(true),
+            "命中时前端要靠 markers.false_completion 挂警示标");
+
+        let mut miss = base();
+        miss.markers = None;
+        let v = serde_json::to_value(&miss).unwrap();
+        assert!(v.get("markers").is_none(), "未命中不应序列化 markers 键");
+    }
+
 }
