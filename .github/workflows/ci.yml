@@ -34,7 +34,7 @@ jobs:
     steps:
       # 1) 拉取源码
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # 2) Node 22（server/package.json engines 要求 >=22.5）
       - name: Setup Node.js
