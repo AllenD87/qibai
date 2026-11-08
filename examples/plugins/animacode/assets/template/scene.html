@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>scene</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #stage { display: block; }
+  /* render mode keeps the canvas at its native pixel size (fast, pixel-exact);
+     preview mode scales it to fit the window */
+  #hud { position: fixed; left: 12px; bottom: 10px; font: 12px monospace; color: #9aa; opacity: .7;
+         pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="hud"></div>
+
+<script src="./animacore.js"></script>
+<script>
+/* ------------------------------------------------------------------
+ * SCENE CONTRACT (do not remove)
+ *   window.__ready = true   once fonts/assets are loaded
+ *   window.__ANIMA.seek(t)  render time t (seconds) deterministically
+ *   window.__ANIMA.audit()  legibility audit of the last rendered frame
+ * Keep every visual a pure function of t. No Date, no Math.random (use AC.rng).
+ * ------------------------------------------------------------------ */
+
+const W = 1920, H = 1080, FPS = 30, DURATION = 8;
+
+const scene = new AC.Scene({
+  canvas: document.getElementById('stage'),
+  width: W, height: H, fps: FPS, duration: DURATION,
+  background: '#fdf6ef',
+  transparent: false,           // true -> renderer can export alpha (PNG sequence / WebM)
+});
+
+/* =====================  LAYERS  ===================== */
+// Each layer: (ctx, t, scene) => { ... }. Order = paint order.
+
+scene.add((ctx, t) => {
+  // background gradient, slow drift so nothing feels frozen
+  const g = ctx.createLinearGradient(0, 0, W, H);
+  const shift = AC.tween(t, 0, DURATION, 'inOutSine');
+  g.addColorStop(0, `hsl(${18 + shift * 8}, 90%, ${96 - shift * 3}%)`);
+  g.addColorStop(1, `hsl(${350 + shift * 10}, 85%, ${93 - shift * 2}%)`);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+}, 'bg');
+
+scene.add((ctx, t) => {
+  // headline: per-character rise with stagger, squash on landing
+  const text = '程序化动画';
+  const size = 128;
+  ctx.font = `700 ${size}px ${AC.FONT_STACK}`;
+  const widths = [...text].map(ch => ctx.measureText(ch).width);
+  const total = widths.reduce((a, b) => a + b, 0);
+  let x = (W - total) / 2;
+  [...text].forEach((ch, i) => {
+    const d = 0.2 + AC.stagger(i, text.length, 0.07, 'center');
+    const p = AC.spring(t, d, { stiffness: 150, damping: 14 });
+    const y = 520 - 90 * (1 - p);
+    const sq = 1 + 0.12 * Math.max(0, 1 - Math.abs(p - 1) * 6) * Math.sin((t - d) * 14);
+    ctx.save();
+    ctx.translate(x + widths[i] / 2, y);
+    ctx.scale(1 / sq, sq);
+    ctx.globalAlpha = Math.min(1, p * 2);
+    scene.text(ch, 0, 0, { size, weight: 700, align: 'center', baseline: 'middle', color: '#1d1a18', group: 'title' });
+    ctx.restore();
+    x += widths[i];
+  });
+}, 'title');
+
+scene.add((ctx, t) => {
+  // underline wipe with follow-through
+  const p = AC.tween(t, 0.9, 0.7, 'outQuart');
+  const w = 520 * p;
+  if (w < 8) return;                       // 还没展开就别画，否则开场留一条残线
+  const s = AC.spring(t, 1.5, { stiffness: 120, damping: 12 });
+  ctx.fillStyle = '#ff5a3c';
+  AC.roundRect(ctx, (W - 520) / 2, 585 + (s - 1) * 26, w, 14, 7);
+  ctx.fill();
+}, 'underline');
+
+scene.add((ctx, t) => {
+  AC.grain(ctx, W, H, Math.round(t * FPS), { alpha: 0.05 });
+}, 'grain');
+
+/* ==================  WINDOW BRIDGE  ================== */
+window.__ANIMA = {
+  width: W, height: H, fps: FPS, duration: DURATION,
+  seek(t) { scene.render(t); },
+  audit() { return scene.audit(); },
+  scene,
+};
+
+/* ==================  PREVIEW PLAYER  ================== */
+const isRender = location.search.includes('render=1');
+const hud = document.getElementById('hud');
+if (!isRender) {
+  const stage = document.getElementById('stage');
+  stage.style.width = '100%'; stage.style.height = '100%'; stage.style.objectFit = 'contain';
+  let playing = true, t = 0, last = performance.now();
+  const loop = now => {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (playing) { t = (t + dt) % DURATION; }
+    scene.render(t);
+    hud.textContent = `${t.toFixed(2)}s / ${DURATION}s   [space] play·pause  [←/→] step`;
+    requestAnimationFrame(loop);
+  };
+  addEventListener('keydown', e => {
+    if (e.code === 'Space') { playing = !playing; e.preventDefault(); }
+    if (e.code === 'ArrowLeft') { playing = false; t = Math.max(0, t - 1 / FPS); }
+    if (e.code === 'ArrowRight') { playing = false; t = Math.min(DURATION, t + 1 / FPS); }
+  });
+  requestAnimationFrame(loop);
+}
+
+/* ready only after webfonts settle, so the first frame matches the last */
+(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => {
+  scene.render(0);
+  window.__ready = true;
+});
+</script>
+</body>
+</html>

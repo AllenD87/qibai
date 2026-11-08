@@ -1,0 +1,183 @@
+{
+ "title": "starter-spec",
+ "fps": 30,
+ "duration": 15,
+ "theme": {
+  "bg": "#0B0D12",
+  "ink": "#F2F0EA",
+  "muted": "#8C93A0",
+  "accent": "#FF5A3C",
+  "accent2": "#2FA38F",
+  "grain": 0.045,
+  "vignette": 0.32
+ },
+ "formats": [
+  {
+   "id": "916",
+   "width": 1080,
+   "height": 1920
+  },
+  {
+   "id": "169",
+   "width": 1920,
+   "height": 1080
+  }
+ ],
+ "shots": [
+  {
+   "id": "s1",
+   "block": "title",
+   "t0": 0,
+   "t1": 3.0,
+   "in": {
+    "type": "rise",
+    "dur": 0.7
+   },
+   "out": {
+    "type": "fade",
+    "dur": 0.35
+   },
+   "data": {
+    "kicker": "ANIMACODE · 02",
+    "headline": "一帧一百毫秒",
+    "sub": "程序化动画的成本账",
+    "meta": "15 SEC · 30 FPS · ZERO DEPENDENCY"
+   }
+  },
+  {
+   "id": "s2",
+   "block": "stat",
+   "t0": 2.85,
+   "t1": 6.2,
+   "in": {
+    "type": "scale",
+    "dur": 0.6
+   },
+   "out": {
+    "type": "fade",
+    "dur": 0.35
+   },
+   "data": {
+    "value": 100,
+    "suffix": "ms",
+    "label": "1080p 单帧渲染耗时",
+    "note": "同一台云主机 · 300 帧共 30 秒"
+   }
+  },
+  {
+   "id": "s3",
+   "block": "bars",
+   "t0": 6.0,
+   "t1": 9.6,
+   "in": {
+    "type": "rise",
+    "dur": 0.6
+   },
+   "out": {
+    "type": "fade",
+    "dur": 0.35
+   },
+   "data": {
+    "title": "三种做法的代价",
+    "unit": "ms",
+    "items": [
+     {
+      "label": "CSS 拉伸画布",
+      "value": 918
+     },
+     {
+      "label": "PNG 序列",
+      "value": 737
+     },
+     {
+      "label": "JPEG q96",
+      "value": 100
+     }
+    ]
+   }
+  },
+  {
+   "id": "s4",
+   "block": "process",
+   "t0": 9.4,
+   "t1": 12.4,
+   "in": {
+    "type": "maskUp",
+    "dur": 0.7
+   },
+   "out": {
+    "type": "fade",
+    "dur": 0.35
+   },
+   "data": {
+    "title": "技能的四步闭环",
+    "steps": [
+     "写 spec",
+     "渲帧自检",
+     "质检门禁",
+     "合成交付"
+    ]
+   }
+  },
+  {
+   "id": "s5",
+   "block": "endcard",
+   "t0": 12.2,
+   "t1": 15.0,
+   "in": {
+    "type": "fade",
+    "dur": 0.6
+   },
+   "out": {
+    "type": "fade",
+    "dur": 0.2
+   },
+   "data": {
+    "brand": "ANIMACODE",
+    "tagline": "代码即时间轴 · 质量可验证"
+   }
+  }
+ ],
+ "captions": [
+  {
+   "t0": 0.7,
+   "t1": 2.6,
+   "text": "动画的产能，卡在一帧的成本上"
+  },
+  {
+   "t0": 3.1,
+   "t1": 4.5,
+   "text": "1080p 单帧，一百毫秒"
+  },
+  {
+   "t0": 4.6,
+   "t1": 5.9,
+   "text": "300 帧，半分钟渲完"
+  },
+  {
+   "t0": 6.3,
+   "t1": 7.6,
+   "text": "拉伸画布：九百一十八毫秒"
+  },
+  {
+   "t0": 7.7,
+   "t1": 9.0,
+   "text": "PNG 序列：七百三十七毫秒"
+  },
+  {
+   "t0": 9.5,
+   "t1": 10.9,
+   "text": "四步闭环，每步都能自证"
+  },
+  {
+   "t0": 11.0,
+   "t1": 12.2,
+   "text": "写 · 渲 · 检 · 合"
+  },
+  {
+   "t0": 12.6,
+   "t1": 14.2,
+   "text": "代码即时间轴"
+  }
+ ]
+}
