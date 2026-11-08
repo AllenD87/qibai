@@ -191,7 +191,11 @@ pub fn echo_gate_reset() {
 /// 解码失败静默（参考能量缺失只会多漏一点回声，不崩链路）。
 pub fn echo_gate_note_wav_bytes(bytes: &[u8]) {
     use rodio::Source as _;
-    let cursor = std::io::Cursor::new(Vec::from(bytes));
+    // v45.15：espeak-ng --stdout 的 RIFF/data 长度是 ~2GB 占位值，裸解码会无限读——
+    // 与 aec 参考环同款归一化，否则捆绑引擎一发声就卡死播放线程。
+    let mut owned = Vec::from(bytes);
+    crate::aec::normalize_wav_sizes(&mut owned);
+    let cursor = std::io::Cursor::new(owned);
     let Ok(decoder) = rodio::Decoder::new(std::io::BufReader::new(cursor)) else {
         return;
     };
@@ -723,14 +727,18 @@ pub fn play_audio_bytes(bytes: &[u8], engine: &str) -> Result<u64, String> {
     // 先解码拿时长（失败即不投递），实际播放交给音频线程。
     use std::io::BufReader;
     use rodio::Source as _;
-    let cursor = std::io::Cursor::new(Vec::from(bytes));
+    // v45.15：同 echo_gate——espeak-ng --stdout 的 wav 头长度是占位值，必须先归一化再解码，
+    // 否则 total_duration/decode 会一直读到 2GB 边界，播放线程卡死。归一化后的字节同时入队。
+    let mut owned = Vec::from(bytes);
+    crate::aec::normalize_wav_sizes(&mut owned);
+    let cursor = std::io::Cursor::new(owned.clone());
     let duration_ms = rodio::Decoder::new(BufReader::new(cursor))
         .map_err(|e| format!("rodio 解码失败: {e}"))?
         .total_duration()
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     let tx = queue_tx().ok_or_else(|| "音频输出队列未就绪".to_string())?;
-    tx.send(Job::Play(Vec::from(bytes), engine.to_string()))
+    tx.send(Job::Play(owned, engine.to_string()))
         .map_err(|e| format!("投递播放失败: {e}"))?;
     Ok(duration_ms)
 }
@@ -3029,6 +3037,47 @@ mod audio_device_tests {
         set_audio_output("dev-A");
         assert_eq!(current_audio_output(), "dev-A");
         set_audio_output("default");
+    }
+}
+
+#[cfg(test)]
+mod wav_size_tests {
+    use super::*;
+
+    /// espeak-ng `--stdout` 产出的 WAV：RIFF 与 data 长度写的是 ~2GB 占位值，实际只有几百 KB。
+    /// 修复前 `echo_gate_note_wav_bytes` 裸解码会按声明长度一直读 → 播放线程卡死。
+    fn placeholder_len_wav(samples: usize) -> Vec<u8> {
+        let mut w = Vec::new();
+        w.extend_from_slice(b"RIFF");
+        w.extend_from_slice(&0x7FFF_FFF0u32.to_le_bytes());
+        w.extend_from_slice(b"WAVE");
+        w.extend_from_slice(b"fmt ");
+        w.extend_from_slice(&16u32.to_le_bytes());
+        w.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        w.extend_from_slice(&1u16.to_le_bytes()); // 单声道
+        w.extend_from_slice(&16_000u32.to_le_bytes());
+        w.extend_from_slice(&32_000u32.to_le_bytes());
+        w.extend_from_slice(&2u16.to_le_bytes());
+        w.extend_from_slice(&16u16.to_le_bytes());
+        w.extend_from_slice(b"data");
+        w.extend_from_slice(&0x7FFF_FFF0u32.to_le_bytes()); // 占位长度，远大于真实数据
+        for i in 0..samples {
+            let v = ((i % 64) as i16 - 32) * 100;
+            w.extend_from_slice(&v.to_le_bytes());
+        }
+        w
+    }
+
+    #[test]
+    fn echo_gate_note_survives_placeholder_wav_length() {
+        let wav = placeholder_len_wav(4800); // 0.3s @16k 单声道
+        let t0 = std::time::Instant::now();
+        echo_gate_note_wav_bytes(&wav);
+        assert!(
+            t0.elapsed() < std::time::Duration::from_secs(5),
+            "占位长度 WAV 触发无限解码（耗时 {:?}）",
+            t0.elapsed()
+        );
     }
 }
 

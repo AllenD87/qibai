@@ -150,7 +150,7 @@
 | 维度 | 常见做法 | 元气小小 |
 |---|---|---|
 | **架构** | 业务逻辑写在 Tauri command 里，换个壳就得重写 | 纯 Rust 核心 crate，无 GUI 依赖，可单独测试、单独演进 |
-| **测试** | 手动点一遍 | 核心库 **666 个自动化测试**（`cargo test -p qibai-core`）：656 个在干净环境直接通过，7 个需本地语音包/whisper 模型（仓库不分发），3 个默认 ignored |
+| **测试** | 手动点一遍 | 核心库 **668 个自动化测试**（`cargo test -p qibai-core`）：跑 `bash fetch_resources.sh` 补齐本地语音包与 whisper 模型后 **665 通过 + 3 ignored 全绿**；未补齐时 7 条语音相关用例会因缺资产报错（环境性，非代码缺陷） |
 | **语音** | 全丢给云端 API | 本地 whisper 转写 + 本地 TTS 兜底，云端只是可选项 |
 | **权限** | 模型想干什么就干什么 | 默认关 + 白名单 + 危险步**逐次确认**，越界直接拒绝 |
 | **上下文** | 全塞进一个 prompt | 四层分层 + 预算 + 压缩 + 快照 |
@@ -220,7 +220,7 @@ flowchart TB
 
 | 方向 | 已经做到什么 | 为什么算前瞻 |
 |---|---|---|
-| **内核与外壳彻底分离** | `qibai-core` 纯 Rust、零 GUI 依赖，656 个测试不需要图形环境即可跑完（另有 7 个依赖本地语音资源） | 换壳不重写：今天接 Tauri，明天接 CLI / 服务端 / 移动端，业务逻辑一行不用改 |
+| **内核与外壳彻底分离** | `qibai-core` 纯 Rust、零 GUI 依赖，665 个测试不需要图形环境即可跑完（另 3 个 ignored；语音相关 7 条需本地语音包/模型，脚本一键补齐） | 换壳不重写：今天接 Tauri，明天接 CLI / 服务端 / 移动端，业务逻辑一行不用改 |
 | **LLM 输出「结构化演出」** | 模型一次返回四元组：**正文 / 表情 / 动作 / 技能**，由内核翻译成演出队列与工具调用 | 让"演得像"变成可编排、可重放、可测试的数据，而不是随机贴图 |
 | **四层上下文 + 预算压缩 + 快照** | 系统 / 会话 / 检索 / 即时分层，超预算自动压缩，会话状态可快照恢复 | 长对话不爆窗口、不丢设定，任务中断还能接着跑 |
 | **本地语音栈 + 双工打断** | whisper 本地转写、sherpa VAD 断句、Rust 移植 AEC3 回声消除 | 它说话时你可以插话；音频不出本机，也不必依赖云端语音 API |
@@ -260,7 +260,7 @@ qibai/
 ├── scripts/                    # 构建、打包、校验脚本
 ├── docs/                       # 架构与契约文档
 ├── .github/workflows/          # CI
-├── fetch_resources.sh          # 一键补齐大资源（模型 / whisper 二进制 / 语音）
+├── fetch_resources.sh          # 一键补齐大资源（whisper 二进制 / STT 模型 / espeak-ng 语音包）
 └── Cargo.toml
 ```
 
@@ -295,7 +295,7 @@ bash fetch_resources.sh
 它会下载：
 - whisper.cpp 二进制 → `src-tauri/whisper-bin/`
 - 中文 STT 模型 → `src-tauri/models/ggml-small.bin`（可用 `QIBAI_WHISPER_MODEL=ggml-base.bin` 换小模型，142 MB）
-- 检查 `espeak-ng` 是否安装（本地 TTS 兜底）
+- 组装 **espeak-ng 离线语音包** → `src-tauri/tts-espeak/`（Debian 包直接解包，无需 sudo/root；含中英文语音数据，约 26 MB）
 
 资源全部来自上游官方 release / HuggingFace，脚本可重复执行（幂等）。
 

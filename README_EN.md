@@ -150,7 +150,7 @@ It is not "a chat window with a new skin", and it is not "an API wrapped in a po
 | Dimension | The usual approach | Qibai |
 |---|---|---|
 | **Architecture** | Business logic inside Tauri commands; change the shell and rewrite everything | A pure-Rust core crate with no GUI dependency — testable and evolvable on its own |
-| **Testing** | Click through it manually | **666 automated tests** in the core library (`cargo test -p qibai-core`): 656 pass on a clean checkout, 7 need the local speech bundle / whisper model (not shipped in the repo), 3 are ignored by default |
+| **Testing** | Click through it manually | **668 automated tests** in the core library (`cargo test -p qibai-core`): after `bash fetch_resources.sh` fills in the local speech bundle and whisper model, **665 pass + 3 ignored, fully green**; without those assets 7 speech-related cases fail for environmental reasons, not code defects |
 | **Voice** | Everything delegated to a cloud API | Local whisper transcription + local TTS fallback; cloud is just an option |
 | **Permissions** | The model does whatever it wants | Off by default + whitelist + **per-action confirmation** for risky steps; out-of-bounds is refused |
 | **Context** | Dump everything into one prompt | Four layers + budget + compaction + snapshots |
@@ -220,7 +220,7 @@ Not nouns on a roadmap — code in this repo that runs and is tested today.
 
 | Direction | What is already done | Why it counts as forward-looking |
 |---|---|---|
-| **Kernel and shell fully separated** | `qibai-core` is pure Rust with zero GUI dependencies; 656 tests run without a graphics environment (7 more need local speech assets) | Changing shells costs nothing: Tauri today, CLI / server / mobile tomorrow — not one line of business logic changes |
+| **Kernel and shell fully separated** | `qibai-core` is pure Rust with zero GUI dependencies; 665 tests run without a graphics environment (3 ignored; 7 speech cases need the local speech bundle/model, fetched by the script) | Changing shells costs nothing: Tauri today, CLI / server / mobile tomorrow — not one line of business logic changes |
 | **LLM output as "structured performance"** | The model returns a 4-tuple at once: **text / expression / motion / skill**, which the kernel turns into a performance queue and tool calls | Makes "acting convincingly" data that can be composed, replayed and tested, instead of random sprite swaps |
 | **Four-layer context + budget compaction + snapshots** | System / session / retrieval / immediate layering, auto compaction over budget, session state restorable from snapshot | Long conversations never blow the window or lose the setup, and interrupted tasks resume |
 | **Local voice stack + barge-in** | Local whisper transcription, sherpa VAD sentence splitting, Rust-ported AEC3 echo cancellation | You can interrupt while it speaks; audio stays on the machine and needs no cloud speech API |
@@ -260,7 +260,7 @@ qibai/
 ├── scripts/                    # build, package, verification scripts
 ├── docs/                       # architecture and contract documents
 ├── .github/workflows/          # CI
-├── fetch_resources.sh          # one-shot fetch of large resources (models / whisper binary / speech)
+├── fetch_resources.sh          # one-shot fetch of large resources (whisper binary / STT model / espeak-ng speech pack)
 └── Cargo.toml
 ```
 
@@ -295,7 +295,7 @@ bash fetch_resources.sh
 It downloads:
 - the whisper.cpp binary → `src-tauri/whisper-bin/`
 - the Chinese STT model → `src-tauri/models/ggml-small.bin` (swap to a smaller model with `QIBAI_WHISPER_MODEL=ggml-base.bin`, 142 MB)
-- and checks whether `espeak-ng` is installed (local TTS fallback)
+- and assembles the **bundled espeak-ng speech pack** → `src-tauri/tts-espeak/` (unpacked straight from Debian packages, no sudo needed; Chinese + English voice data, ~26 MB)
 
 Everything comes from upstream official releases / HuggingFace, and the script is idempotent.
 

@@ -6883,12 +6883,16 @@ mod v459_task_wiring_tests {
         }
         e.task_plan(&id, steps).unwrap();
         e.task_confirm_plan(&id).unwrap();
-        e.task_start(&id).unwrap();
-        // 模拟崩溃：把 current_step 设为 next_pending_index（=2）
+        // v45.15：这里不调 task_start——它会拉起后台执行线程，用 NullProvider 立刻报错并回写
+        // 任务（current_step 被重置为 0），与本用例「手工模拟崩溃现场」的写入互相覆盖，
+        // 导致全量跑时随机失败。改为手工走同一条 Resume 迁移（不加线程），语义等价且确定。
         {
             let store = e.task_store().unwrap().clone();
             let mut t = store.require(&id).unwrap();
-            t.current_step = 2;
+            if t.status != crate::task::TaskStatus::Running {
+                crate::task::transition(&mut t, crate::task::TaskEvent::Resume, &crate::task::NoopHook).unwrap();
+            }
+            t.current_step = 2; // 模拟崩溃：停在第一个未 done 的步（=2）
             store.save(&t).unwrap();
         }
         let t = e.task_get(&id).unwrap();

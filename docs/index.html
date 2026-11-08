@@ -164,7 +164,7 @@
       </div>
       <div class="chips">
         <span class="chip">Windows / macOS / Linux</span>
-        <span class="chip">666 个核心库测试</span>
+        <span class="chip">668 个核心库测试</span>
         <span class="chip">三平台 CI 全绿</span>
         <span class="chip">MIT（代码）</span>
       </div>
@@ -253,7 +253,7 @@
     <p class="lead">外壳与内核彻底分离：业务逻辑全在一个无 GUI 依赖的 Rust crate 里，换壳不用重写。</p>
     <img class="arch-img" src="images/architecture.png" alt="元气小小四层架构图">
     <div class="grid g3" style="margin-top:20px">
-      <div class="card"><h3>纯 Rust 核心</h3><p><code>qibai-core</code> 零 GUI 依赖，656 个测试不需要图形环境就能跑完（另有 7 个依赖本地语音资源）；今天接 Tauri，明天接 CLI 或服务端，逻辑一行不用改。</p></div>
+      <div class="card"><h3>纯 Rust 核心</h3><p><code>qibai-core</code> 零 GUI 依赖，665 个测试不需要图形环境就能跑完（另 3 个 ignored；语音相关 7 条由 <code>fetch_resources.sh</code> 补齐本地语音包后即可跑通）；今天接 Tauri，明天接 CLI 或服务端，逻辑一行不用改。</p></div>
       <div class="card"><h3>一个状态源</h3><p>对话、任务、演出、窗口状态都在 engine 里，前端只读投影；不会有「两边各记一份」的漂移。</p></div>
       <div class="card"><h3>默认最小出网</h3><p>MCP 默认配置为空 → 不启动任何子进程；只有你显式触发的对话才把必要文本发给 LLM，Key 由你提供。</p></div>
     </div>

@@ -3,7 +3,7 @@
 # -----------------------------------------------------------------------------
 # 触发条件：push 到任意分支 / 任意 pull_request
 # 矩阵：    ubuntu-latest / windows-latest / macos-latest
-# 职责：    跑 qibai-core 单测（保持 666 条基线只增不减）+ server 单测
+# 职责：    跑 qibai-core 单测（保持 668 条基线只增不减）+ server 单测
 #           不产物、不签名、不发布、不依赖任何 secret
 # 备注：    ubuntu-latest 当前为 24.04，WebKitGTK 4.1 包名 libwebkit2gtk-4.1-dev
 #           已对照 Tauri 2 官方前置依赖核实。
@@ -69,8 +69,9 @@ jobs:
       # 5) qibai-core 单测（可移植子集）
       #    这里刻意跳过一批「依赖真实桌面运行时」的用例：需要本机 espeak/whisper 二进制、
       #    真实 $HOME 目录、可并发的外部子进程、系统级白名单路径等，GitHub Runner 上没有这些前提。
-      #    全量 `cargo test` 本机实测 666 条：656 通过 / 7 条因缺本地语音包·模型失败 / 3 条 ignored；
-      #    CI 这份可移植子集实测 530 条全绿。
+      #    全量 `cargo test` 本机实测 668 条：补齐 fetch_resources.sh 语音包+模型后 665 通过 / 0 失败 / 3 ignored（全绿）；
+      #    未补齐时 7 条语音用例因缺资产失败（环境性）。CI 只跑可移植子集（跳过 16 条），531 条必全绿；
+      #    CI 这份可移植子集实测 531 条全绿（task_recover 用例去掉后台线程竞态后已进子集）。
       #    跳过项按模块前缀 + 单条精确匹配，新增桌面耦合用例时补一行即可。
       - name: qibai-core cargo test (portable subset)
         working-directory: qibai-core
@@ -93,8 +94,7 @@ jobs:
             --skip engine::tests::stt_status_shape_and_sandbox_device_unavailable \
             --skip engine::tests::tts_decide_no_key_downgrade_reason_when_local_faked_available \
             --skip engine::tests::v18_plugin_library_scan_and_invoke \
-            --skip engine::tests::workspace_root_default_matches_documents_qibai \
-            --skip engine::v459_task_wiring_tests::task_recover_current_step_matches_resume
+            --skip engine::tests::workspace_root_default_matches_documents_qibai
 
       # 6) server 单测（npm ci 严格按 lockfile 安装；node --test 跑 src/test/*.test.js）
       - name: server npm ci & npm test

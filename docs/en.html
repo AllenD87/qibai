@@ -164,7 +164,7 @@
       </div>
       <div class="chips">
         <span class="chip">Windows / macOS / Linux</span>
-        <span class="chip">666 core-library tests</span>
+        <span class="chip">668 core-library tests</span>
         <span class="chip">Three-platform CI green</span>
         <span class="chip">MIT (code)</span>
       </div>
@@ -253,7 +253,7 @@
     <p class="lead">Shell and kernel fully separated: all business logic lives in one Rust crate with no GUI dependency, so changing the shell costs no rewrite.</p>
     <img class="arch-img" src="images/architecture.png" alt="Qibai four-layer architecture">
     <div class="grid g3" style="margin-top:20px">
-      <div class="card"><h3>A pure-Rust core</h3><p><code>qibai-core</code> has zero GUI dependencies and 656 tests that run without a graphics environment (7 more need local speech assets); Tauri today, CLI or a server tomorrow — not one line of logic changes.</p></div>
+      <div class="card"><h3>A pure-Rust core</h3><p><code>qibai-core</code> has zero GUI dependencies and 665 tests that run without a graphics environment (3 ignored; 7 speech cases pass once <code>fetch_resources.sh</code> fills in the local speech bundle); Tauri today, CLI or a server tomorrow — not one line of logic changes.</p></div>
       <div class="card"><h3>One source of state</h3><p>Conversation, tasks, performance and window state all live in the engine; the front end only reads a projection, so there is no "two copies drifting apart".</p></div>
       <div class="card"><h3>Minimal outbound by default</h3><p>MCP ships with an empty config, so no subprocess starts; only conversations you explicitly trigger send the necessary text to the LLM, with your own key.</p></div>
     </div>

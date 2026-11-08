@@ -27,7 +27,7 @@
 | **piper** 引擎 | 可执行程序 | MIT | ❌ | 本地离线 TTS |
 | **piper 音色** `zh_CN-huayan-medium.onnx` | 61 MB | **各音色独立许可，部分限非商用**【必须核实】 | ❌ 不入库，建议用户自行从 `rhasspy/piper-voices` 下载 | **若该音色限非商用，不得随本项目安装包分发** |
 | **bge-small-zh-v1.5**（向量模型） | `model.onnx` 91 MB + `vocab.txt` | MIT（BAAI，上游 `BAAI/bge-small-zh-v1.5`） | ❌ 不进安装包、不入库 | 知识库语义检索用；用户在应用内按需下载（Release `kb-model-v1` 仅做镜像分发，权重版权归原作者） |
-| **espeak-ng** | 二进制 + `share/` 语音数据（13 MB） | **GPL-3.0** | ❌ 不入库，建议用户用系统包管理器安装 | 以独立可执行程序调用；若你选择分发二进制，须同时提供许可文本与源码获取方式 |
+| **espeak-ng** | 二进制 + `espeak-ng-data` 语音数据（约 26 MB，解包到 `src-tauri/tts-espeak/`） | **GPL-3.0** | ❌ 不入库，`fetch_resources.sh` 从 Debian 官方包（`deb.debian.org`，1.52.0）解包组装，无需 sudo | 以独立可执行程序调用；若你选择把该二进制一起分发，须同时提供 GPL-3.0 全文与源码获取地址（https://github.com/espeak-ng/espeak-ng） |
 
 ### 二、Rust 依赖（主要项，均由 `Cargo.lock` 锁定）
 
@@ -91,7 +91,7 @@ The components below are provided by third parties and follow **their own licenc
 | **piper** engine | Executable | MIT | ❌ | Local offline TTS |
 | **piper voice** `zh_CN-huayan-medium.onnx` | 61 MB | **Each voice has its own licence; some are non-commercial only** [MUST VERIFY] | ❌ not in repo; users should download it themselves from `rhasspy/piper-voices` | **If this voice is non-commercial only, it must not ship inside an installer for this project** |
 | **bge-small-zh-v1.5** (embedding model) | `model.onnx` 91 MB + `vocab.txt` | MIT (BAAI, upstream `BAAI/bge-small-zh-v1.5`) | ❌ not in the installer, not in repo | Used for knowledge-base semantic retrieval; downloaded on demand in-app (the `kb-model-v1` release only mirrors it; copyright stays with the original authors) |
-| **espeak-ng** | Binary + `share/` voice data (13 MB) | **GPL-3.0** | ❌ not in repo; users should install it via the system package manager | Called as a separate executable; if you choose to distribute the binary you must also supply the licence text and how to obtain the source |
+| **espeak-ng** | Binary + `espeak-ng-data` voice data (~26 MB, unpacked into `src-tauri/tts-espeak/`) | **GPL-3.0** | ❌ not in repo; `fetch_resources.sh` assembles it from official Debian packages (`deb.debian.org`, 1.52.0) without sudo | Called as a separate executable; if you choose to ship that binary too, include the full GPL-3.0 text and the source URL (https://github.com/espeak-ng/espeak-ng) |
 
 ### 2. Rust dependencies (main ones, all pinned by `Cargo.lock`)
 

@@ -103,7 +103,7 @@ pub fn ingest_reference_wav(bytes: &[u8]) {
 /// 到达文件真实 EOF 后仍不停（错误被 `.unwrap_or(0)` 吞成 0.0）→ 无限挂死。
 /// 这里遍历 chunk，把 data chunk 的 size 钳到文件实际剩余长度，同时回填 RIFF size。
 /// 非 WAV 或格式正常的文件原样返回，零副作用。
-fn normalize_wav_sizes(bytes: &mut Vec<u8>) {
+pub(crate) fn normalize_wav_sizes(bytes: &mut Vec<u8>) {
     if bytes.len() < 12 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
         return;
     }
