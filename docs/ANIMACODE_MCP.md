@@ -20,13 +20,15 @@ assets/             animacore.js、blocks.js、spec_scene.html、studio.html、�
 references/         spec 字段、块、API、质量门禁、动效、与 Remotion 的差异
 ```
 
+版本：**v2.2.0**（在 v2.1 的六块基础上加 `timeline`、`compare` 两块，并修正了渲染/质检若干行为）。
+
 `{PLUGIN_DIR}` 由 `ManifestLoader::load` 按**包实际所在目录**替换成绝对路径，所以包被装到用户根、内置根或被 `QIBAI_PLUGINS_DIR` 指到别处都不会失配——不用手改清单。
 
 ## 五个工具
 
 | 工具 | 作用 | 失败语义 |
 | --- | --- | --- |
-| `anima_schema` | 返回 spec 与六个镜头块字段 | — |
+| `anima_schema` | 返回 spec 与**八个**镜头块字段（title / stat / bars / process / timeline / compare / quote / endcard） | — |
 | `anima_build` | 校验 + 构建每比例 | spec 非法返回逐条错误 |
 | `anima_render` | 渲帧；`shots`+`reuse` 只渲改动镜头 | 缺帧时报告 missing |
 | `anima_qa` | 安全区/重叠/小字号/对比度/空帧/长静止/突变/视觉回归 | verdict=FAIL 时 `isError=true`，禁止交付 |
@@ -34,7 +36,7 @@ references/         spec 字段、块、API、质量门禁、动效、与 Remoti
 
 ## 安装
 
-**A. 技能包（推荐）**：设置页「技能 / 插件 → 导入技能包」，选 `animacode-v2.1.0.qbpk`（zip，根目录就是 `qibai-plugin.json`，不要再套文件夹）。解压落盘到 `<数据目录>/plugins/animacode/`。
+**A. 技能包（推荐）**：设置页「技能 / 插件 → 导入技能包」，选 `animacode-v2.2.0.qbpk`（zip，根目录就是 `qibai-plugin.json`，不要再套文件夹）。解压落盘到 `<数据目录>/plugins/animacode/`。
 
 **B. 手动放置**：
 

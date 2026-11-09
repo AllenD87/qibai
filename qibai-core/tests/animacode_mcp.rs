@@ -58,6 +58,7 @@ async fn mcp_connector_runs_schema_and_build() {
 
     let manifest = ManifestLoader::load(&pkg).expect("animacode 清单应能加载");
     assert_eq!(manifest.id, "animacode");
+    assert_eq!(manifest.version, "2.2.0", "应为 v2.2（八个镜头块）");
     assert_eq!(manifest.functions.len(), 5, "应暴露五个 anima_* 工具");
     let args_text = manifest
         .entry
@@ -80,7 +81,7 @@ async fn mcp_connector_runs_schema_and_build() {
     // 0a) 技能包导入路径（设置页「导入技能包」走的就是这个函数）
     {
         let pack_zip = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../examples/plugins/animacode-v2.1.0.qbpk");
+            .join("../examples/plugins/animacode-v2.2.0.qbpk");
         let plugdir = root.join("install_plugins");
         let installed = qibai_core::skill_pack::install_pack(&pack_zip, &plugdir)
             .expect("技能包应能导入");
@@ -136,8 +137,11 @@ async fn mcp_connector_runs_schema_and_build() {
     // 1) 抓手一：anima_schema（零参数，验证握手 + tools/list + 调用）
     match adapter.execute(&pkg, &manifest, "anima_schema", &json!({})).await {
         SkillOutcome::Ok(text) => {
-            assert!(text.contains("duration") || text.contains("scene.json"),
-                "schema 应返回字段说明，实际: {}", &text[..text.len().min(200)]);
+            assert!(
+                text.contains("duration") && text.contains("timeline") && text.contains("compare"),
+                "schema 应返回字段说明与 v2.2 新增块（timeline / compare），实际: {}",
+                &text[..text.len().min(300)]
+            );
         }
         other => panic!("anima_schema 调用应成功，实际 {other:?}"),
     }
