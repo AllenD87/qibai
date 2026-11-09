@@ -16,6 +16,17 @@ use crate::social::{Move, SocialStore, GREET_DAILY_LIMIT, LEVELS, PK_DAILY_LIMIT
 /// 亲密度分级门控。正式发布若需临时全开，应改为显式 settings.dev_mode（默认 false），
 /// 绝不允许以 `const true` 进 release。
 pub const OPEN_ALL: bool = cfg!(debug_assertions);
+
+/// 审批链路是否全开（= 危险操作不弹确认）。
+///
+/// 调试构建默认全开（OPEN_ALL），但这意味着**审批链路在 debug 下一条都走不到**，
+/// 出问题也测不出来。`QIBAI_FORCE_APPROVALS=1` 可强制走真实审批链路（测试/诊断用）。
+pub fn open_all() -> bool {
+    if std::env::var("QIBAI_FORCE_APPROVALS").ok().as_deref() == Some("1") {
+        return false;
+    }
+    OPEN_ALL
+}
 use crate::storage::{ConversationStore, StoredMessage};
 use crate::tts;
 use crate::voice_profile::VoiceProfile;
@@ -1293,7 +1304,10 @@ fn approval_gate_reason(is_high_risk: bool, level: u32) -> Option<String> {
     }
 }
 
-// ---- IPC: approve_skill ----
+    /// 批准后自动续跑用的固定续跑口令（与前端 console.js 保持一致）。
+    pub const AUTO_CONTINUE_TOKEN: &'static str = "继续";
+
+    // ---- IPC: approve_skill ----
 pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result<String, EngineError> {
     // v45.12：MCP trust=confirm 的待确认请求（request_id="mcp-appr-<seq>"）。
     // 复用同一个 approve_skill IPC 与前端审批弹窗，但pending 单独记账（不进 skills.pending）。
@@ -1343,7 +1357,7 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
     // v45.7 门控拆分：只有高危 builtin（ExecuteCommand/RunTests，会跑命令/改系统）
     // 才需要亲密度 L4；文件读写/建工程等基础操作直接放行（此前所有批准都被 L4
     // 静默挡掉，表现为"点了允许、没完没了"）。
-    if approve && !OPEN_ALL {
+    if approve && !open_all() {
         let active = self.personas.active_persona().to_string();
         let level = self
             .intimacy
@@ -2539,6 +2553,11 @@ PASS_WITH_WARNINGS，FAIL 就改 spec 重渲）→ `anima_mux` 合成 MP4；\n\
             eprintln!("[qibai] llm: send_blocked empty (history={n})");
             return Err(EngineError::Llm(LlmError::Api("空消息不发送".to_string())));
         }
+        // 新一轮用户请求 → 清掉「允许本次」的任务域放行名单；自动续跑的固定口令不算新一轮，
+        // 否则同一条流水线（schema→build→render→qa→mux）会每步都重新弹确认。
+        if text.trim() != Self::AUTO_CONTINUE_TOKEN {
+            self.skills.clear_approval_grants();
+        }
         // v45.8-B：诊断锚点——真发起请求前打一行，下次复现可一眼分辨"空文本"vs"旧音频被转写"。
         let head: String = text.trim().chars().take(20).collect::<String>().replace('\n', " ");
         eprintln!("[qibai] llm: send text_len={} head={head}", text.chars().count());
@@ -2827,7 +2846,7 @@ PASS_WITH_WARNINGS，FAIL 就改 spec 重渲）→ `anima_mux` 合成 MP4；\n\
         // 专家白名单过滤：active expert 且 whitelist 非空时，只保留白名单内的工具；
         // start_guard 为引擎级安全工具，始终保留；mcp__ 外部工具是用户主动安装的能力，
         // 同样始终保留（不被专家白名单静默裁掉）。
-        if !OPEN_ALL {
+        if !open_all() {
             if let Some(whitelist) = self.experts.whitelist() {
                 tool_schemas.retain(|s| {
                 let name = s["function"]["name"].as_str().unwrap_or("");
@@ -6016,6 +6035,81 @@ mod tests {
 
         unsafe { std::env::remove_var("QIBAI_DATA_DIR") };
         unsafe { std::env::remove_var("QIBAI_PLUGINS_DIR") };
+    }
+
+    fn node_available() -> bool {
+        std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    /// 审批链路端到端：点「允许本次」要真的跑起 animacode 的 MCP 工具，
+    /// 且本任务内同一插件后续调用不再重复弹确认（一条视频要连跑 5 个工具）。
+    /// 这条用例专门盯「审批通过却跑不起来」——debug 构建默认 OPEN_ALL 全开，
+    /// 不用 QIBAI_FORCE_APPROVALS 就永远测不到这条链路。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn approved_animacode_actually_runs_and_grants_the_task() {
+        if !node_available() {
+            eprintln!("SKIP: 本机没有 node，跳过「审批→真实调用」端到端验收");
+            return;
+        }
+        let _g = crate::test_support::env_lock();
+        let data = crate::test_support::unique_temp_dir("engine-appr-data");
+        let plugindir = crate::test_support::unique_temp_dir("engine-appr-dir");
+        unsafe {
+            std::env::set_var("QIBAI_DATA_DIR", &data);
+            std::env::set_var("QIBAI_PLUGINS_DIR", &plugindir);
+            std::env::set_var("QIBAI_FORCE_APPROVALS", "1");
+        }
+
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/plugins/animacode");
+        let mut e = Engine::new(Box::new(RecordingSink { events: Mutex::new(vec![]) }));
+        e.plugin_install(src.to_string_lossy().to_string()).unwrap();
+        e.skills.set_enabled("animacode", true).unwrap();
+
+        // 第一次调用：node 命中危险表 → 先挂待确认
+        let id = match e.skills.invoke("anima_schema", &serde_json::json!({})).await {
+            crate::skills::SkillOutcome::PendingApproval { request_id, .. } => request_id,
+            other => panic!("首次调用应先弹确认，实际 {other:?}"),
+        };
+        assert_eq!(e.skills.granted_len(), 0, "批准前不该有放行");
+
+        // 用户点「允许本次」→ 必须真的把 MCP 工具跑起来（核心回归点）
+        let ran = e
+            .skills
+            .approve(&id, true)
+            .await
+            .expect("批准后必须真的执行，不许再报「找不到确认」");
+        assert!(!ran.trim().is_empty(), "执行结果不能为空");
+        assert!(
+            ran.contains('{') || ran.contains("anima") || ran.contains("shot"),
+            "结果应来自 anima_schema：{}",
+            ran.chars().take(200).collect::<String>()
+        );
+        assert_eq!(e.skills.pending_len(), 0, "批准后不应残留待确认");
+        assert_eq!(e.skills.granted_len(), 1, "外部插件批准一次应记入本任务放行");
+
+        // 同任务内再次调用同一插件：直接执行，不再弹确认
+        match e.skills.invoke("anima_schema", &serde_json::json!({})).await {
+            crate::skills::SkillOutcome::Ok(_) => {}
+            other => panic!("同任务内应直接执行，实际 {other:?}"),
+        }
+
+        // 新一轮用户请求：放行清空，重新确认
+        e.skills.clear_approval_grants();
+        assert_eq!(e.skills.granted_len(), 0);
+        match e.skills.invoke("anima_schema", &serde_json::json!({})).await {
+            crate::skills::SkillOutcome::PendingApproval { .. } => {}
+            other => panic!("新一轮请求应重新确认，实际 {other:?}"),
+        }
+
+        unsafe {
+            std::env::remove_var("QIBAI_DATA_DIR");
+            std::env::remove_var("QIBAI_PLUGINS_DIR");
+            std::env::remove_var("QIBAI_FORCE_APPROVALS");
+        }
     }
 
     /// v24 联网+编程技能对 LLM 可见：工具表含 web_search（联网）与 git_status/run_tests/code_scan（编程）。

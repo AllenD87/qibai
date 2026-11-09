@@ -151,7 +151,10 @@ plugins/
 **红线不因插件放宽**：
 - 保险箱明文不进 LLM：`try_vault_intercept` 在 provider 之前拦截，插件无任何权限可关闭；
 - `files:write` 对外部插件永不可授；
-- 危险命令逐次批准：内置 `execute_command` 恒走 pending 审批流；外部 command-kind 命中危险判定（basename ∈ {rm, dd, shutdown, poweroff, reboot, halt, mv, chmod, chown, kill, pkill, systemctl, docker, curl} 或 `mkfs.*` 前缀或 args 含 `-rf`）同样走 pending 审批流；`qibai://skill-approval` 事件 → 前端确认 → approve 后执行。
+- 危险命令审批：内置 `execute_command` / `run_tests` 恒走 pending 审批流且**逐次**批准；外部插件（command / MCP，basename ∈ {rm, dd, shutdown, poweroff, reboot, halt, mv, chmod, chown, kill, pkill, systemctl, docker, curl, bash, sh, zsh, python, python3, node} 或 `mkfs.*` 前缀或 args 含 `-rf`）走 pending 审批流，`qibai://skill-approval` 事件 → 前端确认 → approve 后执行。
+  外部插件批准一次即记入**任务域放行名单**（本次任务内同插件不再重复询问，批准后会连续调用同一 MCP 服务器的多个工具，逐步弹窗会被误认为卡死）；用户发起新一轮请求时清空名单。
+- 审批幂等：同一 `request_id` 重复提交回放上次结果（「未重复执行」），不会报 `approval request not found`；pending 表是纯内存，重启后旧 id 一律按「已失效」话术回应。
+- 缺件预检：启动命令在补全 PATH 后仍解析不到 → 直接 `Denied` + 补救建议，**不生成** pending。
 
 ### 2.5 专家体系装配（T5/T6）
 

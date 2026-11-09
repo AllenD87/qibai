@@ -104,7 +104,10 @@ anima_render → anima_qa（VERDICT 必须 PASS / PASS_WITH_WARNINGS）→ anima
 
 ## 注意
 
-- `trust` 默认 `confirm`：每次调用走确认；要免确认需把连接器设为 `readonly`。
+- `trust` 默认 `confirm`：首次调用走确认；**本任务内同一插件只问一次**（批准后放行，下一次工具调用不再弹窗），用户发新请求时重新确认。一条 15 秒片子要连跑 schema→build→render→qa→mux 五个工具，逐次弹窗会被当成「卡住不动」。
+  要彻底免确认需把连接器设为 `readonly`。
+- 批准后会自动「继续」往下跑（前端发固定口令 `继续`，单任务上限 8 次），不用手动再敲一遍需求。
+- 同一确认被提交两次不会失败：第二次回放上次结果并注明「未重复执行」。
 - **子进程 PATH 已自动补全（v45.15）**：从桌面图标启动时，应用拿到的 PATH 往往只有
   `/usr/bin:/bin`，Homebrew（`/opt/homebrew/bin`）、nvm（`~/.nvm/versions/node/<v>/bin`）、
   Windows 的 `Program Files\nodejs` 都不在里面，于是 `node` 一 spawn 就 `No such file`。

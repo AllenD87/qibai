@@ -96,6 +96,13 @@
 前端用户对危险操作（如 `execute_command`）做确认后回调。
 `approve=true` 执行；`false` 取消。返回一段文本说明结果。
 
+语义要点（v45.13 起）：
+
+- **幂等**：同一 `request_id` 被提交两次（弹窗连点 / 语音与手点撞车）不会报 `not found`，而是**回放**上一次结果并注明「这条确认刚才已经执行过，未重复执行」；已取消的再次批准 → 「这条确认已经被取消，不会再执行；需要就重新发起一次」。真正查无此 id 才返回「这条确认已失效：找不到请求 …（可能已经执行过、或应用重启过；需要就重新发起同一操作）」。
+- **任务域放行**：外部插件（command / MCP，如 `node` 拉起的 animacode）批准一次后，**本次任务内**同一插件不再重复弹确认；内置高危 `execute_command` / `run_tests` 仍逐次批准。
+- **自动续跑**：前端在批准成功后自动发送固定口令「继续」（`Engine::AUTO_CONTINUE_TOKEN`），单条任务上限 8 次；`send_message` 收到非该口令的文本时清空放行名单（新任务重新确认）。
+- **缺件不产生 pending**：启动命令预检失败时直接返回「找不到可执行 …」+ `QIBAI_EXTRA_PATH` 补救建议，不再弹一个点了必然失败的确认。
+
 ### 8. `set_autostart({ enabled: boolean })` → `boolean`
 开启/关闭开机自启。返回当前是否已启用。
 底层由 `tauri-plugin-autostart` 实现：Windows 注册表 / macOS LaunchAgent / Linux `~/.config/autostart/*.desktop`。

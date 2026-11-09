@@ -394,8 +394,13 @@
   }
   // v20：发送中锁——防连按 Enter/双击发送按钮导致多轮并发 send_message 与事件风暴
   let sendBusy = false;
-  async function doSendWithText(rawText) {
+  // 批准后自动续跑：一次任务里可能连着批好几次，用户点完不该把流程停在半路。
+  // 上限 8 次，用户自己发消息即清零（防跑飞）。
+  let autoChain = 0;
+  async function doSendWithText(rawText, opts) {
     const text = (rawText || '').trim();
+    const auto = !!(opts && opts.auto);
+    if (!auto) autoChain = 0;
     if (!text || sendBusy) return;
     sendBusy = true;
     $('sendBtn').disabled = true;
@@ -3312,15 +3317,38 @@
 
   // qibai://skill-approval → 全页审批弹窗
   let currentRequestId = null;
+  let approvalBusy = false;
   listen('qibai://skill-approval', (event) => {
     const p = evtPayload(event);
     currentRequestId = p.request_id;
+    approvalBusy = false;
+    $('approvalAllow').disabled = false;
+    $('approvalDeny').disabled = false;
     $('approvalSkill').textContent = p.skill || 'unknown';
     $('approvalDesc').textContent = p.description || '元气小小想执行一个需要确认的操作。';
     $('approvalModal').classList.add('show');
   });
 
+  // 失败原因 → 人话（不同原因不许一律说「审批已通过但没跑起来」：
+  // 确认已失效/被取消时，这次压根没执行，说成「没跑起来」会把人带偏）。
+  function approvalErrorText(msg, approve) {
+    const raw = String(msg || '').trim();
+    if (/已失效|已经执行过|已被取消/.test(raw)) {
+      return '这条确认已经处理过了（没有重复执行）：' + raw;
+    }
+    if (/亲密度|L4/.test(raw)) return '还差一步权限：' + raw;
+    if (!approve) return '取消失败：' + raw;
+    return '确认已通过，但执行失败：' + raw;
+  }
+
   async function resolveApproval(approve) {
+    // 连点保护：第一条确认的结果回来之前，第二次点击一律忽略。
+    // 否则两次 approve_skill 会把同一条确认提交两遍（第一次执行、第二次报错，
+    // 用户看到的就是「点了允许却说没跑起来」）。
+    if (approvalBusy || !currentRequestId) return;
+    approvalBusy = true;
+    $('approvalAllow').disabled = true;
+    $('approvalDeny').disabled = true;
     // v45.7：先 await 结果，成功才关弹窗；失败保留弹窗并把 err 显示在弹窗内。
     let errEl = document.getElementById('approvalErr');
     if (!errEl) {
@@ -3330,16 +3358,31 @@
       document.getElementById('approvalModal').appendChild(errEl);
     }
     errEl.hidden = true;
+    errEl.textContent = '';
     try {
       await invoke('approve_skill', { request_id: currentRequestId, approve });
       $('approvalModal').classList.remove('show');
       currentRequestId = null;
+      if (approve) {
+        if (autoChain >= 8) {
+          toast('连续确认已达上限，接下来请重新说明一次要做的事');
+        } else {
+          autoChain += 1;
+          // 稍等一拍再续跑：让「已批准并执行」的回执先落到聊天里。
+          setTimeout(() => doSendWithText('继续', { auto: true }), 400);
+        }
+      }
     } catch (e) {
       const msg = String((e && e.message) || e || '');
-      toast('审批已通过，但没跑起来：' + msg.slice(0, 120));
-      errEl.textContent = msg || String(e);
+      const text = approvalErrorText(msg, approve);
+      errEl.textContent = text;
       errEl.hidden = false;
+      toast(text.slice(0, 120));
       // 不 currentRequestId = null，保留便于重试
+    } finally {
+      approvalBusy = false;
+      $('approvalAllow').disabled = false;
+      $('approvalDeny').disabled = false;
     }
   }
   $('approvalAllow').addEventListener('click', () => resolveApproval(true));

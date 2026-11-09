@@ -202,13 +202,19 @@ pub fn resolve_launcher(cmd: &str, plugin_dir: Option<&std::path::Path>) -> Opti
 }
 
 /// 错误文本是否像「可执行缺失」——用于把 spawn 报错翻译成人能看懂的提示。
+///
+/// 只看真正像子进程启动失败的写法。裸 `not found` 会误伤业务错误
+/// （例如「确认已失效：找不到请求 …」曾被判成缺件，给用户的提示变成
+/// 「装好后重启 / 写进 QIBAI_EXTRA_PATH」，完全指错方向）。
 pub fn looks_like_missing_binary(msg: &str) -> bool {
     let m = msg.to_ascii_lowercase();
     m.contains("os error 2")
         || m.contains("no such file or directory")
-        || m.contains("not found")
         || m.contains("cannot find the file")
         || m.contains("program not found")
+        || m.contains("command not found")
+        || m.contains("executable not found")
+        || (m.contains("not found") && m.contains("executable"))
 }
 
 /// 缺件时统一的行动建议（中英混排的报错也能接住）。
@@ -263,5 +269,20 @@ mod tests {
             "MCP server 启动失败: No such file or directory (os error 2)"
         ));
         assert!(!looks_like_missing_binary("脚本退出码 1：boom"));
+    }
+
+    /// 「确认已失效」这类业务错误不是缺件——不许给「装好后重启 / QIBAI_EXTRA_PATH」的提示。
+    #[test]
+    fn approval_errors_are_not_missing_binary() {
+        assert!(!looks_like_missing_binary(
+            "这条确认已失效：找不到请求 approval-2（可能已经执行过、或应用重启过）"
+        ));
+        assert!(!looks_like_missing_binary(
+            "approval request not found: approval-2"
+        ));
+        assert!(!looks_like_missing_binary("skill not in whitelist: hack_nasa"));
+        // 真缺件仍然认得出
+        assert!(looks_like_missing_binary("node: command not found"));
+        assert!(looks_like_missing_binary("spawn ffmpeg: No such file or directory"));
     }
 }
