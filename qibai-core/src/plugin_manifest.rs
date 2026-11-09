@@ -352,11 +352,18 @@ impl ManifestLoader {
         let mut m = Self::parse(&raw)?;
         // `{PLUGIN_DIR}` → 包所在目录的绝对路径。包可能被装到 user/builtin 任一根，
         // 甚至被 QIBAI_PLUGINS_DIR 改到别处；写死根路径会失配，所以按实际目录解析。
-        let pkg_dir = dir
+        #[allow(unused_mut)]
+        let mut pkg_dir = dir
             .canonicalize()
             .unwrap_or_else(|_| dir.to_path_buf())
             .display()
             .to_string();
+        // Windows 的 canonicalize 会加 `\\?\` 扩展长路径前缀；该前缀只认反斜杠，
+        // 拼上 `/mcp/server.mjs` 后 node 找不到脚本会直接退出，去掉它更稳。
+        #[cfg(windows)]
+        if let Some(stripped) = pkg_dir.strip_prefix(r"\\?\") {
+            pkg_dir = stripped.to_string();
+        }
         for a in m
             .entry
             .as_mut()
@@ -367,6 +374,10 @@ impl ManifestLoader {
         {
             if a.contains("{PLUGIN_DIR}") {
                 *a = a.replace("{PLUGIN_DIR}", &pkg_dir);
+                #[cfg(windows)]
+                {
+                    *a = a.replace('/', "\\");
+                }
             }
         }
         Ok(m)
