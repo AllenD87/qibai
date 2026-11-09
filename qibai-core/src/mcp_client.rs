@@ -96,6 +96,17 @@ impl McpSession {
         // `is_file()` 和 node 都会认定文件不存在（CI 的 windows job 就栽在这），
         // 于是明明装好的插件被误报成「入口脚本不存在」。
         let args: Vec<String> = spec.args.iter().map(|a| normalize_script_arg(a)).collect();
+        // 占位符没展开时，绝不能让 node 拿错误路径去猜：那时它只会报
+        // `Cannot find module '<cwd>/{PLUGIN_DIR}/mcp/server.mjs'`，看着像插件没装，
+        // 实际是清单没按安装目录解析。这里直接把原因说清。
+        if let Some(ph) = args
+            .iter()
+            .find(|a| a.contains("{PLUGIN_DIR}") || a.contains("{QIBAI_HOME}"))
+        {
+            return Err(format!(
+                "插件启动参数里的路径占位符没有展开：{ph}\n（说明这份清单没有按插件实际安装目录解析）请在控台「插件」页删除该插件后重新导入技能包；自己手配的 MCP 服务器请直接填绝对路径。"
+            ));
+        }
         // 入口预检：清单里的 `{PLUGIN_DIR}` 已替换成绝对路径，这里若文件不在，
         // node 只会秒退并往 stderr 抱怨一句，用户却看到「stdout 关闭」。
         // 直接说清「插件装得不完整」，比让用户去猜 node 环境省事得多。
@@ -346,7 +357,12 @@ impl McpSession {
                 .map_err(|e| format!("读取 MCP stdout 失败: {e}"))?;
             if n == 0 {
                 let detail = self.stderr_suffix();
-                return Err(format!("MCP server 已退出（stdout 关闭）{detail}"));
+                // server 在 240ms 哨兵窗口外才被判定退出时（机器负载高、fork 慢），
+                // 别只报「stdout 关闭」——进程已经没了，退出码才是能搜的原因。
+                return Err(match self.child.try_wait() {
+                    Ok(Some(st)) => format!("MCP server 启动后立即退出（{st}）{detail}"),
+                    _ => format!("MCP server 已退出（stdout 关闭）{detail}"),
+                });
             }
             let msg: Value = serde_json::from_str(line.trim()).map_err(|e| {
                 format!("MCP 响应解析失败: {e}（原始: {}）", line.trim().chars().take(80).collect::<String>())
@@ -390,6 +406,21 @@ impl Drop for McpSession {
 mod tests {
     use super::*;
     use std::process::Stdio;
+
+    /// 占位符没展开时必须给可读错误：否则 node 会把整段当相对路径，
+    /// 报 `Cannot find module '<cwd>/{PLUGIN_DIR}/mcp/server.mjs'`，看着像插件没装。
+    #[tokio::test]
+    async fn unexpanded_placeholder_is_reported_before_spawning() {
+        let spec = McpSpec {
+            command: "node".to_string(),
+            args: vec!["{PLUGIN_DIR}/mcp/server.mjs".to_string()],
+        };
+        let err = McpSession::connect(&spec, Duration::from_secs(2))
+            .await
+            .expect_err("必须拒绝未展开的占位符");
+        assert!(err.contains("占位符没有展开"), "错误文本不含原因：{err}");
+        assert!(err.contains("{PLUGIN_DIR}"), "错误文本应带上原参数：{err}");
+    }
 
     /// 内嵌 mock MCP server（python3，JSON-RPC 换行分隔）：
     /// 实现 initialize / notifications/initialized / tools/list / tools/call。

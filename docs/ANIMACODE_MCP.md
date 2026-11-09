@@ -122,6 +122,16 @@ anima_render → anima_qa（VERDICT 必须 PASS / PASS_WITH_WARNINGS）→ anima
   （`插件入口脚本不存在：…` / `MCP server 启动后立即退出（exit code 1）；server stderr: node: Cannot find module …`）。
   前者=插件包没装全（删掉插件重导 `animacode-v2.2.0.qbpk`）；后者=node 版本或脚本自身报错，照 stderr 那行修。
 - **会话自愈**：server 中途崩了不必重启应用，下一次工具调用会自动丢弃死会话、重连一次再重试。
+- **不需要手动启动 MCP server**：它是 stdio 子进程，点「允许」后由应用自己 spawn，
+  跑完留着复用，退出应用即结束；不要在终端另起一个 `node .../server.mjs`。
+- **路径占位符 `{PLUGIN_DIR}` 由程序展开（v45.16 补的兜底）**：插件包里写
+  `"{PLUGIN_DIR}/mcp/server.mjs"` 是正确写法，应用会按插件实际安装目录替换成绝对路径。
+  但清单如果来自没经过落点解析的路径（控制台手配的连接器、旧数据），占位符会原样留下，
+  node 便把它当相对路径去 cwd 下找，只报
+  `Cannot find module '/<当前工作目录>/{PLUGIN_DIR}/mcp/server.mjs'` —— 看着像没装，其实是没展开。
+  现在适配层会先按插件目录自己补上；万一仍残留，会在启动前直接报
+  「插件启动参数里的路径占位符没有展开」而不是让 node 去猜。
+  **自己手配 MCP 服务器时请直接填绝对路径**，别抄占位符。
 - **出片文件落在哪**：写入根 = `QIBAI_WORKSPACE`（设了就用），否则 `$HOME/Documents/qibai`。
   `anima_mux` 的 `out` 是必填参数，由调用方传绝对路径（建议放工作区内，如
   `~/Documents/qibai/影片/<名字>.mp4`）；`anima_build` 的 `out` 默认落在 spec 同级的 `build/`；

@@ -39,6 +39,21 @@ pub fn is_dangerous_command(command: &str, args: &serde_json::Value) -> bool {
     args.to_string().contains("-rf")
 }
 
+/// 插件目录的绝对路径字符串（Windows 上去掉 canonicalize 的 `\\?\` 前缀）。
+fn plugin_dir_abs(plugin_dir: &Path) -> String {
+    let s = plugin_dir
+        .canonicalize()
+        .unwrap_or_else(|_| plugin_dir.to_path_buf())
+        .display()
+        .to_string();
+    // `\\?\` 前缀只认反斜杠，拼上 `/mcp/server.mjs` 后 node 会找不到脚本，这里就剥掉。
+    #[cfg(windows)]
+    if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        return stripped.to_string();
+    }
+    s
+}
+
 /// 外部插件执行体；内置包不经过这里。
 pub struct SkillAdapter {
     timeout: Duration,
@@ -102,9 +117,16 @@ impl SkillAdapter {
             },
             EntryKind::Mcp => match entry.mcp {
                 Some(ref spec) => {
+                    // 兜底展开 `{PLUGIN_DIR}`：这只清单可能没走过落点解析
+                    // （控制台手配的连接器、旧数据，或只 parse 未 load 的调用）。
+                    // 残留占位符时 node 会把整段当相对路径去 cwd 下找，报
+                    // `Cannot find module '<工程根>/{PLUGIN_DIR}/mcp/server.mjs'`，
+                    // 路径和原因都是错的，用户看不出问题在哪。
+                    let dir = plugin_dir_abs(plugin_dir);
+                    let expand = |s: &str| s.replace("{PLUGIN_DIR}", &dir);
                     let mcp_spec = crate::mcp_client::McpSpec {
-                        command: spec.command.clone(),
-                        args: spec.args.clone(),
+                        command: expand(&spec.command),
+                        args: spec.args.iter().map(|a| expand(a)).collect(),
                     };
                     self.run_mcp(&manifest.id, &mcp_spec, fn_name, args).await
                 }
@@ -278,6 +300,33 @@ pub fn copy_dir_all(from: &Path, to: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+
+    /// 清单里的 `{PLUGIN_DIR}` 没被 load 展开时（parse 出来的清单就是这种），
+    /// adapter 必须按插件实际目录自己补上，否则 node 只会在 cwd 下找不到脚本。
+    #[tokio::test]
+    async fn manifest_with_unexpanded_placeholder_still_runs() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../examples/plugins/animacode");
+        let raw = std::fs::read_to_string(dir.join("qibai-plugin.json")).expect("读清单");
+        let m = crate::plugin_manifest::ManifestLoader::parse(&raw).expect("parse");
+        let arg = m
+            .entry
+            .as_ref()
+            .and_then(|e| e.mcp.as_ref())
+            .map(|s| s.args[0].clone())
+            .expect("mcp 入口");
+        assert!(
+            arg.contains("{PLUGIN_DIR}"),
+            "前提不成立：parse 应当不展开占位符，实际 {arg}"
+        );
+        let out = SkillAdapter::new()
+            .execute(&dir, &m, "anima_schema", &serde_json::json!({}))
+            .await;
+        match out {
+            super::SkillOutcome::Ok(t) => assert!(t.contains("scene.json"), "schema 文本异常：{t}"),
+            o => panic!("应成功执行，实际 {o:?}"),
+        }
+    }
 
     /// 会话自杀后必须丢弃重连，而不是把「stdout 关闭」原样复读。
     #[tokio::test]
