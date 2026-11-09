@@ -434,6 +434,17 @@ fn qibai_truncate(s: &str, n: usize) -> String {
     }
 }
 
+/// v45.19：把工具返回文本压成一行摘要，供「执行过程」实时卡片显示结果。
+/// 只取前 max 字符，空白（含换行）合并为单空格——卡片里不能塞一整篇日志。
+fn exec_inline_summary(s: &str, max: usize) -> String {
+    let flat: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut t: String = flat.chars().take(max).collect();
+    if flat.chars().count() > max {
+        t.push('…');
+    }
+    t
+}
+
 /// 工具入参摘要：仅挑短标量字段打日志；content/body/prompt 等大字段或密钥一律折叠为 `<redacted>`。
 /// 整行压成一行、≤120 字符，绝不把整段文件内容或密钥写进 app.log。
 fn summarize_tool_args(args: &serde_json::Value) -> String {
@@ -1337,23 +1348,62 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
             }
             t
         };
-        let text = {
+        // v45.19：执行过程实时反馈——先发 start（前端立刻出现「正在执行」一行），
+        // 结束后再发 done（耗时 + 结果摘要）。此前只有一个结束后的回执，
+        // 渲染类任务跑一分钟，界面全程没有任何动静，用户只能猜是不是卡死了。
+        let label = crate::mcp::bridge::namespaced(&server, &tool);
+        let src_label = crate::mcp::bridge::source_label(&server);
+        let started = std::time::Instant::now();
+        let _ = self.sink.emit(
+            "qibai://exec-step",
+            serde_json::json!({
+                "tool": &label, "source": src_label, "args_summary": args_summary, "phase": "start",
+            }),
+        );
+        let call_outcome: Result<(String, bool), String> = {
             let mut guard = self.mcp.lock().unwrap();
             let Some(reg) = guard.as_mut() else {
-                return Err(EngineError::Skill(
-                    "MCP 注册表未初始化，无法执行已确认的外部调用".into(),
-                ));
+                // v45.19：这里也要收口，否则前端会永远停在「正在执行」。
+                let msg = "MCP 注册表未初始化，无法执行已确认的外部调用".to_string();
+                let _ = self.sink.emit(
+                    "qibai://exec-step",
+                    serde_json::json!({
+                        "tool": &label, "source": &src_label, "phase": "done", "ok": false,
+                        "elapsed_ms": started.elapsed().as_millis() as u64,
+                        "error": msg,
+                    }),
+                );
+                return Err(EngineError::Skill(msg));
             };
-            let result = reg
-                .call(&server, &tool, args)
-                .map_err(|m| EngineError::Skill(Engine::exec_error_hint(m)))?;
-            if result.is_error {
+            match reg.call(&server, &tool, args) {
+                Ok(result) if !result.is_error => Ok((result.content, true)),
                 // 工具自报错误：文本原样保留，仅加一行前缀让模型/人看得出边界。
-                format!("MCP 工具返回错误：{}", result.content)
-            } else {
-                result.content
+                Ok(result) => Ok((format!("MCP 工具返回错误：{}", result.content), false)),
+                Err(m) => Err(Engine::exec_error_hint(m)),
             }
         };
+        let (text, ok) = match call_outcome {
+            Ok(v) => v,
+            Err(msg) => {
+                let _ = self.sink.emit(
+                    "qibai://exec-step",
+                    serde_json::json!({
+                        "tool": &label, "source": src_label, "phase": "done", "ok": false,
+                        "elapsed_ms": started.elapsed().as_millis() as u64,
+                        "error": exec_inline_summary(&msg, 200),
+                    }),
+                );
+                return Err(EngineError::Skill(msg));
+            }
+        };
+        let _ = self.sink.emit(
+            "qibai://exec-step",
+            serde_json::json!({
+                "tool": &label, "source": src_label, "phase": "done", "ok": ok,
+                "elapsed_ms": started.elapsed().as_millis() as u64,
+                "result_summary": exec_inline_summary(&text, 200),
+            }),
+        );
         // 与技能批准同一语义：回写会话 + 气泡。
         let reply = format!("已批准并执行：{text}");
         let _ = self.append_chat("assistant", &reply);
@@ -1398,13 +1448,46 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
     }
     // v45.18：名字要在 approve 之前取——它会把 pending 项摘走。
     let pending_label = self.skills.pending_label(request_id);
-    let result = self
-        .skills
-        .approve(request_id, approve)
-        .await
-        .map_err(|e| EngineError::Skill(Engine::exec_error_hint(e.to_string())))?;
+    // v45.19：参数摘要同理，approve 之后 pending 已不在表里。
+    let pending_args = self.skills.pending_args_summary(request_id);
+    let tool_label = pending_label.clone().unwrap_or_else(|| request_id.to_string());
+    let started = std::time::Instant::now();
+    // v45.19：批准时先亮「正在执行」——approve 是同步阻塞的，构建/渲染类能跑一两分钟。
+    if approve {
+        let _ = self.sink.emit(
+            "qibai://exec-step",
+            serde_json::json!({
+                "tool": &tool_label, "args_summary": pending_args.unwrap_or_default(), "phase": "start",
+            }),
+        );
+    }
+    let result = match self.skills.approve(request_id, approve).await {
+        Ok(r) => r,
+        Err(e) => {
+            let msg = Engine::exec_error_hint(e.to_string());
+            if approve {
+                let _ = self.sink.emit(
+                    "qibai://exec-step",
+                    serde_json::json!({
+                        "tool": &tool_label, "phase": "done", "ok": false,
+                        "elapsed_ms": started.elapsed().as_millis() as u64,
+                        "error": exec_inline_summary(&msg, 200),
+                    }),
+                );
+            }
+            return Err(EngineError::Skill(msg));
+        }
+    };
     // 批准成功：把结果回写进会话并 emit 气泡，否则用户永远不知道成没成。
     if approve {
+        let _ = self.sink.emit(
+            "qibai://exec-step",
+            serde_json::json!({
+                "tool": &tool_label, "phase": "done", "ok": true,
+                "elapsed_ms": started.elapsed().as_millis() as u64,
+                "result_summary": exec_inline_summary(&result, 200),
+            }),
+        );
         let reply = format!("已批准并执行：{result}");
         let _ = self.append_chat("assistant", &reply);
         self.sink.emit(
@@ -1413,11 +1496,10 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
         );
         // v45.18：同 mcp-appr 分支——审批执行不经过 LLM 循环，得单独留痕，
         // 否则聊天区「执行记录」折叠里永远缺这一次。
-        let tool = pending_label.unwrap_or_else(|| request_id.to_string());
         self.sink.emit(
             "qibai://executions",
             serde_json::json!({"items": [{
-                "tool": tool,
+                "tool": tool_label,
                 "args_summary": "",
                 "ok": true,
                 "error": serde_json::Value::Null,
@@ -2921,15 +3003,57 @@ PASS_WITH_WARNINGS，FAIL 就改 spec 重渲）→ `anima_mux` 合成 MP4；\n\
                 name: &str,
                 args: &serde_json::Value,
             ) -> crate::skills::SkillOutcome {
+                let summary = summarize_tool_args(args);
+                // v45.19：LLM 工具循环里的每一跳也要让用户看得见——先发 start
+                // （前端立刻多出一行「⟳ 正在调用 X」），返回后发 done/pending，
+                // 带上耗时、结果摘要或错误。此前只在整轮收尾广播一次汇总，
+                // 中间几十秒完全静默，长任务和死掉无法区分。
+                let (label, src) = match crate::mcp::bridge::parse_namespaced(name) {
+                    Some((server, tool)) => (
+                        crate::mcp::bridge::namespaced(&server, &tool),
+                        Some(crate::mcp::bridge::source_label(&server)),
+                    ),
+                    None => (name.to_string(), None),
+                };
+                let started = std::time::Instant::now();
+                let _ = self.sink.emit(
+                    "qibai://exec-step",
+                    serde_json::json!({
+                        "tool": &label, "source": src, "args_summary": &summary, "phase": "start",
+                    }),
+                );
                 // 统一落日志：每一次工具调用（含 engine 级 code_* 与技能白名单内全部工具）
                 // 都打一行到 stderr（启动脚本重定向进 app.log），下次排查不再听模型自述。
                 let out = self.dispatch(name, args).await;
-                let summary = summarize_tool_args(args);
                 let status = match &out {
                     crate::skills::SkillOutcome::Ok(_) => "Ok".to_string(),
                     crate::skills::SkillOutcome::Denied(reason) => format!("Denied({reason})"),
                     crate::skills::SkillOutcome::PendingApproval { .. } => "PendingApproval".to_string(),
                 };
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                let mut step = serde_json::json!({
+                    "tool": &label, "source": src, "elapsed_ms": elapsed_ms,
+                });
+                match &out {
+                    crate::skills::SkillOutcome::Ok(text) => {
+                        step["phase"] = serde_json::Value::String("done".into());
+                        step["ok"] = serde_json::Value::Bool(true);
+                        step["result_summary"] =
+                            serde_json::Value::String(exec_inline_summary(text, 200));
+                    }
+                    crate::skills::SkillOutcome::Denied(reason) => {
+                        step["phase"] = serde_json::Value::String("done".into());
+                        step["ok"] = serde_json::Value::Bool(false);
+                        step["error"] =
+                            serde_json::Value::String(exec_inline_summary(reason, 200));
+                    }
+                    // 待确认：工具还没跑，等用户点允许；前端标「待确认」而不是完成。
+                    crate::skills::SkillOutcome::PendingApproval { .. } => {
+                        step["phase"] = serde_json::Value::String("pending".into());
+                        step["ok"] = serde_json::Value::Null;
+                    }
+                }
+                let _ = self.sink.emit("qibai://exec-step", step);
                 eprintln!("[qibai] tool: {name} args={summary} → {status}");
                 out
             }
@@ -6187,6 +6311,29 @@ mod tests {
             "留痕里应带技能名，实际 {tool}"
         );
         assert_eq!(exec["items"][0]["ok"], serde_json::Value::Bool(true));
+
+        // v45.19：同一次审批还必须广播「执行过程」的 start/done 两步——
+        // 否则聊天区只有事后一句回执，执行期间用户完全看不到进度与耗时。
+        let steps: Vec<serde_json::Value> = events
+            .iter()
+            .filter(|(n, _)| n == "qibai://exec-step")
+            .map(|(_, p)| p.clone())
+            .collect();
+        assert_eq!(
+            steps.len(),
+            2,
+            "审批执行应广播 start + done 两条 exec-step，实际 {steps:?}"
+        );
+        assert_eq!(steps[0]["phase"], "start");
+        assert!(
+            steps[0]["args_summary"].is_string(),
+            "start 必须带参数摘要（卡片上显示调用参数）"
+        );
+        assert!(steps[0]["tool"].as_str().unwrap_or("").contains("anima_schema"));
+        assert_eq!(steps[1]["phase"], "done");
+        assert_eq!(steps[1]["ok"], serde_json::Value::Bool(true));
+        assert!(steps[1]["elapsed_ms"].is_u64(), "done 必须带耗时");
+        assert!(steps[1]["result_summary"].is_string(), "done 必须带结果摘要");
 
         unsafe {
             std::env::remove_var("QIBAI_DATA_DIR");

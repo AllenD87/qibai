@@ -245,6 +245,169 @@
     row.appendChild(det);
   }
 
+  // v45.19：执行过程实时反馈（对齐对话界面的「正在调用 X」条目）。
+  // 后端在工具真正开跑前 emit start，返回后 emit done/pending（qibai://exec-step）。
+  // 前端在聊天流底部维护一张「执行过程」卡片：跑到第几步、调的是谁、参数、已耗时、
+  // 结果摘要或错误。执行中每秒刷新秒数；上一轮卡片冻结保留可回看，新一轮另起一张。
+  let execTraceEl = null;
+  let execTraceTicker = null;
+  const execTraceLines = new Map(); // tool 名 → 该工具的行（同名工具可能连调多次）
+
+  function execTraceDetach() {
+    if (execTraceTicker) { clearInterval(execTraceTicker); execTraceTicker = null; }
+    execTraceLines.clear();
+    execTraceEl = null;
+  }
+
+  function execTraceEnsure() {
+    if (execTraceEl && execTraceEl.parentNode) return execTraceEl;
+    const scroll = $('chatScroll');
+    const el = document.createElement('div');
+    el.className = 'bubble-row sys exec-trace';
+    el.style.cssText = 'font-size:12px;line-height:1.7;color:#374151;background:#f8fafc;' +
+      'border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;margin:6px 0;';
+    const head = document.createElement('div');
+    head.className = 'exec-trace-head';
+    head.style.cssText = 'font-weight:600;color:#111827;';
+    head.textContent = '执行过程';
+    const body = document.createElement('div');
+    body.className = 'exec-trace-body';
+    el.appendChild(head);
+    el.appendChild(body);
+    scroll.appendChild(el);
+    execTraceEl = el;
+    return el;
+  }
+
+  function execTraceScrollEnd() {
+    const s = $('chatScroll');
+    if (s) s.scrollTop = s.scrollHeight;
+  }
+
+  function execTraceShort(tool) {
+    const t = String(tool || '');
+    return t.length > 46 ? t.slice(0, 20) + '…' + t.slice(-20) : t;
+  }
+
+  function execTraceHeadRefresh() {
+    if (!execTraceEl) return;
+    const head = execTraceEl.querySelector('.exec-trace-head');
+    if (!head) return;
+    const lines = execTraceEl.querySelectorAll('.exec-step');
+    const running = execTraceEl.querySelectorAll('.exec-step[data-phase="start"]');
+    head.textContent = (running.length ? '执行中 · ' : '执行过程 · ') + lines.length + ' 步';
+  }
+
+  function execTraceTickerStart() {
+    if (execTraceTicker) return;
+    execTraceTicker = setInterval(() => {
+      if (!execTraceEl || !execTraceEl.parentNode) {
+        clearInterval(execTraceTicker); execTraceTicker = null; return;
+      }
+      const running = execTraceEl.querySelectorAll('.exec-step[data-phase="start"]');
+      running.forEach((line) => {
+        const t0 = Number(line.getAttribute('data-t0') || 0);
+        const ms = line.querySelector('.exec-ms');
+        if (ms && t0) ms.textContent = '已 ' + Math.max(0, Math.round((Date.now() - t0) / 1000)) + 's';
+      });
+      if (!running.length) { clearInterval(execTraceTicker); execTraceTicker = null; }
+    }, 1000);
+  }
+
+  function execTraceAddStart(p) {
+    const el = execTraceEnsure();
+    const body = el.querySelector('.exec-trace-body');
+    const line = document.createElement('div');
+    line.className = 'exec-step';
+    line.setAttribute('data-phase', 'start');
+    line.setAttribute('data-t0', String(Date.now()));
+    line.style.cssText = 'padding:2px 0;border-top:1px dashed #e5e7eb;';
+    const ico = document.createElement('span');
+    ico.className = 'exec-ico';
+    ico.style.cssText = 'color:#6b7280;';
+    ico.textContent = '⟳';
+    line.appendChild(ico);
+    line.appendChild(document.createTextNode(' '));
+    const nm = document.createElement('b');
+    nm.textContent = execTraceShort(p.tool);
+    line.appendChild(nm);
+    const args = String(p.args_summary || '');
+    if (args) {
+      const a = document.createElement('span');
+      a.style.cssText = 'color:#4b5563;';
+      a.textContent = ' ' + (args.length > 60 ? args.slice(0, 60) + '…' : args);
+      line.appendChild(a);
+    }
+    if (p.source) {
+      const pill = document.createElement('span');
+      pill.style.cssText = 'margin-left:6px;padding:0 4px;background:#eef2ff;color:#3730a3;' +
+        'border-radius:3px;font-size:10px;';
+      pill.textContent = String(p.source);
+      line.appendChild(pill);
+    }
+    const ms = document.createElement('span');
+    ms.className = 'exec-ms';
+    ms.style.cssText = 'color:#6b7280;margin-left:6px;';
+    ms.textContent = '已 0s';
+    line.appendChild(ms);
+    body.appendChild(line);
+    const key = String(p.tool);
+    if (!execTraceLines.has(key)) execTraceLines.set(key, []);
+    execTraceLines.get(key).push(line);
+    execTraceTickerStart();
+    execTraceHeadRefresh();
+    execTraceScrollEnd();
+    return line;
+  }
+
+  function execTraceFindRunning(tool) {
+    const arr = execTraceLines.get(String(tool)) || [];
+    for (let i = arr.length - 1; i >= 0; i--) {
+      const st = arr[i] && arr[i].getAttribute('data-phase');
+      if (arr[i] && st !== 'done' && st !== 'pending') return arr[i];
+    }
+    return null;
+  }
+
+  function execTraceFinish(p) {
+    // 没收到 start（事件丢失/直接失败）时补一行，绝不让这一步凭空消失。
+    const line = execTraceFindRunning(p.tool) ||
+      execTraceAddStart({ tool: p.tool, args_summary: '', source: p.source });
+    const phase = p.phase === 'pending' ? 'pending' : 'done';
+    const ok = p.ok !== false;
+    line.setAttribute('data-phase', phase);
+    const ico = line.querySelector('.exec-ico');
+    if (ico) {
+      ico.textContent = phase === 'pending' ? '?' : (ok ? '✓' : '✗');
+      ico.style.color = phase === 'pending' ? '#b45309' : (ok ? '#16a34a' : '#b91c1c');
+    }
+    const ms = line.querySelector('.exec-ms');
+    if (ms) {
+      ms.textContent = phase === 'pending' ? '待确认'
+        : (p.elapsed_ms ? (Math.round(Number(p.elapsed_ms) / 100) / 10).toFixed(1) + 's' : '完成');
+    }
+    if (p.result_summary) {
+      const res = document.createElement('div');
+      res.style.cssText = 'color:#374151;margin-left:15px;word-break:break-all;';
+      res.textContent = '结果：' + String(p.result_summary);
+      line.appendChild(res);
+    }
+    if (p.error) {
+      const err = document.createElement('div');
+      err.style.cssText = 'color:#b91c1c;margin-left:15px;word-break:break-all;';
+      err.textContent = '错误：' + String(p.error);
+      line.appendChild(err);
+    }
+    execTraceHeadRefresh();
+    execTraceScrollEnd();
+  }
+
+  function execTraceHandle(p) {
+    if (!p || !p.tool) return;
+    if (p.phase === 'start') execTraceAddStart(p);
+    else execTraceFinish(p);
+  }
+
   function appendBubble(role, content, doScroll = true, meta = null) {
     const scroll = $('chatScroll');
     const row = document.createElement('div');
@@ -310,9 +473,13 @@
       }
     }
 
-    scroll.appendChild(row);
+    // v45.19：执行过程卡片始终沉底——新气泡插到它前面，阅读顺序是
+    // 「执行过程 → 回答」，和对话界面的观感一致。
+    if (execTraceEl && execTraceEl.parentNode === scroll) scroll.insertBefore(row, execTraceEl);
+    else scroll.appendChild(row);
     // v20：批量渲染时仅最后一次滚底（调用方 render 完统一滚动），避免 N 次 scrollTop 抖动
-    if (doScroll) scroll.scrollTop = scroll.scrollHeight;
+    if (!doScroll) return;
+    scroll.scrollTop = scroll.scrollHeight;
   }
 
   // v20：聊天记录刷新——epoch 门防旧快照覆盖 + 150ms trailing 合并风暴
@@ -413,6 +580,8 @@
     // 防止 core 抢先 emit 的 executions 被挂到上一轮气泡上。
     pendingExec = [];
     lastAssistantRow = null;
+    // v45.19：上一轮的执行过程卡片冻结保留（可回看），新一轮另起一张。
+    execTraceDetach();
     lastSendAt = Date.now();
     $('chatInput').value = '';
     try {
@@ -1608,6 +1777,12 @@
   });
   listen('qibai://tts-interrupted', () => {
     toast('已停止朗读（检测到你说话）');
+  });
+
+  // v45.19：执行过程实时步骤流——正在跑什么工具、带什么参数、花了多久、结果摘要，
+  // 逐条落到聊天区的「执行过程」卡片，不用等整轮跑完才看到一句回执。
+  listen('qibai://exec-step', (ev) => {
+    execTraceHandle((ev && ev.payload) || {});
   });
 
   // v45.14：core 的工具执行留痕（engine 每轮 emit）——接到气泡折叠块上。

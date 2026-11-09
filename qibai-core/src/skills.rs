@@ -943,6 +943,18 @@ impl SkillsRegistry {
         })
     }
 
+    /// v45.19：待确认项的可读参数摘要（「执行过程」实时反馈用）。
+    /// 与 pending_label 一样必须在 approve 之前取——approve 会把 pending 摘走。
+    pub fn pending_args_summary(&self, request_id: &str) -> Option<String> {
+        let pending = self.pending.get(request_id)?;
+        let s = pending.args.to_string();
+        let mut t: String = s.chars().take(120).collect();
+        if s.chars().count() > 120 {
+            t.push('…');
+        }
+        Some(t)
+    }
+
     pub fn is_pending_high_risk(&self, request_id: &str) -> bool {
         let Some(pending) = self.pending.get(request_id) else {
             return false;

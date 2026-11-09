@@ -162,6 +162,8 @@ plugins/
 - 单次 MCP 工具调用超时 300s（与 8 轮 / 240s 的工具循环对齐）：`anima_render` 渲 450 帧约 50s，旧的 10s 常量必然把它砍断。
 - 审批执行留痕（v45.18）：审批（`approve_skill`）不经过 LLM 工具循环，此前执行完只回一句「已批准并执行」，`qibai://executions` 轮不到它、聊天区「本轮执行」折叠永远是空的。现在两条审批分支（MCP `mcp-appr-*` 与普通技能）都会广播一条执行记录（工具名 + 参数摘要 ≤120 字 + ok），前端按既有逻辑挂到气泡上。
 - 执行等待可见（v45.18）：`approve_skill` 是同步阻塞的（渲染/构建类可跑 1 分钟以上），前端在弹窗内显示「正在执行 X… 已 Ns」心跳，超 20s 追加「别关窗口」提示；成功后 toast 带耗时，失败仍走原有红条 + 分类话术。
+- 执行过程实时步骤流（v45.19）：新增事件 `qibai://exec-step`，`approve_skill` 两条审批分支与 LLM 工具循环的每次 `ToolExecutor::invoke` 都会先发 `phase=start`（tool / source / args_summary），返回后发 `phase=done`（ok / elapsed_ms / result_summary 或 error），待确认则发 `phase=pending`。前端在聊天流底部维护一张「执行过程」卡片，执行中每秒刷新「已 Ns」，完成后收成 ✓/✗ + 耗时 + 结果摘要；新气泡插在卡片之前，阅读顺序为「执行过程 → 回答」。
+- 落点提示（v45.19）：`anima_*` 的输出目录由调用参数 `out` 决定（`anima_build` 默认落 spec 同级 `build/`，`anima_render` / `anima_mux` 的 `out` 为必填）；`~/Documents/qibai` 只是文件写操作的工作区根，不会自动收到任何产物。想把成片固定收在那里，需在需求里写明绝对路径。
 
 ### 2.5 专家体系装配（T5/T6）
 
