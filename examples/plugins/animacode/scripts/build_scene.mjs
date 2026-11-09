@@ -21,7 +21,7 @@ const ONLY = arg('format');
 const SKILL = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const RT = path.join(SKILL, 'assets/runtime');
 const TP = path.join(SKILL, 'assets/template');
-const BLOCK_NAMES = ['title', 'stat', 'bars', 'process', 'quote', 'endcard'];
+const BLOCK_NAMES = ['title', 'stat', 'bars', 'process', 'timeline', 'compare', 'quote', 'endcard'];
 
 if (!existsSync(SPEC)) { console.error('spec not found:', SPEC); process.exit(2); }
 const raw = JSON.parse(readFileSync(SPEC, 'utf8'));

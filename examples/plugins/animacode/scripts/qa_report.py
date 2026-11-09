@@ -67,7 +67,10 @@ def main():
     ap.add_argument('--dead-ratio', type=float, default=0.0025, help='fraction of pixels that must change per frame')
     ap.add_argument('--dead-min', type=float, default=0.45, help='seconds of static before warning')
     ap.add_argument('--dead-peak', type=float, default=2.5, help='local change amplitude; small subjects still count as motion')
-    ap.add_argument('--work-w', type=int, default=720, help='downsample width for motion analysis')
+    ap.add_argument('--work-w', type=int, default=0,
+                    help='downsample width for motion analysis; 0 = auto by frame count (memory-safe)')
+    ap.add_argument('--mem-budget', type=float, default=0,
+                    help='ignored; kept for CLI compatibility (the pass is streamed)')
     ap.add_argument('--fingerprint', default=None, help='write per-frame perceptual hashes here')
     ap.add_argument('--baseline', default=None, help='compare against a previous fingerprint file')
     ap.add_argument('--fail-on-change', action='store_true', help='treat visual diff as a failure')
@@ -84,27 +87,49 @@ def main():
     except Exception:
         pass
 
-    # ---- per-frame measures on a downsampled grayscale copy
-    imgs, alphas, lumas = [], [], []
+    # ---- per-frame measures, streamed: never hold the whole sequence in memory.
+    # A 2300-frame cut at work-w 720 used to need ~2.7GB and got OOM-killed
+    # (exit code 0, no output). Auto width keeps the working set bounded.
+    # The measurement pass is streamed (one downsampled frame at a time), so memory
+    # no longer scales with the frame count — 2309 frames are as cheap as 23.
+    # Keep the width at the historical 720 default: going smaller hides small moving
+    # subjects and manufactures false "static" runs.
+    ww = a.work_w or min(720, meta[0] if meta else 720)
+    if not a.work_w:
+        print(f'downsample width: {ww}px (auto, default 720)')
+    alphas, lumas = [], []
     bboxes = []
-    for f in files:
-        im = Image.open(f).convert('RGBA')
+    diffs, changed, peaks = [], [], []
+    prev = None
+    k = None
+    prog_step = max(1, len(files) // 12)
+    for n, f in enumerate(files):
+        im = Image.open(f)
         w, h = im.size
-        g = im.convert('L').resize((a.work_w, max(1, round(a.work_w * h / w))), Image.BILINEAR)
-        imgs.append(np.asarray(g, dtype=np.float32))
-        arr = np.asarray(im)
-        alpha = arr[:, :, 3]
+        hh = max(1, round(ww * h / w))
+        g = im.convert('L').resize((ww, hh), Image.BILINEAR)
+        cur = np.asarray(g, dtype=np.float32)
+        if prev is None:
+            diffs.append(0.0); changed.append(0.0); peaks.append(0.0)
+        else:
+            d = np.abs(cur - prev)
+            diffs.append(float(d.mean()))
+            changed.append(float((d > 8).mean()))     # share of pixels that actually moved
+            if k is None: k = max(1, int(d.size * 0.01))
+            peaks.append(float(np.sort(d.ravel())[-k:].mean()))
+        prev = cur
+        rgba = np.asarray(im.convert('RGBA'))
+        alpha = rgba[:, :, 3]
         alphas.append(float((alpha > 8).mean()) if alpha.min() < 250 else 1.0)
         lumas.append(float(np.asarray(im.convert('L').resize((64, 36)), dtype=np.float32).mean()))
-    stack = np.stack(imgs)
-    if len(imgs) > 1:
-        d = np.abs(np.diff(stack, axis=0))
-        diffs = d.mean(axis=(1, 2))
-        changed = (d > 8).mean(axis=(1, 2))   # share of pixels that actually moved
-        k = max(1, int(d[0].size * 0.01))
-        peaks = np.array([np.sort(fr.ravel())[-k:].mean() for fr in d])
+        if n % prog_step == 0:
+            print(f'  measured {n}/{len(files)}', flush=True)
+    diffs = np.array(diffs); changed = np.array(changed); peaks = np.array(peaks)
+    # diffs[i] compares frame i with i-1, so run indices are 1-based; shift for reporting
+    if len(diffs) > 1:
+        dshift = diffs[1:]; cshift = changed[1:]; pshift = peaks[1:]
     else:
-        diffs = np.array([0.0]); changed = np.array([0.0]); peaks = np.array([0.0])
+        dshift = np.array([0.0]); cshift = np.array([0.0]); pshift = np.array([0.0])
 
     fps = a.fps
     total = len(files)
@@ -121,7 +146,7 @@ def main():
         issues.append(f'{len(blank)} blank/empty frames (first: {blank[0]})')
 
     # ---- dead motion runs
-    dead_mask = (changed < a.dead_ratio) & (peaks < a.dead_peak)
+    dead_mask = (cshift < a.dead_ratio) & (pshift < a.dead_peak)
     runs, start = [], None
     for i, d in enumerate(dead_mask):
         if d and start is None: start = i
@@ -129,14 +154,14 @@ def main():
     if start is not None: runs.append((start, len(dead_mask)))
     dead_runs = [r for r in runs if (r[1] - r[0]) / fps >= a.dead_min]
     for s, e in dead_runs:
-        warnings.append(f'static {s/fps:.2f}-{e/fps:.2f}s ({(e-s)/fps:.2f}s, peak {peaks[s:e].max():.1f}) — confirm it is an intentional hold')
+        warnings.append(f'static {s/fps:.2f}-{e/fps:.2f}s ({(e-s)/fps:.2f}s, peak {np.max(pshift[max(0,s):e]) if e > s else 0:.1f}) — confirm it is an intentional hold')
 
     # ---- motion spikes (pops / single-frame flashes)
-    if len(diffs) > 3:
-        med = float(np.median(diffs)) or 1e-6
-        spikes = [i for i, d in enumerate(diffs) if d > max(med * 12, 12)]
+    if len(dshift) > 3:
+        med = float(np.median(dshift)) or 1e-6
+        spikes = [i for i, d in enumerate(dshift) if d > max(med * 12, 12)]
         if spikes:
-            warnings.append(f'{len(spikes)} abrupt motion spike(s) at t≈' + ', '.join(f'{i/fps:.2f}s' for i in spikes[:6]))
+            warnings.append(f'{len(spikes)} abrupt motion spike(s) at t≈' + ', '.join(f'{(i+1)/fps:.2f}s' for i in spikes[:6]))
 
     # ---- alpha bbox edge contact (only meaningful for non-full-bleed comps)
     for i, f in enumerate(files):
@@ -241,12 +266,12 @@ def main():
     if a.sheet:
         make_sheet(files, a.sheet, fps, title=a.title or f'{total} frames · {total/fps:.1f}s')
     if a.plot:
-        make_plot(diffs, fps, a.plot, dead_runs)
+        make_plot(dshift, fps, a.plot, dead_runs)
 
     report = dict(
         frames=total, fps=fps, duration=round(total / fps, 3), size=meta,
-        motion=dict(mean=round(float(diffs.mean()), 3), max=round(float(diffs.max()), 3),
-                    changed_mean=round(float(changed.mean()), 4),
+        motion=dict(mean=round(float(dshift.mean()), 3), max=round(float(dshift.max()), 3),
+                    changed_mean=round(float(cshift.mean()), 4),
                     dead_seconds=round(sum((e - s) / fps for s, e in dead_runs), 2)),
         luminance=dict(mean=round(luma_mean, 1), dark_share=round(dark_share, 3), saturation=round(sat, 1)),
         text=dict(overlap=overlap, outside_safe=safe, tiny=tiny,
@@ -257,7 +282,7 @@ def main():
     json.dump(report, open(a.out, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
 
     print(f'frames {total} @ {fps}fps = {total/fps:.2f}s   {meta}')
-    print(f'motion: mean {diffs.mean():.2f}  peak {diffs.max():.2f}  dead {report["motion"]["dead_seconds"]}s')
+    print(f'motion: mean {dshift.mean():.2f}  peak {dshift.max():.2f}  dead {report["motion"]["dead_seconds"]}s')
     print(f'luma: mean {luma_mean:.0f}  dark<40 {dark_share*100:.0f}%  sat {sat:.0f}')
     print(f'text: overlap {overlap}  outside-safe {safe}  tiny {tiny}  contrast-flags {len(seen_c)}')
     for m in issues: print('  FAIL ·', m)
@@ -268,7 +293,17 @@ def main():
 def make_sheet(files, out, fps, title='', cols=4, cell_w=480, rows=3, gap=10):
     n = min(len(files), cols * rows)
     idxs = [round(i * (len(files) - 1) / (n - 1)) for i in range(n)] if n > 1 else [0]
-    cw, ch = cell_w, int(cell_w * 9 / 16)
+    # 缩略格保持成片比例：竖版按 9:16 硬塞进 16:9 会被压扁，让人误判版式
+    try:
+        im0 = Image.open(files[0]); ar = im0.width / im0.height
+    except Exception:
+        ar = 16 / 9
+    ch = 300
+    cw = int(ch * ar)
+    if cw > cell_w:
+        cw = cell_w; ch = int(cw / ar)
+    if cw < 120:
+        cw = 120; ch = int(cw / ar)
     label_h = 26
     W = cols * cw + (cols + 1) * gap
     H = rows * (ch + label_h) + (rows + 1) * gap + 46

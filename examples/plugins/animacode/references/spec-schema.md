@@ -35,7 +35,7 @@
 |---|---|---|
 | `id` | 是 | 唯一；同时作为文字审计 group 的前缀 |
 | `t0` / `t1` | 是 | 秒，必须 `t1>t0` 且落在 `0..duration`；相邻镜头可交叠做转场 |
-| `block` | 是 | `title` / `stat` / `bars` / `process` / `quote` / `endcard` |
+| `block` | 是 | `title` / `stat` / `bars` / `process` / `timeline` / `compare` / `quote` / `endcard` |
 | `in` | 否 | `{type:'fade'|'rise'|'scale'|'maskUp', dur:0.5, ease:'outExpo'}`，`dur` 必须小于镜头长度 |
 | `out` | 否 | `{dur:0.4}`，淡出固定 `inQuad` |
 | `data` | 是 | 块的具体内容，见 `blocks.md` |

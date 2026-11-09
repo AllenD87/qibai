@@ -320,6 +320,174 @@
     // no decorative sweep: the mark's slow breathing is the only motion here
   };
 
+  // ---------------------------------------------------------------- timeline
+  // 时间轴/里程碑：一条轴 + 若干节点，节点随进度依次点亮。
+  // data: { title?, mid?, items:[{ label, note?, at? }] }   at = 0..1 轴上的位置
+  BLOCKS.timeline = function (ctx, t, shot, L, S, scene) {
+    const d = shot.data || {}, th = L.theme;
+    const lt = t - shot.t0, A0 = ctx.globalAlpha, u = L.u;
+    const ink = th.ink || '#F2F0EA', accent = th.accent || '#FF5A3C', muted = th.muted || '#8C93A0';
+    const items = (d.items || []).slice(0, 6);
+    const n = items.length;
+    if (!n) return;
+    const portrait = L.portrait;
+
+    if (d.title) {
+      ctx.globalAlpha = A0 * AC.tween(lt, 0.05, 0.4, 'outQuad');
+      scene.text(d.title, portrait ? L.box.x : L.W / 2, L.box.y + 8 * u, {
+        size: Math.round((portrait ? 42 : 34) * u), weight: 600, align: portrait ? 'left' : 'center', color: ink, group: shot.id + ':tt',
+      });
+      ctx.globalAlpha = A0;
+    }
+
+    const pos = items.map((it, i) => AC.clamp(it.at == null ? (n > 1 ? i / (n - 1) : 0.5) : +it.at, 0, 1));
+    const top = L.box.y + (d.title ? 86 * u : 34 * u);
+    const bot = L.box.y + L.box.h - 22 * u;
+    const prog = AC.tween(lt, 0.15, Math.max(0.5, d.grow || 1.2), 'outQuint');
+    const portAx = L.box.x + L.box.w * 0.16;   // 竖版：轴放在左六分之一处，右侧留给标签
+
+    if (portrait) {
+      const ax = portAx;
+      ctx.globalAlpha = A0 * 0.35;
+      ctx.fillStyle = muted;
+      ctx.fillRect(ax - 1, top, 2, bot - top);
+      ctx.globalAlpha = A0 * 0.95;
+      ctx.fillStyle = accent;
+      ctx.fillRect(ax - 1, top, 2, (bot - top) * prog);
+      // 竖版：轴在左三分之一，标签栏留足宽度的同时不压到轴
+    } else {
+      const ay = top + (bot - top) * 0.52;
+      ctx.globalAlpha = A0 * 0.35;
+      ctx.fillStyle = muted;
+      ctx.fillRect(L.box.x + 16 * u, ay - 1, L.box.w - 32 * u, 2);
+      ctx.globalAlpha = A0 * 0.95;
+      ctx.fillStyle = accent;
+      ctx.fillRect(L.box.x + 16 * u, ay - 1, (L.box.w - 32 * u) * prog, 2);
+    }
+
+    items.forEach((it, i) => {
+      const p = AC.spring(lt, 0.3 + i * 0.11, { stiffness: 150, damping: 14 });
+      if (p <= 0.001) return;
+      const lit = AC.clamp((prog - pos[i] + 0.04) / 0.04, 0, 1);   // 轴走到节点才点亮
+      const r = 13 * u * Math.min(1, p);
+      ctx.globalAlpha = A0 * Math.min(1, p * 2);
+
+      if (portrait) {
+        const ny = top + (bot - top) * pos[i];
+        ctx.fillStyle = lit > 0.9 ? accent : muted;
+        ctx.beginPath(); ctx.arc(portAx, ny, r, 0, Math.PI * 2); ctx.fill();
+        const lx = portAx + 48 * u;
+        scene.text(it.label || '', lx, ny + 12 * u, {
+          size: Math.round(42 * u), weight: 600, color: lit > 0.9 ? ink : muted, group: shot.id + ':i' + i,
+        });
+        if (it.note) scene.text(it.note, lx, ny + 58 * u, {
+          size: Math.round(34 * u), weight: 400, color: muted, group: shot.id + ':n' + i,
+        });
+      } else {
+        const nx = L.box.x + 16 * u + (L.box.w - 32 * u) * pos[i];
+        const ay = top + (bot - top) * 0.52;
+        ctx.fillStyle = lit > 0.9 ? accent : muted;
+        ctx.beginPath(); ctx.arc(nx, ay, r, 0, Math.PI * 2); ctx.fill();
+        const above = i % 2 === 0;
+        const ly = ay + (above ? -52 * u : 62 * u);
+        const ls = Math.round(30 * u), ns = Math.round(28 * u);
+        // 首尾节点居中的标签会顶出 6% 安全区：按实际文字宽度把中心夹回来
+        const mw = Math.max(scene.measure(it.label || '', { size: ls, weight: 600 }),
+                            it.note ? scene.measure(it.note, { size: ns, weight: 400 }) : 0) / 2 + 4 * u;
+        const tx = AC.clamp(nx, L.W * 0.06 + mw, L.W * 0.94 - mw);
+        scene.text(it.label || '', tx, ly, {
+          size: ls, weight: 600, align: 'center', color: lit > 0.9 ? ink : muted, group: shot.id + ':i' + i,
+        });
+        if (it.note) scene.text(it.note, tx, ly + (above ? -38 * u : 38 * u), {
+          size: ns, weight: 400, align: 'center', color: muted, group: shot.id + ':n' + i,
+        });
+      }
+    });
+  };
+
+  // ----------------------------------------------------------------- compare
+  // 左右对比：两栏卡片，中间 VS/箭头。竖版上下堆叠。
+  // data: { title?, mid?, left:{title, items[], }, right:{title, items[]} }
+  BLOCKS.compare = function (ctx, t, shot, L, S, scene) {
+    const d = shot.data || {}, th = L.theme;
+    const lt = t - shot.t0, A0 = ctx.globalAlpha, u = L.u;
+    const ink = th.ink || '#F2F0EA', accent = th.accent || '#FF5A3C', muted = th.muted || '#8C93A0';
+    const portrait = L.portrait;
+
+    if (d.title) {
+      ctx.globalAlpha = A0 * AC.tween(lt, 0.05, 0.4, 'outQuad');
+      scene.text(d.title, portrait ? L.box.x : L.W / 2, L.box.y + 8 * u, {
+        size: Math.round((portrait ? 42 : 34) * u), weight: 600, align: portrait ? 'left' : 'center', color: ink, group: shot.id + ':ct',
+      });
+      ctx.globalAlpha = A0;
+    }
+
+    const top = L.box.y + (d.title ? 84 * u : 12 * u);
+    const height = L.box.y + L.box.h - top - 10 * u;
+    const gap = portrait ? 76 * u : Math.min(150 * u, L.box.w * 0.13);
+    const rows = Math.min(4, Math.max((d.left && d.left.items || []).length, (d.right && d.right.items || []).length, 1));
+    const rowH = Math.min(78 * u, 86 * u);
+    // 卡片高度贴合内容，再在可用区里垂直居中：短清单不留半屏空白
+    const cardH = Math.min(portrait ? (height - gap) / 2 : height, 166 * u + (rows - 1) * rowH);
+    const groupH = portrait ? cardH * 2 + gap : cardH;
+    const yOff = top + (height - groupH) / 2;
+    const panels = portrait
+      ? [{ key: 'left', x: L.box.x, y: yOff, w: L.box.w, h: cardH },
+         { key: 'right', x: L.box.x, y: yOff + cardH + gap, w: L.box.w, h: cardH }]
+      : [{ key: 'left', x: L.box.x, y: yOff, w: (L.box.w - gap) / 2, h: cardH },
+         { key: 'right', x: L.box.x + (L.box.w - gap) / 2 + gap, y: yOff, w: (L.box.w - gap) / 2, h: cardH }];
+
+    panels.forEach((pn, k) => {
+      const side = d[pn.key] || {};
+      const items = (side.items || []).slice(0, 4);
+      const p = AC.spring(lt, 0.14 + k * 0.12, { stiffness: 140, damping: 15 });
+      if (p <= 0.001) return;
+      ctx.save();
+      ctx.globalAlpha = A0 * Math.min(1, p * 1.8);
+      ctx.translate(0, 26 * u * (1 - p));
+      // 面板底色 = 前景色 6% 提亮，保证正文对比度不被拉低
+      ctx.fillStyle = AC.hexA(k ? accent : muted, 0.07);
+      AC.roundRect(ctx, pn.x, pn.y, pn.w, pn.h, 18 * u);
+      ctx.fill();
+      const padX = 34 * u, innerW = pn.w - padX * 2;
+      const hs = fitSize(ctx, side.title || '', Math.round(38 * u), innerW, 700);
+      scene.text(side.title || '', pn.x + padX, pn.y + 62 * u, {
+        size: hs, weight: 700, color: k ? accent : ink, group: shot.id + ':c' + k + 'h',
+      });
+      const baseY = pn.y + 62 * u + 58 * u;
+      items.forEach((it, i) => {
+        const ip = AC.tween(lt, 0.32 + k * 0.1 + i * 0.1, 0.4, 'outQuad');
+        if (ip <= 0.01) return;
+        const y = baseY + i * rowH;
+        ctx.globalAlpha = A0 * ip;
+        ctx.fillStyle = k ? accent : muted;
+        ctx.fillRect(pn.x + padX, y - 20 * u, 18 * u * ip, 3 * u);
+        const is = fitSize(ctx, String(it), Math.round(31 * u), innerW - 34 * u, 500);
+        scene.text(String(it), pn.x + padX + 32 * u, y, {
+          size: is, weight: 500, color: ink, group: shot.id + ':c' + k + 'i' + i,
+        });
+      });
+      ctx.restore();
+    });
+
+    // middle marker
+    const mp = AC.tween(lt, 0.6, 0.4, 'outQuad');
+    if (mp > 0.02) {
+      ctx.globalAlpha = A0 * mp;
+      const mid = d.mid || 'VS';
+      if (portrait) {
+        const my = yOff + cardH + gap / 2 + 14 * u;
+        scene.text(mid, L.box.x + L.box.w / 2, my, {
+          size: Math.round(34 * u), weight: 700, align: 'center', color: accent, group: shot.id + ':cm',
+        });
+      } else {
+        scene.text(mid, L.box.x + L.box.w / 2, yOff + cardH / 2, {
+          size: Math.round(30 * u), weight: 700, align: 'center', baseline: 'middle', color: accent, group: shot.id + ':cm',
+        });
+      }
+    }
+  };
+
   // ---------------------------------------------------------------- captions
   // Global layer, drawn after all shots. Karaoke highlight follows cue progress.
   function renderCaptions(ctx, t, spec, L, scene) {
@@ -327,6 +495,12 @@
     const th = L.theme, A0 = ctx.globalAlpha;
     const size = Math.round((L.portrait ? 46 : 40) * L.u);
     const ink = th.ink || '#FFFFFF', accent = th.accent || '#FF5A3C';
+    // 胶囊底色跟主题明度走：亮底主题用浅色胶囊，深底主题用深色胶囊。
+    // 否则亮底主题里"深墨字压在深胶囊上"，实测对比度只有 1.0–2.9:1。
+    const bgc = hexToRgb(th.bg || '#0E1116');
+    const lin = v => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    const lightTheme = 0.2126 * lin(bgc[0]) + 0.7152 * lin(bgc[1]) + 0.0722 * lin(bgc[2]) > 0.45;
+    const capFill = lightTheme ? AC.hexA(th.ink || '#17181B', 0.10) : 'rgba(10,10,12,0.62)';
     const bottom = L.H - (L.portrait ? L.H * 0.13 : L.H * 0.105);
     cues.forEach((c, ci) => {
       if (t < c.t0 || t > c.t1) return;
@@ -341,7 +515,7 @@
       const bh = size * 1.5 + padY;
       ctx.save();
       ctx.globalAlpha = A0 * a;
-      ctx.fillStyle = 'rgba(10,10,12,0.62)';
+      ctx.fillStyle = capFill;
       AC.roundRect(ctx, L.W / 2 - bw / 2, bottom - bh / 2, bw, bh, bh / 2);
       ctx.fill();
       const prog = (t - c.t0) / Math.max(0.001, (c.t1 - c.t0));

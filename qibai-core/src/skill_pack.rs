@@ -273,7 +273,10 @@ pub fn install_pack(
         .map_err(|e| SkillPackError::new("install", format!("安装失败: {e}")))?;
     let _ = std::fs::remove_dir_all(&tmp);
     let _ = written; // 解压产物已复制
-    Ok(manifest)
+    // 按最终落点重载清单：`{PLUGIN_DIR}` 若按暂存目录解析，装完的入口会指向已删除的 /tmp。
+    let installed = ManifestLoader::load(&target)
+        .map_err(|e| SkillPackError::new("manifest", format!("安装后清单重载失败: {e}")))?;
+    Ok(installed)
 }
 
 /// 导出技能包：从 plugins/<id> 打包为 zip。

@@ -121,6 +121,7 @@
 **不止这 14 个，还能往外长：**
 
 - **技能包**：`qibai-plugin.json` + 脚本打包成 zip，控制台里导入即装，不用改主程序。
+- **自带一个真样例**：`examples/plugins/animacode`（动画成片连接器，MCP 五工具：schema / build / render / qa / mux），装进技能库后模型能直接调用出片，说明见 [docs/ANIMACODE_MCP.md](docs/ANIMACODE_MCP.md)。
 - **专家插件**：一份人设提示词 + 一份技能白名单 + 音色/形象绑定。装一个「代码审查专家」，它就只会用读代码的工具，说话方式也换一套。
 - **MCP**：标准 stdio JSON-RPC 客户端，外部工具统一命名 `mcp__<server>__<tool>`；**默认配置为空 → 一个子进程都不启动**。
 - **自定义连接器**：控制台里填一条就能接一个新能力——`Mcp`（command + args）或 `Http`（POST url + headers），运行时物化成插件。

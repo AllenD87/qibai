@@ -3,20 +3,20 @@
   "type": "connector",
   "name": "Animacode 动画成片",
   "description": "用代码做确定性动画：写一份 scene.json，构建多比例、逐帧渲染、自动质检（安全区/重叠/对比度/空帧/长静止/视觉回归）、合成带音轨 MP4。全本地、零 npm 依赖、不联网。工具：anima_schema 取字段 / anima_build 校验构建 / anima_render 渲帧 / anima_qa 质检 / anima_mux 合成。",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "author": "animacode",
   "permissions": ["system:launch"],
   "entry": {
     "kind": "mcp",
     "mcp": {
       "command": "node",
-      "args": ["{QIBAI_HOME}/plugins/animacode/mcp/server.mjs"]
+      "args": ["{PLUGIN_DIR}/mcp/server.mjs"]
     }
   },
   "functions": [
     {
       "name": "anima_schema",
-      "description": "返回 scene.json 全字段与六个镜头块的 data 字段。写 spec 前先调用，不要凭记忆编字段。",
+      "description": "返回 scene.json 全字段与八个镜头块的 data 字段。写 spec 前先调用，不要凭记忆编字段。",
       "parameters": { "type": "object", "properties": {} }
     },
     {

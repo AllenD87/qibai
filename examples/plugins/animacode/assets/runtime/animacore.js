@@ -89,6 +89,30 @@
     return frames[frames.length - 1][1];
   }
 
+  /**
+   * Piecewise-linear time remap: script time -> output time.
+   * table rows: [scriptFrom, scriptTo, outFrom, outTo]; rows must be ordered and
+   * may be contiguous (gaps are held at the previous segment's end value).
+   * Use it when you re-record narration or change pacing: keep one script timeline
+   * and one mapping table instead of rewriting every absolute timestamp in the scene.
+   */
+  function remap(t, table) {
+    if (!table || !table.length) return t;
+    const head = table[0], tail = table[table.length - 1];
+    if (t <= head[0]) return head[2];
+    if (t >= tail[1]) return tail[3];
+    let last = head[2];
+    for (let i = 0; i < table.length; i++) {
+      const [a, b, c, d] = table[i];
+      if (t >= a && t <= b) {
+        const p = b > a ? (t - a) / (b - a) : 1;
+        return c + (d - c) * p;
+      }
+      if (t > b) last = d;
+    }
+    return last;
+  }
+
   /** Deterministic PRNG (mulberry32) — always seed your randomness. */
   function rng(seed = 1) {
     let a = seed >>> 0;
@@ -148,6 +172,17 @@
       return this;
     }
 
+    /**
+     * Add a layer that receives *script* time and is drawn at remapped output time.
+     * addWarped(TABLE, (ctx, scriptT) => {...}, 'name') keeps every timestamp in the
+     * layer meaningful after the narration is re-cut, and only the table changes.
+     */
+    addWarped(table, layer, name) {
+      const fn = (ctx, t, scene) => layer(ctx, remap(t, table), scene);
+      this.layers.push({ name, draw: fn });
+      return this;
+    }
+
     /** Draw one frame at time t (seconds). Pure: same t -> same pixels. */
     render(t) {
       const ctx = this.ctx;
@@ -191,7 +226,8 @@
       const M = ctx.getTransform();
       const pt = (px, py) => ({ x: M.a * px + M.c * py + M.e, y: M.b * px + M.d * py + M.f });
       const c1 = pt(left, y - asc), c2 = pt(left + w, y + desc);
-      this._texts.push({
+      const skipAudit = o.audit === false;   // text on a coloured capsule: ring sampling would compare against the card, not the pill
+      if (!skipAudit) this._texts.push({
         text: str, size: Math.abs(size * Math.sqrt(Math.abs(M.a * M.d - M.b * M.c))),
         x: Math.min(c1.x, c2.x), y: Math.min(c1.y, c2.y),
         w: Math.abs(c2.x - c1.x), h: Math.abs(c2.y - c1.y), weight,
@@ -333,7 +369,7 @@
   function noGlow(ctx) { ctx.shadowBlur = 0; ctx.shadowColor = 'transparent'; }
 
   const AC = {
-    ease: E, tween, move, stagger, spring, keyframes, rng,
+    ease: E, tween, move, stagger, spring, keyframes, remap, rng,
     clamp, lerp, roundRect, hexA, FONT_STACK, SERIF_STACK,
     Scene, trail, burst, grain, vignette, glow, noGlow,
   };

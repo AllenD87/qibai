@@ -6,7 +6,7 @@
 
 | 维度 | Remotion | animacode v2 |
 |---|---|---|
-| 编程模型 | React 组件 + hooks，`useCurrentFrame` 驱动 | 声明式 `scene.json` + 六个镜头块；也可手写 canvas 图层 |
+| 编程模型 | React 组件 + hooks，`useCurrentFrame` 驱动 | 声明式 `scene.json` + 八个镜头块；也可手写 canvas 图层 |
 | 依赖 | npm 工程、Node、React、bundler | 零 npm 依赖；Chromium + Node + ffmpeg 即可 |
 | 预览 | Studio（需 `npx remotion studio`） | 本地 Studio（`preview.mjs` 直接起） |
 | 多比例 | 需自行写多套 composition 或按 props 分支 | 一份 spec 出多版，版式按 `H>W` 自动重排 |

@@ -27,7 +27,20 @@ const FORMAT = ALPHA ? 'png' : String(arg('format', 'jpeg'));
 const QUALITY = +(arg('quality', 96));
 const EXT = FORMAT === 'png' ? 'png' : 'jpg';
 const WORKERS = +(arg('workers', 1)), WORKER = +(arg('worker', 0));
-const ONLY = arg('frames') ? String(arg('frames')).split(',').map(Number) : null;
+function parseFrameList(v) {
+  const out = [];
+  for (const part of String(v).split(',')) {
+    const t = part.trim();
+    if (!t) continue;
+    const m = t.match(/^(\d+)\s*[-:]\s*(\d+)$/);
+    if (m) { const a = +m[1], b = +m[2]; for (let i = Math.min(a, b); i <= Math.max(a, b); i++) out.push(i); }
+    else if (/^\d+$/.test(t)) out.push(+t);
+    else throw new Error('bad --frames item: ' + t);
+  }
+  return [...new Set(out)].sort((x, y) => x - y);
+}
+const ONLY = arg('frames') ? parseFrameList(arg('frames')) : null;
+const CLEAN = !!arg('clean', false);
 const AUDIT = arg('audit');
 const SHOTS = arg('shots') ? String(arg('shots')).split(',').map(x => x.trim()).filter(Boolean) : null;
 const REUSE = arg('reuse');
@@ -149,8 +162,20 @@ if (AUDIT) {
   writeFileSync(AUDIT, JSON.stringify({ fps, duration, frames: total, audits: { ...prev, ...audits } }, null, 1));
 }
 
+// a shorter cut leaves the tail of the previous cut on disk: QA counts them,
+// ffmpeg happily encodes them, and the video ends up longer than the audio.
+let stale = [];
+try {
+  const dir = await (await import('node:fs/promises')).readdir(OUT);
+  stale = dir.map(n => n.match(/^(\d{5})\.(jpg|png)$/)).filter(Boolean).map(m => +m[1]).filter(i => i >= total);
+} catch {}
+if (stale.length) {
+  if (CLEAN) { for (const i of stale) { try { (await import('node:fs')).unlinkSync(path.join(OUT, String(i).padStart(5, '0') + '.' + EXT)); } catch {} } console.log('removed ' + stale.length + ' stale frame(s) beyond #' + (total - 1)); }
+  else console.log('WARNING: ' + stale.length + ' stale frame(s) on disk beyond #' + (total - 1) + ' (older longer cut?) — rerun with --clean');
+}
+
 const ms = Date.now() - t1;
-console.log(JSON.stringify({ rendered: list.length, reused: reused.length, missing: missing.length, fps, duration, format: EXT, ms, perFrameMs: +(ms / Math.max(1, list.length)).toFixed(1) }));
+console.log(JSON.stringify({ rendered: list.length, reused: reused.length, missing: missing.length, stale, fps, duration, total, format: EXT, ms, perFrameMs: +(ms / Math.max(1, list.length)).toFixed(1) }));
 if (missing.length) console.log('missing frames (no source in --reuse): ' + (missing.length > 8 ? missing.slice(0, 8).join(',') + '…' : missing.join(',')));
 ws.close();
 chrome.kill('SIGKILL');

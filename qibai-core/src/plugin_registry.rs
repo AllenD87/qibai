@@ -889,6 +889,10 @@ impl PluginRegistry {
         let _ = std::fs::remove_dir_all(&target);
         crate::skill_adapter::copy_dir_all(from_dir, &target)
             .map_err(|e| format!("复制插件目录失败: {e}"))?;
+        // 复制后按目标目录重载清单：`{PLUGIN_DIR}` 要按最终落点解析，
+        // 否则 entry 里存的还是源目录/临时目录路径，装完就指向不存在的文件。
+        let m = ManifestLoader::load(&target)
+            .map_err(|e| format!("目标目录清单重载失败: {e}"))?;
         for f in &m.functions {
             self.by_function.insert(f.name.clone(), m.id.clone());
         }

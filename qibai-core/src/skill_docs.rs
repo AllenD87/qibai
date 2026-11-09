@@ -64,49 +64,75 @@ fn read_manifest(pkg_dir: &Path) -> Result<(String, String, String), String> {
     Ok((name, desc, ty))
 }
 
-/// 扫一段 root 下 skills/ 与 experts/ 子目录。
+/// 扫一段 root：约定目录 skills/ experts/ + 根下平铺包（安装器落盘位置）。
+///
+/// 安装/导入走 `plugins/<id>/`（平铺），若只扫 `skills/ experts/`，用户装好的包
+/// 会出现在插件注册表里却不出现在技能目录中——所以两处都扫。
 fn scan_root(root: &Path, source: &'static str, out: &mut Vec<SkillDocEntry>) {
-    for sub in ["skills", "experts"] {
-        let dir = root.join(sub);
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
-        for entry in rd.flatten() {
-            let pkg_dir = entry.path();
-            if !pkg_dir.is_dir() { continue }
-            let folder = pkg_dir.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-            let kind: &'static str = if sub == "experts" { "expert" } else { "doc" };
-            match read_manifest(&pkg_dir) {
-                Ok((name, desc, _ty)) => {
-                    let sk = pkg_dir.join("SKILL.md");
-                    let (body, has_doc) = match std::fs::read_to_string(&sk) {
-                        Ok(b) => (Some(b), true),
-                        Err(_) => (None, false),
-                    };
-                    out.push(SkillDocEntry {
-                        name,
-                        description: desc,
-                        body,
-                        kind,
-                        source,
-                        pkg_dir: pkg_dir.display().to_string(),
-                        has_doc,
-                        load_error: None,
-                    });
-                    let _ = folder;
-                }
-                Err(e) => {
-                    eprintln!("[qibai] skill: load failed {folder} {e}");
-                    out.push(SkillDocEntry {
-                        name: folder,
-                        description: String::new(),
-                        body: None,
-                        kind,
-                        source,
-                        pkg_dir: pkg_dir.display().to_string(),
-                        has_doc: false,
-                        load_error: Some(e),
-                    });
-                }
+    for (sub, kind) in [("skills", "doc"), ("experts", "expert")] {
+        if let Ok(rd) = std::fs::read_dir(root.join(sub)) {
+            for entry in rd.flatten() {
+                scan_pkg(entry.path(), kind, source, out, false);
             }
+        }
+    }
+    if let Ok(rd) = std::fs::read_dir(root) {
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if matches!(name.as_str(), "skills" | "experts" | ".disabled") {
+                continue;
+            }
+            scan_pkg(entry.path(), "doc", source, out, true);
+        }
+    }
+}
+
+/// 扫单个包目录；没有 qibai-plugin.json 的目录直接跳过（平铺扫描会撞上杂目录）。
+fn scan_pkg(
+    pkg_dir: PathBuf,
+    kind: &'static str,
+    source: &'static str,
+    out: &mut Vec<SkillDocEntry>,
+    skip_no_manifest: bool,
+) {
+    if !pkg_dir.is_dir() {
+        return;
+    }
+    // 平铺扫描会撞上杂目录：没有清单就直接跳过；约定目录里缺清单仍记 load_error（便于诊断）。
+    if skip_no_manifest && !pkg_dir.join("qibai-plugin.json").is_file() {
+        return;
+    }
+    let folder = pkg_dir.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    match read_manifest(&pkg_dir) {
+        Ok((name, desc, _ty)) => {
+            let sk = pkg_dir.join("SKILL.md");
+            let (body, has_doc) = match std::fs::read_to_string(&sk) {
+                Ok(b) => (Some(b), true),
+                Err(_) => (None, false),
+            };
+            out.push(SkillDocEntry {
+                name,
+                description: desc,
+                body,
+                kind,
+                source,
+                pkg_dir: pkg_dir.display().to_string(),
+                has_doc,
+                load_error: None,
+            });
+        }
+        Err(e) => {
+            eprintln!("[qibai] skill: load failed {folder} {e}");
+            out.push(SkillDocEntry {
+                name: folder,
+                description: String::new(),
+                body: None,
+                kind,
+                source,
+                pkg_dir: pkg_dir.display().to_string(),
+                has_doc: false,
+                load_error: Some(e),
+            });
         }
     }
 }
@@ -220,6 +246,30 @@ mod tests {
         let ce = items.iter().find(|e| e.name == "代码专家").unwrap();
         assert!(!ce.has_doc);
         assert_eq!(ce.kind, "expert");
+        let _ = std::fs::remove_dir_all(&b);
+        let _ = std::fs::remove_dir_all(&u);
+    }
+
+    #[test]
+    fn flat_installed_pack_is_listed() {
+        // 安装器（skill_install / skill_pack）把包装到 `<root>/<id>/`（平铺），
+        // 不套 skills/ 子目录；这层必须被扫到，否则装好的包在插件表里有、技能目录里没有。
+        let b = std::env::temp_dir().join(format!("qibai_flat_b_{}", std::process::id()));
+        let u = std::env::temp_dir().join(format!("qibai_flat_u_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&b);
+        let _ = std::fs::remove_dir_all(&u);
+        make_pkg(&u, "", "animacode", "Animacode 动画成片", "写 scene.json 出片", true);
+        let items = catalog_with(&b, &u);
+        let ac = items
+            .iter()
+            .find(|e| e.name == "Animacode 动画成片")
+            .expect("平铺安装的包应出现在技能目录");
+        assert!(ac.has_doc, "SKILL.md 应读到");
+        assert_eq!(ac.source, "user");
+        // 杂目录（无清单）不产生 load_error 噪音
+        std::fs::create_dir_all(u.join("some-cache")).unwrap();
+        let items = catalog_with(&b, &u);
+        assert!(items.iter().all(|e| e.name != "some-cache"));
         let _ = std::fs::remove_dir_all(&b);
         let _ = std::fs::remove_dir_all(&u);
     }
