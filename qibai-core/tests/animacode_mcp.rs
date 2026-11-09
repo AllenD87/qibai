@@ -87,7 +87,11 @@ async fn mcp_connector_runs_schema_and_build() {
             .unwrap();
         assert_eq!(
             Path::new(&args_text),
-            plugdir.join("animacode/mcp/server.mjs"),
+            plugdir
+                .join("animacode")
+                .canonicalize()
+                .unwrap_or(plugdir.join("animacode"))
+                .join("mcp/server.mjs"),
             "导入后的入口应落在安装目录内"
         );
     }
