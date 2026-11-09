@@ -75,6 +75,8 @@ A/B 两条路径装完，包会出现在技能 / 插件页，但**默认不启�
 
 没装 node 的机器上该用例打印 SKIP 跳过，不算失败。
 
+平台边界：**macOS / Linux 验收完整出片链路**；Windows 目前只验收 MCP 握手与 `anima_schema`——构建脚本按 POSIX 规则拼 spec 目录，在 Windows 上会拼出 `D:\C:\...` 这类路径，CI 里因此只跑到 schema 为止（三平台测试均为绿）。
+
 ## 注意
 
 - `trust` 默认 `confirm`：每次调用走确认；要免确认需把连接器设为 `readonly`。
