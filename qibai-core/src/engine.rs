@@ -2059,6 +2059,34 @@ pub(crate) fn reset_plan_for_rerun(
         Ok(())
     }
 
+    /// 导入安装技能包（字节形态）：WebView 只拿得到文件内容、拿不到可信路径时走这条。
+    pub fn skill_pack_install_bytes(
+        &mut self,
+        file_name: String,
+        data: &[u8],
+    ) -> Result<(), EngineError> {
+        let plugins_dir = self.skills.plugins().plugins_dir().to_path_buf();
+        crate::skill_pack::install_pack_bytes(&file_name, data, &plugins_dir)
+            .map_err(|e| EngineError::Skill(e.to_string()))?;
+        self.skills.plugins_mut().scan();
+        self.resync_experts();
+        Ok(())
+    }
+
+    /// 导出技能包到 `<数据目录>/exports/<id>.qbpk`，返回落盘绝对路径。
+    /// WebView 没法直接存盘，所以由后端选目录并把路径回给前端提示。
+    pub fn skill_pack_export_default(&self, plugin_id: String) -> Result<String, EngineError> {
+        let plugins_dir = self.skills.plugins().plugins_dir().to_path_buf();
+        let dir = crate::settings::data_dir()
+            .map(|d| d.join("exports"))
+            .map_err(|e| EngineError::Skill(e.to_string()))?;
+        std::fs::create_dir_all(&dir).map_err(|e| EngineError::Skill(e.to_string()))?;
+        let dest = dir.join(format!("{plugin_id}.qbpk"));
+        crate::skill_pack::export_pack(&plugin_id, &plugins_dir, &dest)
+            .map_err(|e| EngineError::Skill(e.to_string()))?;
+        Ok(dest.display().to_string())
+    }
+
     /// 导出技能包（zip）：从 plugins/<id> 打包。
     pub fn skill_pack_export(&self, plugin_id: String, zip_path: String) -> Result<(), EngineError> {
         let plugins_dir = self.skills.plugins().plugins_dir().to_path_buf();

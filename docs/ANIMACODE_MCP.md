@@ -36,7 +36,9 @@ references/         spec 字段、块、API、质量门禁、动效、与 Remoti
 
 ## 安装
 
-**A. 技能包（推荐）**：设置页「技能 / 插件 → 导入技能包」，选 `animacode-v2.2.0.qbpk`（zip，根目录就是 `qibai-plugin.json`，不要再套文件夹）。解压落盘到 `<数据目录>/plugins/animacode/`。
+**A. 技能包（推荐）**：控制台「技能与专家」tab →「插件技能」区块的 **`导入技能包`**，选 `animacode-v2.2.0.qbpk`（zip，根目录就是 `qibai-plugin.json`，不要再套文件夹）。解压落盘到 `<数据目录>/plugins/animacode/`。
+
+这条按钮走的是 **文件内容通道**（前端把选中的 zip 读成 base64 → 后端落临时文件 → 复用同一套安全校验与安装链），因为 WebView 的 `<input type=file>` 给不出可信路径。早期构建里它传的是 `demo://文件名` 的假路径，点了必然报「安装失败」；该修复在 `skill_pack_install_bytes` 里，需要重新打包后的版本才生效。
 
 **B. 手动放置**：
 

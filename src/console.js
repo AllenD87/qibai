@@ -3850,6 +3850,20 @@
   }
 
   // ===== 段②c：技能包（.qbpk）面板 =====
+  // 把用户选中的文件读成 base64（去掉 data: 前缀）。WebView 拿不到真实路径，只能传内容。
+  function readFileAsBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const raw = String(reader.result || '');
+        const comma = raw.indexOf(',');
+        resolve(comma >= 0 ? raw.slice(comma + 1) : '');
+      };
+      reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
+      reader.readAsDataURL(file);
+    });
+  }
+
   function bindPackInstall() {
     $('btnPackInstall').addEventListener('click', () => $('packFileInput').click());
     $('packFileInput').addEventListener('change', async () => {
@@ -3858,8 +3872,11 @@
       if (!file) return;
       if (!/\.qbpk$/i.test(file.name)) { toast('请选择 .qbpk 技能包文件'); return; }
       try {
-        await invoke('skill_pack_install', { zip_path: 'demo://' + file.name });
-        toast('技能包已安装：' + file.name);
+        // WebView 给不出可信路径，读文件内容走 base64 交给后端落盘安装。
+        const data_b64 = await readFileAsBase64(file);
+        if (!data_b64) throw new Error('读取技能包内容为空');
+        await invoke('skill_pack_install_bytes', { file_name: file.name, data_b64 });
+        toast('技能包已安装：' + file.name + '（外部包默认停用，去列表里开启）');
       } catch (e) {
         console.warn(e);
         toast('安装失败：' + ((e && e.message) || ''));
@@ -4020,8 +4037,8 @@
       ex.textContent = '导出 .qbpk';
       ex.addEventListener('click', async () => {
         try {
-          await invoke('skill_pack_export', { plugin_id: p.id, zip_path: 'demo://' + p.id + '.qbpk' });
-          toast('技能包已导出：' + p.id + '.qbpk');
+          const r = await invoke('skill_pack_export_default', { plugin_id: p.id });
+          toast('技能包已导出：' + ((r && r.path) || ''));
         } catch (e) {
           console.warn(e);
           toast('导出失败：' + ((e && e.message) || ''));

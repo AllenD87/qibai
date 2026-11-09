@@ -3141,6 +3141,41 @@ async fn skill_pack_install(state: tauri::State<'_, AppState>, zip_path: String)
         .map_err(|e| e.to_string())
 }
 
+/// 导入安装技能包（字节形态）：前端把 .qbpk 内容读成 base64 传来。
+/// WebView 的 `<input type=file>` 给不出可信路径（早先前端传 `demo://文件名` 必然失败），
+/// 所以这里解码 → 交引擎落临时文件 → 复用同一条安全校验与安装链。
+#[tauri::command(rename_all = "snake_case")]
+async fn skill_pack_install_bytes(
+    state: tauri::State<'_, AppState>,
+    file_name: String,
+    data_b64: String,
+) -> Result<serde_json::Value, String> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_b64.trim())
+        .map_err(|e| format!("技能包内容解码失败（多半是读取中断或文件损坏）: {e}"))?;
+    let mut engine = state.engine.lock().await;
+    engine
+        .skill_pack_install_bytes(file_name, &bytes)
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({"ok": true, "bytes": bytes.len()}))
+}
+
+/// 导出技能包到 <数据目录>/exports/，返回落盘路径。
+#[tauri::command(rename_all = "snake_case")]
+async fn skill_pack_export_default(
+    state: tauri::State<'_, AppState>,
+    plugin_id: String,
+) -> Result<serde_json::Value, String> {
+    let path = state
+        .engine
+        .lock()
+        .await
+        .skill_pack_export_default(plugin_id)
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({"ok": true, "path": path}))
+}
+
 /// 导出技能包（zip）：从 plugins/<id> 打包。
 #[tauri::command]
 async fn skill_pack_export(
@@ -4474,6 +4509,8 @@ fn main() {
             connector_remove,
             connector_list,
             skill_pack_install,
+            skill_pack_install_bytes,
+            skill_pack_export_default,
             skill_pack_export,
             skill_pack_list,
             netsocial_block,
