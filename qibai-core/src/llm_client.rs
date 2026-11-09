@@ -27,7 +27,7 @@ pub enum LlmError {
     Api(String),
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("这一轮我反复试了几次都没成，先停一下（工具循环 5 轮）")]
+    #[error("这一轮我反复试了几次都没成，先停一下（工具循环轮数到顶）")]
     MaxIterations,
 }
 
@@ -719,13 +719,21 @@ pub async fn run_agent_loop(
     let mut last_denied_tool: Option<String> = None;
     let mut denied_streak: u32 = 0;
 
-    // v18.8-fix28e：工具循环整体 120s 硬限——每轮前检查，超时立即返回，
-    // 避免 Qwen 思考型多轮工具循环时 invoke 长时间无返回（前端挂起"没反应"）。
+    // v18.8-fix28e 的 5 轮 / 120s 硬限，会把「真出片」这类长链路砍断：
+    // animacode 一条 15s 片子要连跑 写 spec → schema → build → render(≈50s) → qa → mux，
+    // 光工具耗时就要 60–80s，第 5 轮前必被截断，用户看到的是「跑一半没下文」。
+    // 放宽到 8 轮 / 240s；单轮仍是流式 + 120s chunk 超时，不会无限挂。
+    const LOOP_MAX_ROUNDS: usize = 8;
+    const LOOP_MAX_SECS: u64 = 240;
     let loop_deadline = std::time::Instant::now();
-    for _ in 0..5 {
-        if loop_deadline.elapsed() > std::time::Duration::from_secs(120) {
-            eprintln!("[qibai] llm 工具循环累计超 120s，终止");
-            return Err(LlmError::Api("LLM 工具循环超时（累计 120s）".into()));
+    for _ in 0..LOOP_MAX_ROUNDS {
+        if loop_deadline.elapsed() > std::time::Duration::from_secs(LOOP_MAX_SECS) {
+            eprintln!(
+                "[qibai] llm 工具循环累计超 {LOOP_MAX_SECS}s，终止（已执行工具见 executions）"
+            );
+            return Err(LlmError::Api(format!(
+                "LLM 工具循环超时（累计 {LOOP_MAX_SECS}s）"
+            )));
         }
         let req = ChatRequest {
             system: system.to_string(),

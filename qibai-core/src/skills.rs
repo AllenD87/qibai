@@ -171,8 +171,9 @@ struct Pending {
     /// 待执行的函数名（外部插件/MCP 工具名；内置包为空）。
     fn_name: String,
     args: serde_json::Value,
-    /// 外部插件（command/mcp）——批准后本任务内同插件放行；内置高危操作仍逐次批准。
-    external: bool,
+    /// 批准后写入本任务放行名单的键（外部插件 = `plugin:<id>`；文件写改删 = `file:<动作>:<路径>`）。
+    /// 内置 `execute_command` / `run_tests` 恒为 None——高危命令坚持逐次批准。
+    grant_key: Option<String>,
 }
 
 /// 已处理过的确认（幂等回放用）。
@@ -401,7 +402,7 @@ impl SkillsRegistry {
                         request_id.clone(),
                         Pending {
                             plugin_id: pid,
-                            builtin_argv: argv, external: false,
+                            builtin_argv: argv, grant_key: None,
                             fn_name: String::new(),
                             args: args.clone(),
                         },
@@ -433,7 +434,7 @@ impl SkillsRegistry {
                         }
                         if !crate::engine::open_all()
                             && crate::skill_adapter::is_dangerous_command(&cmd, args)
-                            && !self.granted.contains(&pid)
+                            && !self.granted.contains(&format!("plugin:{pid}"))
                         {
                             let request_id = format!("approval-{}", self.next_seq);
                             self.next_seq += 1;
@@ -447,7 +448,7 @@ impl SkillsRegistry {
                                     builtin_argv: vec![],
                                     fn_name: name.to_string(),
                                     args: args.clone(),
-                                    external: true,
+                                    grant_key: Some(format!("plugin:{pid}")),
                                 },
                             );
                             return SkillOutcome::PendingApproval {
@@ -633,31 +634,37 @@ impl SkillsRegistry {
                             sanitized.display()
                         ));
                     }
-                    let n_bytes = args
-                        .get("content")
-                        .and_then(|v| v.as_str())
-                        .map(|c| c.len())
-                        .unwrap_or(0);
-                    let description = match action {
-                        "delete" => format!("即将删除：{}（来自对话技能请求）", path),
-                        "write" => format!("即将写入：{}（{} 字节）", path, n_bytes),
-                        _ => format!("即将修改：{}（{} 字节）", path, n_bytes),
-                    };
-                    let request_id = format!("approval-{}", self.next_seq);
-                    self.next_seq += 1;
-                    self.pending.insert(
-                        request_id.clone(),
-                        Pending {
-                            plugin_id: pid.to_string(),
-                            builtin_argv: vec![], external: false,
-                            fn_name: name.to_string(),
-                            args: args.clone(),
-                        },
-                    );
-                    return SkillOutcome::PendingApproval {
-                        request_id,
-                        description,
-                    };
+                    // 同一任务内「同一路径 + 同一动作」批准过一次就不再问：
+                    // 出片流水线每轮都要重写同一份 scene.json，反复弹窗等于卡死。
+                    let gk = format!("file:{action}:{}", sanitized.display());
+                    if !self.granted.contains(&gk) {
+                        let n_bytes = args
+                            .get("content")
+                            .and_then(|v| v.as_str())
+                            .map(|c| c.len())
+                            .unwrap_or(0);
+                        let description = match action {
+                            "delete" => format!("即将删除：{}（来自对话技能请求）", path),
+                            "write" => format!("即将写入：{}（{} 字节）", path, n_bytes),
+                            _ => format!("即将修改：{}（{} 字节）", path, n_bytes),
+                        };
+                        let request_id = format!("approval-{}", self.next_seq);
+                        self.next_seq += 1;
+                        self.pending.insert(
+                            request_id.clone(),
+                            Pending {
+                                plugin_id: pid.to_string(),
+                                builtin_argv: vec![],
+                                grant_key: Some(gk),
+                                fn_name: name.to_string(),
+                                args: args.clone(),
+                            },
+                        );
+                        return SkillOutcome::PendingApproval {
+                            request_id,
+                            description,
+                        };
+                    }
                 }
                 let dest = args.get("dest").and_then(|v| v.as_str());
                 let content = args.get("content").and_then(|v| v.as_str());
@@ -698,7 +705,7 @@ impl SkillsRegistry {
                             request_id.clone(),
                             Pending {
                                 plugin_id: pid.to_string(),
-                                builtin_argv: vec![], external: false,
+                                builtin_argv: vec![], grant_key: None,
                                 fn_name: name.to_string(),
                                 args: args.clone(),
                             },
@@ -832,7 +839,7 @@ impl SkillsRegistry {
                         request_id.clone(),
                         Pending {
                             plugin_id: pid.to_string(),
-                            builtin_argv: argv, external: false,
+                            builtin_argv: argv, grant_key: None,
                             fn_name: name.to_string(),
                             args: args.clone(),
                         },
@@ -962,16 +969,16 @@ impl SkillsRegistry {
             self.remember_resolved(request_id, Resolved::Cancelled);
             return Ok("用户已取消该操作".to_string());
         }
-        let external = pending.external;
-        let pid = pending.plugin_id.clone();
+        let grant_key = pending.grant_key.clone();
         let result = self.run_pending(pending).await;
         match &result {
             Ok(text) => {
                 self.remember_resolved(request_id, Resolved::RanOk(text.clone()));
-                // 外部插件批准一次 = 本任务内放行：一个视频要连跑 5 个工具，
-                // 每步都弹确认会被当成「卡住」。内置高危操作仍逐次批准。
-                if external && !crate::engine::open_all() {
-                    self.granted.insert(pid);
+                // 批准一次 = 本任务内该项不再重复询问：一条片子要连跑
+                // schema→build→render→qa→mux，且每轮重排都会重写同一份 spec，
+                // 逐步弹窗会被当成「卡住」。内置高危命令仍逐次批准（grant_key=None）。
+                if let Some(k) = grant_key {
+                    self.granted.insert(k);
                 }
             }
             Err(e) => self.remember_resolved(request_id, Resolved::RanErr(e.to_string())),
