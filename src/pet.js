@@ -2308,6 +2308,18 @@
     else toast(p.text);
   });
 
+  // 退出 PK 演出态（幂等：事件与本地定时器都会调）
+  let pkEndTimer = null;
+  function finishPk() {
+    if (pkEndTimer) {
+      clearTimeout(pkEndTimer);
+      pkEndTimer = null;
+    }
+    state.pkPerforming = false;
+    pkCard.classList.add('hidden');
+    resetEmotion();
+  }
+
   // ---- qibai://pk-round：双方桌宠窗手势动画 + 结果情绪 + 本窗台词演出 ----
   listen('qibai://pk-round', (event) => {
     const p = event.payload || {};
@@ -2349,17 +2361,19 @@
         plannedLines.set(l.text, Date.now() + 8000);
         setTimeout(() => say(l.text, 1500), 900 + i * 1400);
       });
+
+      // 演出收尾：后端只发 pk-round，没有 pk-end。按本窗台词时长自行复位，
+      // 否则 pkPerforming 会一直停在 true、手势卡永远挂在桌面上（点了也不消失）。
+      const tail = myLines.length
+        ? 900 + (myLines.length - 1) * 1400 + 1500
+        : 0;
+      if (pkEndTimer) clearTimeout(pkEndTimer);
+      pkEndTimer = setTimeout(finishPk, tail + 400);
     }, 850);
   });
 
-  // ---- qibai://pk-end：退出 PK 演出态 ----
-  listen('qibai://pk-end', (event) => {
-    const p = event.payload || {};
-    if (p.a !== state.persona && p.b !== state.persona) return;
-    state.pkPerforming = false;
-    pkCard.classList.add('hidden');
-    resetEmotion();
-  });
+  // 注：后端只发 pk-round、不发 pk-end，演出收尾由上面的本地定时器负责，
+  // 因此这里不再挂一个永远等不到事件的监听。
 
   // ---- qibai://desk-changed（仅浏览器 mock 生效：真机由后端直接关窗） ----
   listen('qibai://desk-changed', (event) => {

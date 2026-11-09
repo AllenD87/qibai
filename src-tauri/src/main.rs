@@ -816,28 +816,39 @@ async fn send_message(
     }
 }
 
-/// v30：打开本地工作区目录（与 qibai-core 三闸门同根目录口径：
-/// 默认 ~/.qibai_workspace，环境变量 QIBAI_WORKSPACE 可覆盖）。
+/// v30：打开本地工作区目录。
+/// 口径直接取 qibai-core 的唯一根（`QIBAI_WORKSPACE` 覆盖，否则
+/// `$HOME/Documents/qibai`）——这里以前自己维护了一份 `~/.qibai_workspace`，
+/// 与真正写入文件的目录不一致，用户点「打开工作区」看到的是旧空目录、
+/// 找不到刚生成的视频。
 #[tauri::command]
 fn code_open_workspace() -> Result<String, String> {
-    let root = if let Ok(w) = std::env::var("QIBAI_WORKSPACE") {
-        let w = w.trim().to_string();
-        if w.is_empty() { default_workspace_root() } else { w }
-    } else {
-        default_workspace_root()
-    };
+    let root = qibai_core::engine::qibai_workspace_root_public();
+    let root = root.to_string_lossy().to_string();
     let _ = std::fs::create_dir_all(&root);
-    let opened = std::process::Command::new("xdg-open").arg(&root).spawn().is_ok();
+    let opened = open_in_file_manager(&root);
     if opened {
         Ok(format!("已打开本地工作区：{root}"))
     } else {
-        Ok(format!("工作区路径：{root}（未找到 xdg-open，请手动打开该目录）"))
+        Ok(format!(
+            "工作区路径：{root}（未能自动打开文件管理器，请手动打开该目录）"
+        ))
     }
 }
 
-fn default_workspace_root() -> String {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    format!("{home}/.qibai_workspace")
+/// 按平台唤起文件管理器。
+fn open_in_file_manager(path: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    let (prog, arg): (&str, Option<&str>) = ("explorer", Some(path));
+    #[cfg(target_os = "macos")]
+    let (prog, arg): (&str, Option<&str>) = ("open", Some(path));
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let (prog, arg): (&str, Option<&str>) = ("xdg-open", Some(path));
+    let mut cmd = std::process::Command::new(prog);
+    if let Some(a) = arg {
+        cmd.arg(a);
+    }
+    cmd.spawn().is_ok()
 }
 
 /// v31：打开本地知识库目录（与 qibai-core kb_search 同口径：

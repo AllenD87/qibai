@@ -118,5 +118,14 @@ anima_render → anima_qa（VERDICT 必须 PASS / PASS_WITH_WARNINGS）→ anima
   补全后的 PATH；还不够时用环境变量 `QIBAI_EXTRA_PATH` 追加目录（多个按系统分隔符）。
 - **点「允许」之前先预检启动命令**：命令或脚本在插件目录 / PATH 里找不到时，不再弹确认，
   直接回复「找不到可执行 `node`……」，避免"点了允许 → 审批失败"的空循环。
+- **点「允许」之后还失败时，先读那句话本身**：v45.16 起错误会带上 server 自己的 stderr
+  （`插件入口脚本不存在：…` / `MCP server 启动后立即退出（exit code 1）；server stderr: node: Cannot find module …`）。
+  前者=插件包没装全（删掉插件重导 `animacode-v2.2.0.qbpk`）；后者=node 版本或脚本自身报错，照 stderr 那行修。
+- **会话自愈**：server 中途崩了不必重启应用，下一次工具调用会自动丢弃死会话、重连一次再重试。
+- **出片文件落在哪**：写入根 = `QIBAI_WORKSPACE`（设了就用），否则 `$HOME/Documents/qibai`。
+  `anima_mux` 的 `out` 是必填参数，由调用方传绝对路径（建议放工作区内，如
+  `~/Documents/qibai/影片/<名字>.mp4`）；`anima_build` 的 `out` 默认落在 spec 同级的 `build/`；
+  `anima_qa` 的 `out`（`qa_report.json`）必须落在 `build/<id>/` 内，Studio 才读得到。
+  控制台「打开工作区」按钮已与此同根（v45.16 修掉了它指向旧 `~/.qibai_workspace` 的问题）。
 - 渲染会起子进程（chromium）并写帧到项目目录，属重操作；建议由用户在「做一条动画」时显式触发。
 - 技能包落在 `<数据目录>/plugins/<id>/`（平铺），能力包扫描器同时覆盖 `skills/ experts/` 与平铺两层，所以装好的包在技能库里也能看到正文。
