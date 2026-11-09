@@ -56,9 +56,30 @@ cp -r examples/plugins/animacode "<数据目录>/plugins/"
 {"name":"animacode","transport":"stdio","command":"node","args":["/绝对路径/animacode/mcp/server.mjs"],"enabled":true}
 ```
 
-## 启用（外部包默认是关的）
+## 启用（导入即生效，v45.14 起）
 
-A/B 两条路径装完，包会出现在技能 / 插件页，但**默认不启用**——外部包一律先关着，避免“拷进来就自动拿到命令行”。在列表里打开开关即可，之后 `anima_*` 进工具表。
+**A 路径（技能包导入）装完就启用**：`animacode` 落盘后由 `skill_pack_install(_bytes)` 立刻
+`set_enabled(true)` 并授予清单里声明的权限（`system:launch`），同时写进 `settings.plugins`，
+`anima_*` 立刻进工具表。理由：导入是用户主动动作，视作同意该包声明的权限；之后仍可在插件页
+一键关掉。
+
+**B 路径（手动拷目录）** 只有目录、没经过安装器，仍然按外部包默认关——打开插件页开关即可。
+
+技能页与插件页的开关现在是一套状态：任一处关掉，另一处与工具表同步（v45.14 前是两套，
+能出现"技能库里看得见、工具表里没有"）。
+
+## 视频/动画需求的强路由（B 方案）
+
+说「做个 15 秒片头 / 生成一支 MG 动画 / 做条科普动画」这类**要产出一支片子**的话，主模型
+本轮会被强制注入一段 Animacode 路由指令：`anima_schema → 写 scene.json → anima_build →
+anima_render → anima_qa（VERDICT 必须 PASS / PASS_WITH_WARNINGS）→ anima_mux`，并要求回给
+成片路径与质检结论；不许拿文字或一段 JSON 冒充完成。
+
+- 没装：如实说缺件，提示导入 `.qbpk`（不臆造步骤）。
+- 装了但被关：当轮自动启用并补授声明权限。
+- 条目处于 error：提示删掉重装，不假装能出片。
+
+排除项：加字幕、剪辑、截帧、转码、抽封面这类"处理已有素材"的需求不触发路由。
 
 ## 前置依赖
 

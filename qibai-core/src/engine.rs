@@ -1242,6 +1242,13 @@ impl Engine {
         if crate::skill_docs::catalog().iter().any(|e| e.name == skill) {
             crate::skill_docs::set_enabled(skill, enabled)
                 .map_err(|e| EngineError::Skill(e))?;
+            // 同一个包有两套开关（技能页写 `.disabled` 标记、插件页写 registry.enabled）：
+            // 这里顺手对齐，否则会出现"技能页关了、工具表里还在调"或反之。
+            if let Some(pid) = self.skills.plugins().resolve_by_display(skill) {
+                let _ = self.skills.plugins_mut().set_enabled(&pid, enabled);
+                self.settings.plugins.enabled.insert(pid, enabled);
+                self.settings.save()?;
+            }
             return Ok(());
         }
         // 工具型技能：原有路径
@@ -2111,13 +2118,48 @@ pub(crate) fn reset_plan_for_rerun(
     }
 
     /// 导入安装技能包（zip）：安全解压 → manifest 校验 → 复制进 plugins/ → 注册。
-    pub fn skill_pack_install(&mut self, zip_path: String) -> Result<(), EngineError> {
-        let plugins_dir = self.skills.plugins().plugins_dir().to_path_buf();
-        crate::skill_pack::install_pack(std::path::Path::new(&zip_path), &plugins_dir)
-            .map_err(|e| EngineError::Skill(e.to_string()))?;
-        self.skills.plugins_mut().scan();
+    /// 导入即生效：导入是用户主动动作，视作同意清单声明的权限；
+    /// 之后仍可在插件页关掉。早先"外部包默认停用"导致装完在能力清单里看得见、
+    /// 工具表里却调不到（`tool_schemas` 过滤 !enabled）。
+    fn activate_installed(
+        &mut self,
+        id: &str,
+        name: &str,
+        perms: &[String],
+    ) -> Result<(), EngineError> {
+        let perm_objs: Vec<crate::plugin_manifest::Permission> = perms
+            .iter()
+            .filter_map(|p| crate::plugin_manifest::Permission::from_str(p))
+            .collect();
+        {
+            let reg = self.skills.plugins_mut();
+            reg.set_enabled(id, true).map_err(EngineError::Skill)?;
+            for p in perm_objs.iter().copied() {
+                // files:write 对外部插件永久拒绝：静默跳过，不阻断安装。
+                let _ = reg.grant_permission(id, p, true);
+            }
+        }
+        self.settings.plugins.enabled.insert(id.to_string(), true);
+        self.settings
+            .plugins
+            .grants
+            .insert(id.to_string(), perms.to_vec());
+        self.settings.save()?;
+        // 技能页那份清单可能还挂着一个 `.disabled` 空标记，一并清掉。
+        let _ = crate::skill_docs::set_enabled(name, true);
         self.resync_experts();
         Ok(())
+    }
+
+    pub fn skill_pack_install(&mut self, zip_path: String) -> Result<(), EngineError> {
+        let plugins_dir = self.skills.plugins().plugins_dir().to_path_buf();
+        let m = crate::skill_pack::install_pack(std::path::Path::new(&zip_path), &plugins_dir)
+            .map_err(|e| EngineError::Skill(e.to_string()))?;
+        self.skills.plugins_mut().rescan();
+        let id = m.id.clone();
+        let name = m.name.clone();
+        let perms = m.permissions.clone();
+        self.activate_installed(&id, &name, &perms)
     }
 
     /// 导入安装技能包（字节形态）：WebView 只拿得到文件内容、拿不到可信路径时走这条。
@@ -2127,11 +2169,13 @@ pub(crate) fn reset_plan_for_rerun(
         data: &[u8],
     ) -> Result<(), EngineError> {
         let plugins_dir = self.skills.plugins().plugins_dir().to_path_buf();
-        crate::skill_pack::install_pack_bytes(&file_name, data, &plugins_dir)
+        let m = crate::skill_pack::install_pack_bytes(&file_name, data, &plugins_dir)
             .map_err(|e| EngineError::Skill(e.to_string()))?;
-        self.skills.plugins_mut().scan();
-        self.resync_experts();
-        Ok(())
+        self.skills.plugins_mut().rescan();
+        let id = m.id.clone();
+        let name = m.name.clone();
+        let perms = m.permissions.clone();
+        self.activate_installed(&id, &name, &perms)
     }
 
     /// 导出技能包到 `<数据目录>/exports/<id>.qbpk`，返回落盘绝对路径。
@@ -2186,15 +2230,18 @@ pub(crate) fn reset_plan_for_rerun(
         self.skills.plugins().list_json()
     }
 
-    /// 安装插件（复制目录；幂等）。
+    /// 安装插件（复制目录；幂等；跨版本覆盖升级），装完立刻启用。
     pub fn plugin_install(&mut self, dir: String) -> Result<(), EngineError> {
         let from = std::path::Path::new(&dir).to_path_buf();
-        self.skills
+        let m = self
+            .skills
             .plugins_mut()
             .install(&from)
-            .map_err(|e| EngineError::Skill(e))?;
-        self.resync_experts();
-        Ok(())
+            .map_err(EngineError::Skill)?;
+        let id = m.id.clone();
+        let name = m.name.clone();
+        let perms = m.permissions.clone();
+        self.activate_installed(&id, &name, &perms)
     }
 
     /// 卸载插件（幂等；内置拒绝）。
@@ -2286,8 +2333,17 @@ pub(crate) fn reset_plan_for_rerun(
             .plugins_mut()
             .set_enabled(&id, enabled)
             .map_err(|e| EngineError::Skill(e))?;
-        self.settings.plugins.enabled.insert(id, enabled);
+        self.settings.plugins.enabled.insert(id.clone(), enabled);
         self.settings.save()?;
+        // 反向对齐：插件页关掉 → 技能页那份清单行也要跟着消失（否则用户会以为还开着）。
+        if let Some(name) = self
+            .skills
+            .plugins()
+            .entry(&id)
+            .map(|e| e.manifest.name.clone())
+        {
+            let _ = crate::skill_docs::set_enabled(&name, enabled);
+        }
         Ok(())
     }
 
@@ -2363,6 +2419,104 @@ pub(crate) fn reset_plan_for_rerun(
     }
 
     // ---- IPC: send_message ----
+
+    /// B 方案：视频/动画类需求的强路由判定（纯函数，便于单测）。
+    ///
+    /// 只认"要产出一支片子"的说法；剪辑、加字幕、截帧这类"处理已有素材"的需求排除在外。
+    fn wants_film_generation(text: &str) -> bool {
+        let t = text.to_lowercase();
+        let verbs = [
+            "做", "生成", "出一", "出个", "来一", "来个", "搞", "整", "制作", "渲染", "合成",
+        ];
+        let nouns = [
+            "视频",
+            "动画",
+            "动效",
+            "片头",
+            "片尾",
+            "短片",
+            "宣传片",
+            "演示片",
+            "开屏",
+            "片花",
+            "成片",
+            "mg",
+        ];
+        if !(verbs.iter().any(|v| t.contains(v)) && nouns.iter().any(|n| t.contains(n))) {
+            return false;
+        }
+        let excluded = [
+            "加字幕", "字幕", "裁剪", "截取", "转码", "压缩", "封面", "抽帧", "截帧", "下载",
+        ];
+        !excluded.iter().any(|e| t.contains(e))
+    }
+
+    /// Animacode 强路由：装了就让模型必须走五个工具真出片；没装就如实报缺件。
+    fn animacode_route_hint(&mut self, text: &str) -> Option<String> {
+        if !Self::wants_film_generation(text) {
+            return None;
+        }
+        const ID: &str = "animacode";
+        let snapshot = self.skills.plugins().entry(ID).map(|e| {
+            (
+                e.enabled,
+                e.error.clone(),
+                e.manifest.permissions.clone(),
+            )
+        });
+        match snapshot {
+            None => Some(
+                "【本轮强路由·缺件】用户要做视频/动画，但本机没装 Animacode。本轮先如实说明缺件，\
+并告诉用户在控台「插件」页导入 animacode-v2.2.0.qbpk（导入后会自动启用）；\
+不许凭空描述成片已完成，也不许拿一段 JSON 充当结果。"
+                    .to_string(),
+            ),
+            Some((_, Some(err), _)) => Some(format!(
+                "【本轮强路由·异常】Animacode 条目处于错误态（{err}）。先让用户在插件页删掉该条目后重装，\
+本轮不要假装能出片。"
+            )),
+            Some((enabled, None, perms)) => {
+                let mut changed = !enabled;
+                {
+                    let reg = self.skills.plugins_mut();
+                    if !enabled {
+                        let _ = reg.set_enabled(ID, true);
+                    }
+                    if reg.missing_permission(ID).is_some() {
+                        for p in perms
+                            .iter()
+                            .filter_map(|p| crate::plugin_manifest::Permission::from_str(p))
+                        {
+                            // files:write 对外部插件永久拒绝，这里静默跳过。
+                            let _ = reg.grant_permission(ID, p, true);
+                        }
+                        changed = true;
+                    }
+                }
+                if changed {
+                    let _ = crate::skill_docs::set_enabled("Animacode 动画成片", true);
+                    self.settings.plugins.enabled.insert(ID.to_string(), true);
+                    self.settings
+                        .plugins
+                        .grants
+                        .insert(ID.to_string(), perms.clone());
+                    let _ = self.settings.save();
+                }
+                Some(
+                    "【本轮强路由·Animacode 已就绪】用户要做视频/动画，本轮必须走 Animacode 真出片，\
+不许用文字假装：\n\
+1) `anima_schema` 取 scene.json 字段；\n\
+2) 用 code_write_file 在工作区写 scene.json（title/stat/bars/process/compare/quote/endcard 选块）；\n\
+3) `anima_build` 校验构建 → `anima_render` 渲帧 → `anima_qa` 质检（VERDICT 必须 PASS 或 \
+PASS_WITH_WARNINGS，FAIL 就改 spec 重渲）→ `anima_mux` 合成 MP4；\n\
+4) 回给用户成片绝对路径 + 质检结论。\n\
+口径：这是「写 spec 逐帧渲染」的确定性动画（片头/MG/数据片），不是文生视频；做不了就直说做不了。"
+                        .to_string(),
+                )
+            }
+        }
+    }
+
     pub async fn send_message(&mut self, text: &str) -> Result<SendMessageOutput, EngineError> {
         // v45.8-A：空文本硬闸——拔麦/转写为空时不进 LLM、不写会话、不 emit thinking。
         if text.trim().is_empty() {
@@ -2459,6 +2613,10 @@ pub(crate) fn reset_plan_for_rerun(
         let skill_catalog = crate::skill_docs::render_catalog_prompt();
         if !skill_catalog.is_empty() {
             cap_lines.push(skill_catalog);
+        }
+        // B 方案：视频/动画类需求强路由到 Animacode（没装则如实报缺件）。
+        if let Some(hint) = self.animacode_route_hint(text) {
+            cap_lines.push(hint);
         }
         cap_lines.push("知识库：用户自选目录建索引（BM25 + 可选本地语义向量，全程离线）；索引为空时退回 ~/.qibai_kb（或 QIBAI_KB）扫描。".to_string());
         system = format!("{system}\n【可用能力】以下是你当前真实装载的能力（向用户介绍自己时据此如实回答，不要编造没有的能力）：\n{}", cap_lines.join("\n"));
@@ -5767,38 +5925,21 @@ mod tests {
             .expect("datetime 应在列表中");
         assert_eq!(row["type"], "skill");
         assert_eq!(row["installed"], true);
-        assert_eq!(row["enabled"], false); // 外部默认关
+        assert_eq!(row["enabled"], true); // v45.14：导入即启用，不再是"外部默认关"
         assert_eq!(row["permissions"][0], "command:run");
         assert_eq!(row["entry_kind"], "command");
         assert!(!row["builtin"].as_bool().unwrap());
 
-        // 未授权调用 → Denied（权限门控）
-        e.plugin_set_enabled("com.qibai.datetime".into(), true).unwrap();
-        match e.skills.invoke("get_datetime", &serde_json::json!({})).await {
-            crate::skills::SkillOutcome::Denied(msg) => {
-                assert!(msg.contains("command:run"));
-            }
-            other => panic!("expected permission denied, got {other:?}"),
-        }
-
-        // grant → enable → tool_schemas 含 get_datetime
-        e.plugin_grant_permission(
-            "com.qibai.datetime".into(),
-            "command:run".into(),
-            true,
-        )
-        .unwrap();
-        let schemas = e.skills.tool_schemas();
-        assert!(schemas.iter().any(|s| s["function"]["name"] == "get_datetime"));
-
-        // invoke 成功返回日期文本
+        // 导入即授权 → 直接可调，不用再走一次 grant/enable
         match e.skills.invoke("get_datetime", &serde_json::json!({})).await {
             crate::skills::SkillOutcome::Ok(msg) => {
-                // YYYY-MM-DD HH:MM:SS
                 assert!(msg.split_whitespace().next().unwrap().contains('-'));
             }
-            other => panic!("expected ok, got {other:?}"),
+            other => panic!("expected ok（导入自动授权）, got {other:?}"),
         }
+        // tool_schemas 含 get_datetime
+        let schemas = e.skills.tool_schemas();
+        assert!(schemas.iter().any(|s| s["function"]["name"] == "get_datetime"));
 
         // settings.plugins 落盘同步
         assert!(e.settings.plugins.enabled["com.qibai.datetime"]);
@@ -6274,15 +6415,12 @@ for line in sys.stdin:
             .find(|v| v["id"] == "com.qibai.pack.hello")
             .expect("技能包安装后应可见");
         assert_eq!(row["installed"], true);
-        assert_eq!(row["enabled"], false);
+        assert_eq!(row["enabled"], true); // v45.14：导入即启用
 
-        // 授权+启用后 invoke 成功
-        e.plugin_grant_permission("com.qibai.pack.hello".into(), "command:run".into(), true)
-            .unwrap();
-        e.plugin_set_enabled("com.qibai.pack.hello".into(), true).unwrap();
+        // 导入即授权，直接 invoke 成功
         match e.skills.invoke("pack_hello", &serde_json::json!({})).await {
             crate::skills::SkillOutcome::Ok(msg) => assert!(msg.contains("技能包执行成功")),
-            other => panic!("expected ok, got {other:?}"),
+            other => panic!("expected ok（导入自动授权）, got {other:?}"),
         }
 
         // skill_pack_list 可见（可导出）
@@ -7202,6 +7340,17 @@ mod save_settings_partial_tests {
         miss.markers = None;
         let v = serde_json::to_value(&miss).unwrap();
         assert!(v.get("markers").is_none(), "未命中不应序列化 markers 键");
+    }
+
+    /// B 方案强路由：只把"要产出一支片子"的话拦进 Animacode，别误伤剪辑类需求。
+    #[test]
+    fn film_intent_router_matches_only_generation() {
+        assert!(Engine::wants_film_generation("帮我做个15秒品牌片头"));
+        assert!(Engine::wants_film_generation("生成一支MG动画"));
+        assert!(Engine::wants_film_generation("我想做一条数据科普动画"));
+        assert!(!Engine::wants_film_generation("给这个视频加字幕"));
+        assert!(!Engine::wants_film_generation("我想看个视频"));
+        assert!(!Engine::wants_film_generation("查一下动画的帧率"));
     }
 
 }

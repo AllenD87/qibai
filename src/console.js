@@ -3757,7 +3757,7 @@
     try {
       const data_b64 = await readFileAsBase64(f);
       await invoke('skill_pack_install_bytes', { file_name: f.name, data_b64 });
-      toast('插件已安装：外部包默认停用，请在列表里开启');
+      toast('插件已安装并启用：可以直接用了');
     } catch (e) {
       console.warn(e);
       toast('安装失败：' + ((e && e.message) || ''));
@@ -3885,7 +3885,7 @@
         const data_b64 = await readFileAsBase64(file);
         if (!data_b64) throw new Error('读取技能包内容为空');
         await invoke('skill_pack_install_bytes', { file_name: file.name, data_b64 });
-        toast('技能包已安装：' + file.name + '（外部包默认停用，去列表里开启）');
+        toast('技能包已安装并启用：' + file.name);
       } catch (e) {
         console.warn(e);
         toast('安装失败：' + ((e && e.message) || ''));

@@ -99,7 +99,7 @@ plugins/
 | 模块 | 职责 | 关键点 |
 |---|---|---|
 | `plugin_manifest.rs` | Manifest 结构 + ManifestLoader | `SYNONYM_MAP`：type/capability/plugin_type/category、kind/backend/executor/entry_kind、entry/exec/invoke、command/script/cmd、http/url/endpoint、permissions/perms/grants、functions/tools/actions、system_prompt/prompt/systemPrompt、skills/skill_ids/whitelist、persona_binding/persona/binding；类型值同义词 skill\|capability、expert\|assistant、connector\|integration；kind 值 command\|cli\|shell、http\|api\|webhook、builtin\|native |
-| `plugin_registry.rs` | 扫描/注册表/生命周期 | 扫描根 env `QIBAI_PLUGINS_DIR` 优先，否则 `data_dir()/plugins`；坏 manifest 记录 error 不中止扫描；id 冲突拒后到者；install/uninstall/set_enabled/grant 全部幂等；跨版本安装拒绝（需先卸载）；外部插件声明 kind=builtin 拒绝；`files:write` 对外部插件硬拒 |
+| `plugin_registry.rs` | 扫描/注册表/生命周期 | 扫描根 env `QIBAI_PLUGINS_DIR` 优先，否则 `data_dir()/plugins`；坏 manifest 记录 error 不中止扫描；id 冲突拒后到者；install/uninstall/set_enabled/grant 全部幂等；同版本重复装 = no-op、跨版本就地覆盖升级（保留启停与授权）；重扫走 `rescan()`，不会把已装条目误判成「id 冲突」；外部插件声明 kind=builtin 拒绝；`files:write` 对外部插件硬拒 |
 | `skill_adapter.rs` | 外部执行体 | command：argv 为 `entry.command`，args 序列化为**单行 JSON 经 stdin** 传入；http：POST `entry.http`，body=`{"args": args}`；默认 10s 超时（可注入）；超时/失败 → `SkillOutcome::Denied("技能执行失败（已降级）：{原因}")`；connector → 预留拒绝 |
 | `expert.rs` | 专家体系 | `ExpertRegistry`：activate/deactivate、`expert_prompt(base)` 追加专家段、`whitelist()`（空=全开放）、`persona_binding()`；voice 联动：已知 persona id（gudian/dushi/wenrou/huopo/reqing）经 `voice_profile::default_profile_for` 解析标签，未知字符串原样透传 |
 

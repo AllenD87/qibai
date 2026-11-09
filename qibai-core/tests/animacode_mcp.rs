@@ -58,7 +58,8 @@ async fn mcp_connector_runs_schema_and_build() {
 
     let manifest = ManifestLoader::load(&pkg).expect("animacode 清单应能加载");
     assert_eq!(manifest.id, "animacode");
-    assert_eq!(manifest.version, "2.2.0", "应为 v2.2（八个镜头块）");
+    // 不锁死 patch 版本：包会继续升，验收只看「仍是 2.x 且五工具齐全」。
+    assert!(manifest.version.starts_with("2."), "包版本应 ≥2.x，实际 {}", manifest.version);
     assert_eq!(manifest.functions.len(), 5, "应暴露五个 anima_* 工具");
     let args_text = manifest
         .entry
@@ -175,4 +176,64 @@ async fn mcp_connector_runs_schema_and_build() {
     }
 
     let _ = std::fs::remove_dir_all(&root);
+}
+
+// ---------------------------------------------------------------------------
+// 导入体验回归：`.qbpk` 重复导入不再报「id 已注册」，且导入即启用。
+// ---------------------------------------------------------------------------
+use qibai_core::engine::{Engine, NullSink};
+
+static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+fn qbpk_import_twice_is_idempotent_and_self_enabling() {
+    let _g = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let root = std::env::temp_dir().join(format!("qibai_pack_import_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    unsafe {
+        std::env::set_var("QIBAI_PLUGINS_DIR", root.join("plugins"));
+        std::env::set_var("QIBAI_DATA_DIR", root.join("data"));
+    }
+
+    let pack = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../examples/plugins/animacode-v2.2.0.qbpk")
+        .to_string_lossy()
+        .to_string();
+
+    let mut e = Engine::new(Box::new(NullSink));
+    e.skill_pack_install(pack.clone()).expect("首次导入应成功");
+
+    let rows = e.plugin_list();
+    let row = rows
+        .iter()
+        .find(|v| v["id"] == "animacode")
+        .expect("导入后插件列表应有 animacode");
+    assert_eq!(row["installed"], true);
+    assert_eq!(row["enabled"], true, "导入即启用（不再要求手动开开关）");
+    assert!(row["error"].is_null(), "首次导入不应有 error：{row}");
+
+    // 第二次导入同一包：不能报「id 已注册」，也不能把条目毒化
+    e.skill_pack_install(pack.clone())
+        .expect("重复导入应幂等成功，而不是 id 已注册");
+    let rows = e.plugin_list();
+    let row = rows.iter().find(|v| v["id"] == "animacode").unwrap();
+    assert!(row["error"].is_null(), "重复导入后不应有 error：{row}");
+    assert_eq!(row["enabled"], true);
+
+    // 工具表里必须真有 anima_*（否则就是"说得出、调不动"）
+    let schemas = e.skills.tool_schemas();
+    let names: Vec<String> = schemas
+        .iter()
+        .map(|s| s["function"]["name"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert!(
+        names.iter().any(|n| n.starts_with("anima_")),
+        "启用后 anima_* 应进工具表，实际：{names:?}"
+    );
+
+    unsafe {
+        std::env::remove_var("QIBAI_PLUGINS_DIR");
+        std::env::remove_var("QIBAI_DATA_DIR");
+    }
 }
