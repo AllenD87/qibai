@@ -1381,6 +1381,57 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
         Ok(v)
     }
 
+    /// stage（字节形态）：WebView 里 `<input type=file>` 拿不到可信本地路径，
+    /// 所以由前端读出文件内容，这里落成临时文件再复用 `stage_from_file`（.md / .zip 两支）。
+    pub fn skill_install_stage_bytes(
+        &self,
+        file_name: &str,
+        data: &[u8],
+    ) -> Result<serde_json::Value, String> {
+        let name = std::path::Path::new(file_name)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if name.is_empty() {
+            return Err("文件名为空".to_string());
+        }
+        let ext = std::path::Path::new(&name)
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if ext != "md" && ext != "zip" {
+            return Err(format!("不支持的文件类型 .{ext}（仅 .md 或 .zip）"));
+        }
+        if data.is_empty() {
+            return Err("文件内容为空".to_string());
+        }
+        if data.len() > crate::skill_pack::MAX_PACK_BYTES as usize {
+            return Err(format!(
+                "文件过大：{} 字节（上限 {} 字节）",
+                data.len(),
+                crate::skill_pack::MAX_PACK_BYTES
+            ));
+        }
+        let tmp_dir = std::env::temp_dir();
+        std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+        let tmp_path = tmp_dir.join(format!(
+            "qibai_stage_bytes_{}_{}.{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+            ext
+        ));
+        std::fs::write(&tmp_path, data).map_err(|e| e.to_string())?;
+        let result = self.skill_install_stage(serde_json::json!({
+            "kind": "file",
+            "value": tmp_path.display().to_string()
+        }));
+        let _ = std::fs::remove_file(&tmp_path);
+        result
+    }
+
     /// commit：按 stage_id 取出暂存，落盘到 ~/.qibai_skills/<name>/。
     pub fn skill_install_commit(&self, stage_id: &str, overwrite: bool) -> Result<(), String> {
         let staged = Self::staged_registry()
@@ -1859,6 +1910,11 @@ pub(crate) fn reset_plan_for_rerun(
         let selected = crate::tts::current_audio_output();
         let tools = probe_tools();
         let backend = choose_backend(&selected, &tools);
+        let selected_index = if selected.is_empty() || selected == "default" {
+            None
+        } else {
+            sink_name_to_index(&selected)
+        };
         eprintln!("[qibai] audio: test backend={backend:?} device={selected}");
         let _ = crate::tts::play_audio_bytes(&wav, "test-tone");
         // 等 0.3s 让流落地
@@ -1877,7 +1933,12 @@ pub(crate) fn reset_plan_for_rerun(
         } else { "" };
         eprintln!("[qibai] audio: stream landed on {:?}", landing_name.as_deref().unwrap_or("unknown"));
         Ok(serde_json::json!({
+            // 新字段（与 audio_diagnose 一致）；同时保留 legacy `selected` / `sink_landing`
             "selected": selected,
+            "selected_name": selected,
+            "selected_index": selected_index,
+            "sink_landing_index": landing_idx,
+            "sink_landing_name": landing_name,
             "backend": format!("{backend:?}"),
             "tools": { "pacat": tools.pacat, "pw_play": tools.pw_play, "paplay": tools.paplay, "rodio": tools.rodio },
             "sink_landing": { "index": landing_idx, "name": landing_name },

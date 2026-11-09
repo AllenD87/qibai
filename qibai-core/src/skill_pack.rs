@@ -280,7 +280,7 @@ pub fn install_pack(
 }
 
 /// 单个技能包字节上限：前端把文件内容读进内存再传过来，给个与解压预算同量级的闸。
-const MAX_PACK_BYTES: u64 = 60 * 1024 * 1024;
+pub const MAX_PACK_BYTES: u64 = 60 * 1024 * 1024;
 
 /// 导入安装技能包（字节形态）。
 ///

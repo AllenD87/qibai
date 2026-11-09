@@ -2910,7 +2910,7 @@
     const box = $('nsRoamList');
     box.innerHTML = '<div class="ns-empty">正在连接星河…</div>';
     try {
-      const res = await invoke('netsocial_roam', {});
+      const res = await invoke('netsocial_roam', { params: {} });
       renderSoulCards(box, res.souls || []);
     } catch (e) {
       console.warn(e);
@@ -3144,7 +3144,7 @@
         const res = await invoke('netsocial_city_souls', { city });
         renderSoulCards(box, res.souls || []);
         // 保存城市到 profile
-        await invoke('netsocial_set_profile', { city }).catch(() => {});
+        await invoke('netsocial_set_profile', { input: { city } }).catch(() => {});
       } catch (e) {
         console.warn(e);
         box.innerHTML = '<div class="ns-empty">' + escapeHtml((e && e.message) || '暂不可用') + '</div>';
@@ -3243,7 +3243,7 @@
       const tags = nsCollectTags();
       nsSaveLocalTags(tags);
       try {
-        await invoke('netsocial_set_profile', { soul_tags: tags });
+        await invoke('netsocial_set_profile', { input: { soul_tags: tags } });
         toast('我的光点已保存');
       } catch (e) { console.warn(e); toast((e && e.message) || '保存失败'); }
     });
@@ -3279,7 +3279,7 @@
     $('btnNsPrivacyOk').addEventListener('click', async () => {
       nsRt.pureMode = $('swNsPure').dataset.on === 'true';
       try {
-        await invoke('netsocial_register', { age_declared: '18plus', pure_mode: nsRt.pureMode });
+        await invoke('netsocial_register', { input: { age_declared: '18plus', pure_mode: nsRt.pureMode } });
       } catch (e) { console.warn(e); }
       localStorage.setItem(NS_PRIVACY_LS, '1');
       $('nsPrivacyModal').hidden = true;
@@ -3290,7 +3290,7 @@
       $('swNsPure').classList.add('on');
       $('swNsPure').dataset.on = 'true';
       try {
-        await invoke('netsocial_register', { age_declared: 'minor', pure_mode: true });
+        await invoke('netsocial_register', { input: { age_declared: 'minor', pure_mode: true } });
       } catch (e) { console.warn(e); }
       localStorage.setItem(NS_PRIVACY_LS, '1');
       $('nsPrivacyModal').hidden = true;
@@ -3742,13 +3742,22 @@
     });
   }
 
-  // 安装插件入口：打开文件选择（mock 中模拟安装示例插件包）
+  // 安装插件入口：外部插件以 .qbpk/.zip 分发，选中后读内容走字节通道
+  // （旧实现在这里写死 `demo://examples`，点一次必然失败）。
   $('btnPluginInstall').addEventListener('click', () => $('pluginFileInput').click());
   $('pluginFileInput').addEventListener('change', async () => {
+    const f = $('pluginFileInput').files && $('pluginFileInput').files[0];
     $('pluginFileInput').value = ''; // 允许重复选择同名文件
+    if (!f) return;
+    const nm = (f.name || '').toLowerCase();
+    if (!(nm.endsWith('.qbpk') || nm.endsWith('.zip'))) {
+      toast('仅支持插件包 .qbpk / .zip');
+      return;
+    }
     try {
-      await invoke('plugin_install', { dir: 'demo://examples' });
-      toast('示例插件已安装：日期时间（技能）、科学家助手（专家）');
+      const data_b64 = await readFileAsBase64(f);
+      await invoke('skill_pack_install_bytes', { file_name: f.name, data_b64 });
+      toast('插件已安装：外部包默认停用，请在列表里开启');
     } catch (e) {
       console.warn(e);
       toast('安装失败：' + ((e && e.message) || ''));
@@ -3912,14 +3921,21 @@
       const f = fileInput.files && fileInput.files[0];
       fileInput.value = '';
       if (!f) return;
-      await stageAndConfirm({ file_name: f.name, file_path: f.path || f.name });
+      let b64 = '';
+      try {
+        b64 = await readFileAsBase64(f);
+      } catch (e) {
+        toast('读取文件失败：' + ((e && e.message) || e));
+        return;
+      }
+      await stageAndConfirm({ file_name: f.name, data_b64: b64 });
     });
     dirBtn.addEventListener('click', async () => {
       try {
-        const r = await invoke('open_workspace_dir');
-        toast(r || '技能目录：~/.qibai_skills');
+        const r = await invoke('skill_open_dir');
+        toast(r || '已打开技能目录');
       } catch (e) {
-        toast('技能目录：~/.qibai_skills');
+        toast('打开技能目录失败：' + ((e && e.message) || e));
       }
     });
   }
@@ -3933,7 +3949,20 @@
     if (fileBtn) fileBtn.disabled = true;
     let summary;
     try {
-      summary = await invoke('skill_install_stage', opts);
+      // 后端契约：skill_install_stage(source = {kind, value})；
+      // 文件走字节通道（WebView 里 f.path 不可靠），不再传文件名假路径。
+      if (opts && opts.data_b64) {
+        summary = await invoke('skill_install_stage_bytes', {
+          file_name: opts.file_name,
+          data_b64: opts.data_b64,
+        });
+      } else if (opts && opts.source_url) {
+        summary = await invoke('skill_install_stage', { kind: 'url', value: opts.source_url });
+      } else if (opts && opts.dir) {
+        summary = await invoke('skill_install_stage', { kind: 'dir', value: opts.dir });
+      } else {
+        summary = await invoke('skill_install_stage', { kind: 'file', value: (opts && opts.file_path) || '' });
+      }
     } catch (e) {
       toast('安装失败：' + ((e && e.message) || e));
       if (urlBtn) urlBtn.disabled = false;
@@ -4126,7 +4155,7 @@
       switchTab('plugins');
       setTimeout(async () => {
         try {
-          await invoke('plugin_install', { dir: 'demo://examples' });
+          await invoke('plugin_list');
         } catch (e) { console.warn(e); }
         loadPluginsTab();
       }, 400);
@@ -4753,10 +4782,14 @@
       const selName = r.selected_name || r.selected || '?';
       const selIdx = r.selected_index != null ? r.selected_index : (landing.selected_idx != null ? landing.selected_idx : null);
       const landName = r.sink_landing_name || landing.name || 'unknown';
-      const landIdx = r.sink_landing_index != null ? r.sink_landing_index : (landing.idx != null ? landing.idx : null);
+      const landIdx = r.sink_landing_index != null
+        ? r.sink_landing_index
+        : (landing.idx != null ? landing.idx : (landing.index != null ? landing.index : null));
       const idxEq = selIdx !== null && landIdx !== null && selIdx === landIdx;
       const idxKnown = selIdx !== null && landIdx !== null;
-      const status = idxEq
+      const status = !idxKnown
+        ? `<div style="margin-top:4px;padding:4px 8px;background:#374151;color:#e5e7eb;border-radius:4px;font-size:12px;">? 暂时无法判定落点：此刻没有正在播放的音频流。<br><span style="font-size:11px;">先点上方「播放测试音（880Hz·0.5s）」，出声期间再点本按钮就能读到实际 sink。</span></div>`
+        : idxEq
         ? `<div style="margin-top:4px;padding:4px 8px;background:#052e16;color:#86efac;border-radius:4px;font-size:12px;">✓ 已生效：落点与选择一致</div>`
         : `<div style="margin-top:4px;padding:4px 8px;background:#7f1d1d;color:#fecaca;border-radius:4px;font-size:12px;">✗ 选择未生效：实际落在 #${landIdx ?? '?'}，不是 #${selIdx ?? '?'}<br><span style="font-size:11px;">可能原因：pacat/pw-play/paplay 未安装，已回落到 ALSA 默认</span></div>`;
       result.innerHTML =
