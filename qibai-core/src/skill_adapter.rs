@@ -145,26 +145,47 @@ impl SkillAdapter {
         if tool.trim().is_empty() {
             return Err("MCP 调用缺少工具名（functions[].name）".to_string());
         }
+        // 工具调用超时与「工具循环 8 轮 / 240s」对齐：
+        // anima_render 渲 450 帧就要 ≈50s，旧的 10s 常量必然超时；
+        // 取 300s 让长工具能跑完，又不会把整个循环拖死。
+        const MCP_CALL_TIMEOUT: Duration = Duration::from_secs(300);
         let mut sessions = self.mcp_sessions.lock().await;
-        if !sessions.contains_key(plugin_id) {
-            let mut sess = crate::mcp_client::McpSession::connect(spec, self.timeout).await?;
-            let tools = sess.list_tools(self.timeout).await?;
-            if !tools.iter().any(|t| t.name == tool) {
-                return Err(format!(
-                    "MCP server 未暴露工具 {tool:?}（可用：{}）",
-                    tools
-                        .iter()
-                        .map(|t| t.name.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
+        // 最多两趟：会话已死（server 崩了 / 早退）时丢弃重建一次再重试。
+        // 以前死会话会一直留在缓存里，之后每次调用都复读同一句
+        // 「MCP server 已退出（stdout 关闭）」，只能重启应用才好。
+        let mut last: Option<String> = None;
+        for attempt in 0..2u8 {
+            if !sessions.contains_key(plugin_id) {
+                let mut sess = crate::mcp_client::McpSession::connect(spec, self.timeout).await?;
+                let tools = sess.list_tools(self.timeout).await?;
+                if !tools.iter().any(|t| t.name == tool) {
+                    return Err(format!(
+                        "MCP server 未暴露工具 {tool:?}（可用：{}）",
+                        tools
+                            .iter()
+                            .map(|t| t.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+                sessions.insert(plugin_id.to_string(), sess);
             }
-            sessions.insert(plugin_id.to_string(), sess);
+            let sess = sessions
+                .get_mut(plugin_id)
+                .ok_or_else(|| "MCP 会话建立失败".to_string())?;
+            match sess.call_tool(&tool, &call_args, MCP_CALL_TIMEOUT).await {
+                Ok(text) => return Ok(text),
+                Err(e) => {
+                    if attempt == 0 && crate::mcp_client::is_session_dead(&e) {
+                        sessions.remove(plugin_id);
+                        last = Some(e);
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
         }
-        let sess = sessions
-            .get_mut(plugin_id)
-            .ok_or_else(|| "MCP 会话建立失败".to_string())?;
-        sess.call_tool(&tool, &call_args, self.timeout).await
+        Err(last.unwrap_or_else(|| "MCP 会话建立失败".to_string()))
     }
 
     /// 降级路径：回填 LLM 友好告知（契约 §3.3）。
@@ -257,6 +278,35 @@ pub fn copy_dir_all(from: &Path, to: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+
+    /// 会话自杀后必须丢弃重连，而不是把「stdout 关闭」原样复读。
+    #[tokio::test]
+    async fn dead_mcp_session_is_dropped_and_reconnected() {
+        let state = std::env::temp_dir().join(format!(
+            "qibai_flaky_mcp_{}.state",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&state);
+        let spec = crate::mcp_client::McpSpec {
+            command: "python3".to_string(),
+            args: vec![
+                "tests/fixtures/mcp_flaky.py".to_string(),
+                state.to_string_lossy().to_string(),
+            ],
+        };
+        let adapter = SkillAdapter::new();
+        let args = serde_json::json!({});
+        let first = adapter.run_mcp("flaky", &spec, "ping", &args).await;
+        assert_eq!(first.as_deref(), Ok("pong-1"), "第一次调用应成功（随后 server 自杀）");
+        let second = adapter.run_mcp("flaky", &spec, "ping", &args).await;
+        assert_eq!(
+            second.as_deref(),
+            Ok("pong-2"),
+            "第二次必须重连到新进程，而不是复读 stdout 关闭：{second:?}"
+        );
+        let _ = std::fs::remove_file(&state);
+    }
+
     use super::*;
     use crate::test_support::unique_temp_dir;
 

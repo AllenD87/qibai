@@ -156,6 +156,10 @@ plugins/
 - 文件操作放行同理：同一任务内「同一路径 + 同一动作」批准过一次即放行（`grant_key = file:<动作>:<路径>`）。
 - 审批幂等：同一 `request_id` 重复提交回放上次结果（「未重复执行」），不会报 `approval request not found`；pending 表是纯内存，重启后旧 id 一律按「已失效」话术回应。
 - 缺件预检：启动命令在补全 PATH 后仍解析不到 → 直接 `Denied` + 补救建议，**不生成** pending。
+- MCP 会话健康（v45.16）：会话死亡（server 秒退 / `stdout 关闭` / 写 stdin 失败）时不再复读同一句错误——`SkillAdapter::run_mcp` 会丢弃死会话、重连一次再重试；server 的 stderr（启动 banner、`Cannot find module`、崩溃栈）随错误一起抛出，用户看到的是真实原因而不是「stdout 关闭」。
+- 启动哨兵：spawn 后 240ms 内若已退出，直接回「MCP server 启动后立即退出（exit code）+ stderr」，不再走握手超时。
+- 入口预检：manifest `args` 里绝对路径且扩展名 `.mjs/.js/.cjs` 的入口脚本不存在时，在 spawn 前就拦下并提示「插件装得不完整，请重装技能包」（旧版导入只落清单不落 `mcp/` 目录就会这样）。
+- 单次 MCP 工具调用超时 300s（与 8 轮 / 240s 的工具循环对齐）：`anima_render` 渲 450 帧约 50s，旧的 10s 常量必然把它砍断。
 
 ### 2.5 专家体系装配（T5/T6）
 

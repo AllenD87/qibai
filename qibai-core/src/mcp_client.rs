@@ -14,6 +14,8 @@
 //!   在 invoke 路径转逐次审批，禁止无批准启动任意进程。
 
 use serde_json::{json, Value};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
@@ -33,6 +35,19 @@ pub struct McpSession {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next_id: u64,
+    /// server 往 stderr 说的话（启动 banner / 崩溃栈 / Cannot find module）。
+    /// 以前用 `Stdio::inherit()` 直接丢掉了——于是「node 秒退」在用户侧只剩一句
+    /// 「stdout 关闭」，看不出是缺文件、版本不对还是语法错。现在随错误一起抛出。
+    stderr_tail: Arc<Mutex<String>>,
+    stderr_task: Option<tokio::task::JoinHandle<()>>,
+}
+
+/// 会话是否已经死了（用于上层判「该丢弃重连」而不是把错误原样抛给用户）。
+pub fn is_session_dead(msg: &str) -> bool {
+    msg.contains("stdout 关闭")
+        || msg.contains("写入 MCP stdin 失败")
+        || msg.contains("启动后立即退出")
+        || msg.contains("MCP server 已退出")
 }
 
 /// 连接参数（来自 plugin manifest 的 `entry.mcp`）。
@@ -50,6 +65,22 @@ impl McpSession {
         spec: &McpSpec,
         timeout: Duration,
     ) -> Result<Self, String> {
+        // 入口预检：清单里的 `{PLUGIN_DIR}` 已替换成绝对路径，这里若文件不在，
+        // node 只会秒退并往 stderr 抱怨一句，用户却看到「stdout 关闭」。
+        // 直接说清「插件装得不完整」，比让用户去猜 node 环境省事得多。
+        if let Some(missing) = spec.args.iter().find(|a| {
+            let p = Path::new(a);
+            p.is_absolute()
+                && matches!(
+                    p.extension().and_then(|e| e.to_str()),
+                    Some("mjs") | Some("js") | Some("cjs")
+                )
+                && !p.is_file()
+        }) {
+            return Err(format!(
+                "插件入口脚本不存在：{missing}\n（插件包装得不完整：常见于旧版导入只落了清单、没落 mcp/ 目录）请在控台「插件」页删除 animacode 后重新导入 animacode-v2.2.0.qbpk。"
+            ));
+        }
         let mut cmd = tokio::process::Command::new(&spec.command);
         cmd.args(&spec.args);
         // 桌面应用继承的 PATH 往往不含 Homebrew / nvm / Program Files\nodejs，
@@ -58,7 +89,7 @@ impl McpSession {
         let mut child = cmd
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| {
@@ -77,12 +108,78 @@ impl McpSession {
             .stdout
             .take()
             .ok_or("MCP server stdout 不可用")?;
+        // 持续收集 stderr（只留最后约 1KB，防长日志吃内存）。
+        let stderr_tail = Arc::new(Mutex::new(String::new()));
+        let stderr_task = child.stderr.take().map(|err| {
+            let tail = stderr_tail.clone();
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(err);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    match reader.read_line(&mut line).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {
+                            let mut buf = tail.lock().unwrap();
+                            buf.push_str(line.trim_end());
+                            buf.push('\n');
+                            if buf.len() > 1200 {
+                                let cut = buf.len().saturating_sub(1000);
+                                let at = buf
+                                    .char_indices()
+                                    .find(|(i, _)| *i >= cut)
+                                    .map(|(i, _)| i)
+                                    .unwrap_or(0);
+                                *buf = buf[at..].to_string();
+                            }
+                        }
+                    }
+                }
+            })
+        });
         let mut session = McpSession {
             child,
             stdin,
             stdout: BufReader::new(stdout),
             next_id: 1,
+            stderr_tail,
+            stderr_task,
         };
+
+        // 启动哨兵：240ms 观察窗口内若 server 已退出，直接把退出码 + stderr 端上来。
+        // 正常 node 冷启动约 100–200ms，未退出的继续握手（initialize 仍有超时兜底）。
+        let mut exited: Option<std::process::ExitStatus> = None;
+        for _ in 0..6 {
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            match session.child.try_wait() {
+                Ok(Some(st)) => {
+                    exited = Some(st);
+                    break;
+                }
+                _ => continue,
+            }
+        }
+        if let Some(st) = exited {
+            // server 退得比 stderr 读完还快时，给收集任务几十毫秒把最后几行落进缓冲。
+            for _ in 0..6 {
+                let has = session
+                    .stderr_tail
+                    .lock()
+                    .map(|g| !g.trim().is_empty())
+                    .unwrap_or(false);
+                if has {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
+            let detail = session.stderr_suffix();
+            let hint = if detail.is_empty() {
+                "（server 没有任何 stderr 输出）".to_string()
+            } else {
+                detail
+            };
+            return Err(format!("MCP server 启动后立即退出（{st}）{hint}"));
+        }
 
         tokio::time::timeout(timeout, async {
             let req = json!({
@@ -178,6 +275,17 @@ impl McpSession {
         .map_err(|_| format!("tools/call 超时（{timeout:?}）"))?
     }
 
+    /// stderr 尾部的可读片段（空则返回空串，不留多余换行）。
+    fn stderr_suffix(&self) -> String {
+        let buf = self.stderr_tail.lock().map(|g| g.clone()).unwrap_or_default();
+        let trimmed = buf.trim();
+        if trimmed.is_empty() {
+            String::new()
+        } else {
+            format!("；server stderr:\n{trimmed}")
+        }
+    }
+
     fn next_id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
@@ -189,7 +297,7 @@ impl McpSession {
         self.stdin
             .write_all(line.as_bytes())
             .await
-            .map_err(|e| format!("写入 MCP stdin 失败: {e}"))?;
+            .map_err(|e| format!("写入 MCP stdin 失败: {e}{}", self.stderr_suffix()))?;
         self.stdin.write_all(b"\n").await.map_err(|e| e.to_string())?;
         self.stdin.flush().await.map_err(|e| e.to_string())
     }
@@ -206,7 +314,8 @@ impl McpSession {
                 .await
                 .map_err(|e| format!("读取 MCP stdout 失败: {e}"))?;
             if n == 0 {
-                return Err("MCP server 已退出（stdout 关闭）".to_string());
+                let detail = self.stderr_suffix();
+                return Err(format!("MCP server 已退出（stdout 关闭）{detail}"));
             }
             let msg: Value = serde_json::from_str(line.trim()).map_err(|e| {
                 format!("MCP 响应解析失败: {e}（原始: {}）", line.trim().chars().take(80).collect::<String>())
@@ -240,6 +349,9 @@ impl Drop for McpSession {
     fn drop(&mut self) {
         // kill_on_drop(true) 已在 spawn 时设置；这里显式触发确保清理。
         let _ = self.child.start_kill();
+        if let Some(t) = self.stderr_task.take() {
+            t.abort();
+        }
     }
 }
 
