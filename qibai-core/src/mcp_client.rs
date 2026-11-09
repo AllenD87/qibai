@@ -59,16 +59,47 @@ pub struct McpSpec {
     pub args: Vec<String>,
 }
 
+/// 入口脚本参数的跨平台规范化。
+///
+/// 只处理「绝对路径 + .mjs/.js/.cjs」这一类：把 Windows 的 verbatim 前缀
+/// `\\?\` 去掉、把 `/` 统一成 `\`。其它参数原样返回。
+fn normalize_script_arg(a: &str) -> String {
+    let p = Path::new(a);
+    let is_script = p.is_absolute()
+        && matches!(
+            p.extension().and_then(|e| e.to_str()),
+            Some("mjs") | Some("js") | Some("cjs")
+        );
+    if !is_script {
+        return a.to_string();
+    }
+    #[cfg(windows)]
+    {
+        if let Some(rest) = a.strip_prefix("\\\\?\\") {
+            return rest.replace('/', "\\");
+        }
+        if a.contains('/') {
+            return a.replace('/', "\\");
+        }
+    }
+    a.to_string()
+}
+
 impl McpSession {
     /// 启动子进程并完成 MCP 握手：initialize + notifications/initialized。
     pub async fn connect(
         spec: &McpSpec,
         timeout: Duration,
     ) -> Result<Self, String> {
+        // 入口路径先规范化再校验/启动。Windows 上 `canonicalize` 会给出
+        // `\\?\D:\…` 这种 verbatim 前缀，而 verbatim 路径里 `/` 不算分隔符，
+        // `is_file()` 和 node 都会认定文件不存在（CI 的 windows job 就栽在这），
+        // 于是明明装好的插件被误报成「入口脚本不存在」。
+        let args: Vec<String> = spec.args.iter().map(|a| normalize_script_arg(a)).collect();
         // 入口预检：清单里的 `{PLUGIN_DIR}` 已替换成绝对路径，这里若文件不在，
         // node 只会秒退并往 stderr 抱怨一句，用户却看到「stdout 关闭」。
         // 直接说清「插件装得不完整」，比让用户去猜 node 环境省事得多。
-        if let Some(missing) = spec.args.iter().find(|a| {
+        if let Some(missing) = args.iter().find(|a| {
             let p = Path::new(a);
             p.is_absolute()
                 && matches!(
@@ -82,7 +113,7 @@ impl McpSession {
             ));
         }
         let mut cmd = tokio::process::Command::new(&spec.command);
-        cmd.args(&spec.args);
+        cmd.args(&args);
         // 桌面应用继承的 PATH 往往不含 Homebrew / nvm / Program Files\nodejs，
         // 直接 spawn 会 ENOENT（用户只看到「审批失败」）。统一补全 PATH。
         crate::proc_env::apply_tokio(&mut cmd);
