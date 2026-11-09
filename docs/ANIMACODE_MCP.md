@@ -105,5 +105,12 @@ anima_render → anima_qa（VERDICT 必须 PASS / PASS_WITH_WARNINGS）→ anima
 ## 注意
 
 - `trust` 默认 `confirm`：每次调用走确认；要免确认需把连接器设为 `readonly`。
+- **子进程 PATH 已自动补全（v45.15）**：从桌面图标启动时，应用拿到的 PATH 往往只有
+  `/usr/bin:/bin`，Homebrew（`/opt/homebrew/bin`）、nvm（`~/.nvm/versions/node/<v>/bin`）、
+  Windows 的 `Program Files\nodejs` 都不在里面，于是 `node` 一 spawn 就 `No such file`。
+  现在四类子进程（技能 MCP 会话、MCP 注册表、command 型插件、代码检查）统一注入
+  补全后的 PATH；还不够时用环境变量 `QIBAI_EXTRA_PATH` 追加目录（多个按系统分隔符）。
+- **点「允许」之前先预检启动命令**：命令或脚本在插件目录 / PATH 里找不到时，不再弹确认，
+  直接回复「找不到可执行 `node`……」，避免"点了允许 → 审批失败"的空循环。
 - 渲染会起子进程（chromium）并写帧到项目目录，属重操作；建议由用户在「做一条动画」时显式触发。
 - 技能包落在 `<数据目录>/plugins/<id>/`（平铺），能力包扫描器同时覆盖 `skills/ experts/` 与平铺两层，所以装好的包在技能库里也能看到正文。

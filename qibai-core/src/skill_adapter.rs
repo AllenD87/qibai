@@ -174,7 +174,9 @@ impl SkillAdapter {
 
     async fn run_command(&self, script: &Path, args: &serde_json::Value) -> Result<String, String> {
         let body = serde_json::to_string(args).map_err(|e| format!("args 序列化失败: {e}"))?;
-        let mut child = tokio::process::Command::new(script)
+        let mut cmd = tokio::process::Command::new(script);
+        crate::proc_env::apply_tokio(&mut cmd);
+        let mut child = cmd
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())

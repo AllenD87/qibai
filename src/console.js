@@ -3336,7 +3336,7 @@
       currentRequestId = null;
     } catch (e) {
       const msg = String((e && e.message) || e || '');
-      toast('审批失败：' + msg.slice(0, 120));
+      toast('审批已通过，但没跑起来：' + msg.slice(0, 120));
       errEl.textContent = msg || String(e);
       errEl.hidden = false;
       // 不 currentRequestId = null，保留便于重试

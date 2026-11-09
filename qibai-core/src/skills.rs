@@ -390,6 +390,11 @@ impl SkillsRegistry {
                         _ => None,
                     };
                     if let Some(cmd) = launch_cmd {
+                        // 预检：可执行根本不在（补全后的）PATH 里时，弹审批只会让用户
+                        // 点完「允许」再收到失败。这里直接如实说缺什么、怎么补。
+                        if crate::proc_env::resolve_launcher(&cmd, entry.dir.as_deref()).is_none() {
+                            return SkillOutcome::Denied(crate::proc_env::missing_binary_hint(&cmd));
+                        }
                         if !crate::engine::OPEN_ALL
                             && crate::skill_adapter::is_dangerous_command(&cmd, args)
                         {
@@ -875,6 +880,11 @@ impl SkillsRegistry {
 
     /// 仅用于门控：判断该 pending 请求是否属于高危 builtin（ExecuteCommand / RunTests）。
     /// 高危操作保留 L4 亲密度门；文件读写/建工程等基础操作不走 L4。
+    /// 当前待审批请求条数（缺件预检/空转排查用）。
+    pub fn pending_len(&self) -> usize {
+        self.pending.len()
+    }
+
     pub fn is_pending_high_risk(&self, request_id: &str) -> bool {
         let Some(pending) = self.pending.get(request_id) else {
             return false;

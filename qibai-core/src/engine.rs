@@ -1266,6 +1266,19 @@ impl Engine {
 /// 批准门控决策（纯函数，便于单测）。
 /// v45.7：只有高危 builtin（ExecuteCommand/RunTests）才查 L4 亲密度；
 /// 文件读写/建工程等基础操作一律不门控。返回 Some(原因) 表示应拒绝。
+/// 执行期报错的人话补丁：spawn 失败（可执行不在 PATH）时补行动建议，
+/// 其余原样交回，不吞真因。
+fn exec_error_hint(msg: String) -> String {
+    if crate::proc_env::looks_like_missing_binary(&msg) {
+        format!(
+            "{msg}\n（缺可执行：装好后重启；已装但不在默认位置时，把所在目录写进环境变量 {}）",
+            crate::proc_env::EXTRA_ENV
+        )
+    } else {
+        msg
+    }
+}
+
 fn approval_gate_reason(is_high_risk: bool, level: u32) -> Option<String> {
     if !is_high_risk {
         return None;
@@ -1308,7 +1321,9 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
                     "MCP 注册表未初始化，无法执行已确认的外部调用".into(),
                 ));
             };
-            let result = reg.call(&server, &tool, args).map_err(EngineError::Skill)?;
+            let result = reg
+                .call(&server, &tool, args)
+                .map_err(|m| EngineError::Skill(Engine::exec_error_hint(m)))?;
             if result.is_error {
                 // 工具自报错误：文本原样保留，仅加一行前缀让模型/人看得出边界。
                 format!("MCP 工具返回错误：{}", result.content)
@@ -1351,7 +1366,7 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
         .skills
         .approve(request_id, approve)
         .await
-        .map_err(|e| EngineError::Skill(e.to_string()))?;
+        .map_err(|e| EngineError::Skill(Engine::exec_error_hint(e.to_string())))?;
     // 批准成功：把结果回写进会话并 emit 气泡，否则用户永远不知道成没成。
     if approve {
         let reply = format!("已批准并执行：{result}");
@@ -5949,6 +5964,55 @@ mod tests {
         e.plugin_uninstall("com.qibai.datetime".into()).unwrap();
         e.plugin_uninstall("com.qibai.datetime".into()).unwrap();
         assert!(e.plugin_list().iter().all(|v| v["id"] != "com.qibai.datetime"));
+
+        unsafe { std::env::remove_var("QIBAI_DATA_DIR") };
+        unsafe { std::env::remove_var("QIBAI_PLUGINS_DIR") };
+    }
+
+    /// 外部 MCP 包声明的启动命令不在 PATH 里时：不该先弹「需要你的确认」，
+    /// 因为用户点完必然失败（这就是用户看到的「审批失败」）。应当直接说缺什么。
+    #[tokio::test]
+    async fn missing_launcher_is_reported_instead_of_approved() {
+        let _g = crate::test_support::env_lock();
+        let data = crate::test_support::unique_temp_dir("engine-missbin-data");
+        let plugindir = crate::test_support::unique_temp_dir("engine-missbin-dir");
+        unsafe { std::env::set_var("QIBAI_DATA_DIR", &data) };
+        unsafe { std::env::set_var("QIBAI_PLUGINS_DIR", &plugindir) };
+
+        let src = data.join("nobin-src");
+        std::fs::create_dir_all(&src).unwrap();
+        let manifest = serde_json::json!({
+            "id": "qibai.test.nobin",
+            "type": "connector",
+            "name": "缺件测试",
+            "description": "启动命令不存在的 MCP 包",
+            "version": "1.0.0",
+            "permissions": ["system:launch"],
+            "entry": {"kind": "mcp", "mcp": {"command": "qibai-no-such-binary-xyz", "args": []}},
+            "functions": [{
+                "name": "nobin_probe",
+                "description": "探针",
+                "parameters": {"type": "object", "properties": {}, "required": []}
+            }]
+        });
+        std::fs::write(
+            src.join("qibai-plugin.json"),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        let mut e = Engine::new(Box::new(RecordingSink { events: Mutex::new(vec![]) }));
+        e.plugin_install(src.to_string_lossy().to_string()).unwrap();
+
+        match e.skills.invoke("nobin_probe", &serde_json::json!({})).await {
+            crate::skills::SkillOutcome::Denied(msg) => {
+                assert!(msg.contains("找不到可执行"), "msg={msg}");
+                assert!(msg.contains(crate::proc_env::EXTRA_ENV), "msg 应给出补救方式：{msg}");
+            }
+            other => panic!("expected denied（缺可执行要直说）, got {other:?}"),
+        }
+        // 关键：不再造待审批请求，避免「点了允许 → 失败」的循环
+        assert_eq!(e.skills.pending_len(), 0, "缺件时不应留下 pending");
 
         unsafe { std::env::remove_var("QIBAI_DATA_DIR") };
         unsafe { std::env::remove_var("QIBAI_PLUGINS_DIR") };

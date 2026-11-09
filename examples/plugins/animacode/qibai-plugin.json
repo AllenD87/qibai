@@ -3,21 +3,28 @@
   "type": "connector",
   "name": "Animacode 动画成片",
   "description": "用代码做确定性动画：写一份 scene.json，构建多比例、逐帧渲染、自动质检（安全区/重叠/对比度/空帧/长静止/视觉回归）、合成带音轨 MP4。全本地、零 npm 依赖、不联网。工具：anima_schema 取字段 / anima_build 校验构建 / anima_render 渲帧 / anima_qa 质检 / anima_mux 合成。",
-  "version": "2.2.0",
+  "version": "2.4.0",
   "author": "animacode",
-  "permissions": ["system:launch"],
+  "permissions": [
+    "system:launch"
+  ],
   "entry": {
     "kind": "mcp",
     "mcp": {
       "command": "node",
-      "args": ["{PLUGIN_DIR}/mcp/server.mjs"]
+      "args": [
+        "{PLUGIN_DIR}/mcp/server.mjs"
+      ]
     }
   },
   "functions": [
     {
       "name": "anima_schema",
       "description": "返回 scene.json 全字段与八个镜头块的 data 字段。写 spec 前先调用，不要凭记忆编字段。",
-      "parameters": { "type": "object", "properties": {} }
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
     },
     {
       "name": "anima_build",
@@ -25,11 +32,22 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "spec": { "type": "string", "description": "scene.json 绝对路径" },
-          "out": { "type": "string", "description": "构建输出目录，默认 spec 同级的 build" },
-          "format": { "type": "string", "description": "只构建某个比例，如 916" }
+          "spec": {
+            "type": "string",
+            "description": "scene.json 绝对路径"
+          },
+          "out": {
+            "type": "string",
+            "description": "构建输出目录，默认 spec 同级的 build"
+          },
+          "format": {
+            "type": "string",
+            "description": "只构建某个比例，如 916"
+          }
         },
-        "required": ["spec"]
+        "required": [
+          "spec"
+        ]
       }
     },
     {
@@ -38,14 +56,41 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "scene": { "type": "string", "description": "build/<id>/scene.html 绝对路径" },
-          "out": { "type": "string", "description": "帧输出目录" },
-          "shots": { "type": "array", "items": { "type": "string" }, "description": "只渲这些镜头，如 [\"s4\"]" },
-          "reuse": { "type": "string", "description": "旧帧目录，未改动帧从那里复制" },
-          "frames": { "type": "array", "items": { "type": "number" }, "description": "只渲这些帧号（抽样看片）" },
-          "audit": { "type": "string", "description": "审计 JSON 输出路径" }
+          "scene": {
+            "type": "string",
+            "description": "build/<id>/scene.html 绝对路径"
+          },
+          "out": {
+            "type": "string",
+            "description": "帧输出目录"
+          },
+          "shots": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "只渲这些镜头，如 [\"s4\"]"
+          },
+          "reuse": {
+            "type": "string",
+            "description": "旧帧目录，未改动帧从那里复制"
+          },
+          "frames": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "只渲这些帧号（抽样看片）"
+          },
+          "audit": {
+            "type": "string",
+            "description": "审计 JSON 输出路径"
+          }
         },
-        "required": ["scene", "out"]
+        "required": [
+          "scene",
+          "out"
+        ]
       }
     },
     {
@@ -54,17 +99,46 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "frames": { "type": "string", "description": "帧目录" },
-          "fps": { "type": "number" },
-          "duration": { "type": "number" },
-          "audit": { "type": "string" },
-          "out": { "type": "string", "description": "qa_report.json 路径，放在 build/<id>/ 下 Studio 才读得到" },
-          "sheet": { "type": "string", "description": "接触表输出路径" },
-          "plot": { "type": "string", "description": "运动曲线输出路径" },
-          "baseline": { "type": "string", "description": "视觉回归基线指纹" },
-          "failOnChange": { "type": "boolean", "description": "视觉差异提级为失败" }
+          "frames": {
+            "type": "string",
+            "description": "帧目录"
+          },
+          "fps": {
+            "type": "number"
+          },
+          "duration": {
+            "type": "number"
+          },
+          "audit": {
+            "type": "string"
+          },
+          "out": {
+            "type": "string",
+            "description": "qa_report.json 路径，放在 build/<id>/ 下 Studio 才读得到"
+          },
+          "sheet": {
+            "type": "string",
+            "description": "接触表输出路径"
+          },
+          "plot": {
+            "type": "string",
+            "description": "运动曲线输出路径"
+          },
+          "baseline": {
+            "type": "string",
+            "description": "视觉回归基线指纹"
+          },
+          "failOnChange": {
+            "type": "boolean",
+            "description": "视觉差异提级为失败"
+          }
         },
-        "required": ["frames", "fps", "duration", "out"]
+        "required": [
+          "frames",
+          "fps",
+          "duration",
+          "out"
+        ]
       }
     },
     {
@@ -73,13 +147,28 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "frames": { "type": "string" },
-          "out": { "type": "string", "description": "输出 mp4 路径" },
-          "fps": { "type": "number" },
-          "crf": { "type": "number" },
-          "audio": { "type": "string", "description": "音轨路径（wav/mp3）" }
+          "frames": {
+            "type": "string"
+          },
+          "out": {
+            "type": "string",
+            "description": "输出 mp4 路径"
+          },
+          "fps": {
+            "type": "number"
+          },
+          "crf": {
+            "type": "number"
+          },
+          "audio": {
+            "type": "string",
+            "description": "音轨路径（wav/mp3）"
+          }
         },
-        "required": ["frames", "out"]
+        "required": [
+          "frames",
+          "out"
+        ]
       }
     }
   ]

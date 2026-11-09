@@ -50,14 +50,27 @@ impl McpSession {
         spec: &McpSpec,
         timeout: Duration,
     ) -> Result<Self, String> {
-        let mut child = tokio::process::Command::new(&spec.command)
-            .args(&spec.args)
+        let mut cmd = tokio::process::Command::new(&spec.command);
+        cmd.args(&spec.args);
+        // 桌面应用继承的 PATH 往往不含 Homebrew / nvm / Program Files\nodejs，
+        // 直接 spawn 会 ENOENT（用户只看到「审批失败」）。统一补全 PATH。
+        crate::proc_env::apply_tokio(&mut cmd);
+        let mut child = cmd
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| format!("MCP server 启动失败: {e}"))?;
+            .map_err(|e| {
+                if crate::proc_env::looks_like_missing_binary(&e.to_string()) {
+                    format!(
+                        "MCP server 启动失败: {e}\n{}",
+                        crate::proc_env::missing_binary_hint(&spec.command)
+                    )
+                } else {
+                    format!("MCP server 启动失败: {e}")
+                }
+            })?;
 
         let stdin = child.stdin.take().ok_or("MCP server stdin 不可用")?;
         let stdout = child

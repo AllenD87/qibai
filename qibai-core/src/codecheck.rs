@@ -242,6 +242,7 @@ impl CheckRunner for OsCheckRunner {
         }
         let mut cmd = tokio::process::Command::new(argv[0]);
         cmd.args(&argv[1..]);
+        crate::proc_env::apply_tokio(&mut cmd);
         if let Some(c) = cwd {
             cmd.current_dir(c);
         }
