@@ -24,6 +24,12 @@ fn copy_dir(src: &Path, dst: &Path) {
     }
 }
 
+/// 路径比较用：统一分隔符、去掉 Windows `\\?\` 前缀（canonicalize 会加）。
+fn norm(p: &std::path::Path) -> String {
+    let s = p.display().to_string().replace('\\', "/");
+    s.strip_prefix("//?/").unwrap_or(&s).to_string()
+}
+
 fn node_available() -> bool {
     std::process::Command::new("node")
         .arg("--version")
@@ -64,8 +70,8 @@ async fn mcp_connector_runs_schema_and_build() {
         "变量应已被替换：{args_text}"
     );
     assert_eq!(
-        Path::new(&args_text),
-        pkg.canonicalize().unwrap_or(pkg.clone()).join("mcp/server.mjs"),
+        norm(Path::new(&args_text)),
+        norm(&pkg.canonicalize().unwrap_or(pkg.clone()).join("mcp/server.mjs")),
         "入口路径应落在包目录内"
     );
 
@@ -85,13 +91,13 @@ async fn mcp_connector_runs_schema_and_build() {
             .and_then(|e| e.mcp.as_ref())
             .map(|m| m.args.join(" "))
             .unwrap();
+        let installed_dir = plugdir
+            .join("animacode")
+            .canonicalize()
+            .unwrap_or(plugdir.join("animacode"));
         assert_eq!(
-            Path::new(&args_text),
-            plugdir
-                .join("animacode")
-                .canonicalize()
-                .unwrap_or(plugdir.join("animacode"))
-                .join("mcp/server.mjs"),
+            norm(Path::new(&args_text)),
+            norm(&installed_dir.join("mcp/server.mjs")),
             "导入后的入口应落在安装目录内"
         );
     }
