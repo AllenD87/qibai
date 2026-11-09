@@ -930,6 +930,19 @@ impl SkillsRegistry {
         self.pending.len()
     }
 
+    /// v45.18：待确认项的可读名字，供审批执行留痕用（`approve` 会把它从表里摘走，
+    /// 调用方必须在 `approve` 之前取）。内置命令返回 `plugin_id`，外部技能返回
+    /// `plugin_id::fn_name`。
+    pub fn pending_label(&self, request_id: &str) -> Option<String> {
+        let pending = self.pending.get(request_id)?;
+        Some(match (pending.plugin_id.is_empty(), pending.fn_name.is_empty()) {
+            (true, true) => request_id.to_string(),
+            (true, false) => pending.fn_name.clone(),
+            (false, true) => pending.plugin_id.clone(),
+            (false, false) => format!("{}::{}", pending.plugin_id, pending.fn_name),
+        })
+    }
+
     pub fn is_pending_high_risk(&self, request_id: &str) -> bool {
         let Some(pending) = self.pending.get(request_id) else {
             return false;

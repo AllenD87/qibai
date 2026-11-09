@@ -214,7 +214,10 @@
       ex = ex || {};
       const line = document.createElement('div');
       line.style.cssText = 'padding:2px 0;border-top:1px dashed #e5e7eb;';
-      const args = (ex.args && typeof ex.args === 'object') ? JSON.stringify(ex.args) : String(ex.args || '');
+      // v45.18：后端留痕结构体字段是 args_summary，早前这里只读 ex.args，
+      // 参数一栏一直是空的；两个键都认。
+      const rawArgs = ex.args !== undefined && ex.args !== null ? ex.args : ex.args_summary;
+      const args = (rawArgs && typeof rawArgs === 'object') ? JSON.stringify(rawArgs) : String(rawArgs || '');
       const short = args.length > 40 ? args.slice(0, 40) + '…' : args;
       const ok = ex.ok !== false;
       line.innerHTML = `<span style="color:${ok ? '#16a34a' : '#b91c1c'};">${ok ? '✓' : '✗'}</span> ` +
@@ -3341,12 +3344,53 @@
     return '确认已通过，但执行失败：' + raw;
   }
 
+  // v45.18：审批点的执行是同步阻塞在 approve_skill 里的（渲染/构建类可跑 1 分钟以上），
+  // 期间界面原本一个字都不给，用户只知道「弹窗关了，然后没了」。
+  // 这里给一条本地心跳：正在执行谁、已经跑了多久，长任务额外提示别关窗口。
+  let approvalRunTimer = null;
+  function approvalRunEl() {
+    let el = document.getElementById('approvalRun');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'approvalRun';
+      el.style.cssText =
+        'color:#0b6b3a;font-size:12px;margin:8px 0;padding:6px 8px;background:#e8f5e9;border-radius:4px;white-space:pre-wrap;';
+      document.getElementById('approvalModal').appendChild(el);
+    }
+    return el;
+  }
+  function stopApprovalRun(hide) {
+    if (approvalRunTimer) {
+      clearInterval(approvalRunTimer);
+      approvalRunTimer = null;
+    }
+    const el = document.getElementById('approvalRun');
+    if (el && hide) el.hidden = true;
+  }
+
   async function resolveApproval(approve) {
     // 连点保护：第一条确认的结果回来之前，第二次点击一律忽略。
     // 否则两次 approve_skill 会把同一条确认提交两遍（第一次执行、第二次报错，
     // 用户看到的就是「点了允许却说没跑起来」）。
     if (approvalBusy || !currentRequestId) return;
     approvalBusy = true;
+    const skillName = ($('approvalSkill') && $('approvalSkill').textContent) || '技能';
+    const startedAt = Date.now();
+    if (approve) {
+      const runEl = approvalRunEl();
+      runEl.hidden = false;
+      const tick = () => {
+        const secs = Math.round((Date.now() - startedAt) / 1000);
+        runEl.textContent =
+          '正在执行 ' + skillName + '… 已 ' + secs + 's' +
+          (secs >= 20
+            ? '\n（渲染/构建类任务通常 1 分钟上下；别关窗口，跑完这里会自动接着往下走）'
+            : '');
+      };
+      stopApprovalRun(false);
+      tick();
+      approvalRunTimer = setInterval(tick, 500);
+    }
     $('approvalAllow').disabled = true;
     $('approvalDeny').disabled = true;
     // v45.7：先 await 结果，成功才关弹窗；失败保留弹窗并把 err 显示在弹窗内。
@@ -3361,9 +3405,13 @@
     errEl.textContent = '';
     try {
       await invoke('approve_skill', { request_id: currentRequestId, approve });
+      const secs = Math.round((Date.now() - startedAt) / 1000);
+      stopApprovalRun(true);
       $('approvalModal').classList.remove('show');
       currentRequestId = null;
       if (approve) {
+        // 有结果就要让人看见，而不是只关掉弹窗了事。
+        toast('已执行 ' + skillName + '（' + secs + 's）');
         if (autoChain >= 8) {
           toast('连续确认已达上限，接下来请重新说明一次要做的事');
         } else {
@@ -3373,6 +3421,7 @@
         }
       }
     } catch (e) {
+      stopApprovalRun(true);
       const msg = String((e && e.message) || e || '');
       const text = approvalErrorText(msg, approve);
       errEl.textContent = text;
@@ -3380,6 +3429,7 @@
       toast(text.slice(0, 120));
       // 不 currentRequestId = null，保留便于重试
     } finally {
+      stopApprovalRun(true);
       approvalBusy = false;
       $('approvalAllow').disabled = false;
       $('approvalDeny').disabled = false;

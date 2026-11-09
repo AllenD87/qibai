@@ -1328,6 +1328,15 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
             ));
         }
         // 注册表调用包在独立作用域里：guard 先 drop，才能再 &mut self.append_chat。
+        // v45.18：参数摘要要在 call 之前算——args 是按值传进 registry 的。
+        let args_summary = {
+            let s = args.to_string();
+            let mut t: String = s.chars().take(120).collect();
+            if s.chars().count() > 120 {
+                t.push('…');
+            }
+            t
+        };
         let text = {
             let mut guard = self.mcp.lock().unwrap();
             let Some(reg) = guard.as_mut() else {
@@ -1351,6 +1360,17 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
         self.sink.emit(
             "qibai://pet-say",
             serde_json::json!({"text": reply, "flash": true}),
+        );
+        // v45.18：审批路径不经过 LLM 工具循环，那次统一广播轮不到它，
+        // 聊天/执行记录里就会空一片（用户只会看到一句「已批准并执行」）。
+        self.sink.emit(
+            "qibai://executions",
+            serde_json::json!({"items": [{
+                "tool": crate::mcp::bridge::namespaced(&server, &tool),
+                "args_summary": args_summary,
+                "ok": true,
+                "error": serde_json::Value::Null,
+            }]}),
         );
         return Ok(text);
     }
@@ -1376,6 +1396,8 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
             return Err(EngineError::Intimacy(full));
         }
     }
+    // v45.18：名字要在 approve 之前取——它会把 pending 项摘走。
+    let pending_label = self.skills.pending_label(request_id);
     let result = self
         .skills
         .approve(request_id, approve)
@@ -1388,6 +1410,18 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
         self.sink.emit(
             "qibai://pet-say",
             serde_json::json!({"text": reply, "flash": true}),
+        );
+        // v45.18：同 mcp-appr 分支——审批执行不经过 LLM 循环，得单独留痕，
+        // 否则聊天区「执行记录」折叠里永远缺这一次。
+        let tool = pending_label.unwrap_or_else(|| request_id.to_string());
+        self.sink.emit(
+            "qibai://executions",
+            serde_json::json!({"items": [{
+                "tool": tool,
+                "args_summary": "",
+                "ok": true,
+                "error": serde_json::Value::Null,
+            }]}),
         );
     }
     Ok(result)
@@ -6104,6 +6138,55 @@ mod tests {
             crate::skills::SkillOutcome::PendingApproval { .. } => {}
             other => panic!("新一轮请求应重新确认，实际 {other:?}"),
         }
+
+        unsafe {
+            std::env::remove_var("QIBAI_DATA_DIR");
+            std::env::remove_var("QIBAI_PLUGINS_DIR");
+            std::env::remove_var("QIBAI_FORCE_APPROVALS");
+        }
+    }
+
+    /// v45.18：审批（IPC 入口 approve_skill）执行完必须广播 qibai://executions。
+    /// 这条路径不经过 LLM 工具循环，此前只剩一句「已批准并执行」，聊天区的
+    /// 执行记录折叠永远是空的——用户原话「聊天记录里面看不到这一点」。
+    #[tokio::test]
+    async fn approval_path_broadcasts_execution_record() {
+        if !node_available() {
+            eprintln!("SKIP: 本机没有 node，跳过「审批留痕」验收");
+            return;
+        }
+        let _g = crate::test_support::env_lock();
+        let data = crate::test_support::unique_temp_dir("engine-appr-ev-data");
+        let plugindir = crate::test_support::unique_temp_dir("engine-appr-ev-dir");
+        unsafe {
+            std::env::set_var("QIBAI_DATA_DIR", &data);
+            std::env::set_var("QIBAI_PLUGINS_DIR", &plugindir);
+            std::env::set_var("QIBAI_FORCE_APPROVALS", "1");
+        }
+        let evs = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut e = Engine::new(Box::new(VecSink { events: evs.clone() }));
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/plugins/animacode");
+        e.plugin_install(src.to_string_lossy().to_string()).unwrap();
+        e.skills.set_enabled("animacode", true).unwrap();
+
+        let id = match e.skills.invoke("anima_schema", &serde_json::json!({})).await {
+            crate::skills::SkillOutcome::PendingApproval { request_id, .. } => request_id,
+            other => panic!("首次调用应先弹确认，实际 {other:?}"),
+        };
+        e.approve_skill(&id, true).await.expect("审批后必须真执行");
+
+        let events = evs.lock().unwrap();
+        let exec = events
+            .iter()
+            .find(|(n, _)| n == "qibai://executions")
+            .map(|(_, p)| p.clone())
+            .expect("审批路径必须广播 qibai://executions（否则聊天记录看不到执行）");
+        let tool = exec["items"][0]["tool"].as_str().unwrap_or("");
+        assert!(
+            tool.contains("anima_schema"),
+            "留痕里应带技能名，实际 {tool}"
+        );
+        assert_eq!(exec["items"][0]["ok"], serde_json::Value::Bool(true));
 
         unsafe {
             std::env::remove_var("QIBAI_DATA_DIR");
