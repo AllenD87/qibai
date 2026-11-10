@@ -622,9 +622,19 @@
     }
   }
 
-  async function doSend() {
+  async function doSend(fromButton) {
     const input = $('chatInput');
-    await doSendWithText(input.value);
+    const v = (input.value || '').trim();
+    // v45.23：空输入点「发送」以前是静默 return——用户以为按钮坏了。
+    // 立绘/资源缺失时界面已经够空，按钮再没反应就只剩「是不是卡死」的猜测。
+    if (!v) {
+      if (fromButton) {
+        toast('先在输入框里说点什么，再点发送');
+        input.focus();
+      }
+      return;
+    }
+    await doSendWithText(v);
   }
   // v20：发送中锁——防连按 Enter/双击发送按钮导致多轮并发 send_message 与事件风暴
   let sendBusy = false;
@@ -731,9 +741,9 @@
       $('chatInput').disabled = false;
     }
   }
-  $('sendBtn').addEventListener('click', doSend);
+  $('sendBtn').addEventListener('click', () => doSend(true));
   $('chatInput').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') doSend();
+    if (e.key === 'Enter') doSend(false);
   });
 
   // v45.7：清空聊天记录（模态确认：只清聊天 / 连记忆一起清）
@@ -772,6 +782,66 @@
     }
     btnOnly.addEventListener('click', () => doClear('chat'));
     btnAll.addEventListener('click', () => doClear('all'));
+  })();
+
+  /* ============================================================
+   * 开机自启（v45.23）
+   * 后端 set_autostart / get_autostart 早就注册了，但前端一直没有入口——
+   * 桌面伴侣最常见的诉求「开机就出来」在界面上找不到开关。
+   * 状态以系统为准（读系统注册项），所以不进 settings.json，点完立即落盘生效。
+   * ============================================================ */
+  (function bindAutostart() {
+    const sw = $('swAutostart');
+    const hint = $('autostartHint');
+    if (!sw) return;
+    let busy = false;
+
+    function paint(on) {
+      sw.dataset.on = on ? 'true' : 'false';
+      sw.classList.toggle('on', !!on);
+    }
+
+    async function refresh() {
+      try {
+        const on = await invoke('get_autostart');
+        paint(!!on);
+        if (hint) hint.textContent = on
+          ? '已开启：下次登录系统会自动启动。'
+          : '未开启：需要每次手动启动。';
+      } catch (e) {
+        // 沙箱/浏览器 mock 或系统不支持（例如无桌面环境、未装自启插件）
+        paint(false);
+        sw.dataset.unsupported = '1';
+        if (hint) hint.textContent = '当前系统不支持读取自启状态：' + ((e && e.message) || e);
+      }
+    }
+
+    sw.addEventListener('click', async () => {
+      if (busy) return;
+      if (sw.dataset.unsupported === '1') {
+        toast('当前系统不支持开机自启');
+        return;
+      }
+      const next = sw.dataset.on !== 'true';
+      busy = true;
+      paint(next);
+      sw.dataset.busy = '1';
+      try {
+        const applied = await invoke('set_autostart', { enabled: next });
+        paint(applied === undefined ? next : !!applied);
+        toast(applied === false ? '开机自启未能开启（系统拒绝了写入）'
+          : (next ? '已开启开机自启' : '已关闭开机自启'));
+        if (hint) hint.textContent = next ? '已开启：下次登录系统会自动启动。' : '未开启：需要每次手动启动。';
+      } catch (e) {
+        paint(!next);
+        toast('设置开机自启失败：' + ((e && e.message) || e));
+      } finally {
+        busy = false;
+        delete sw.dataset.busy;
+      }
+    });
+
+    refresh();
   })();
 
   /* ============================================================
@@ -1916,6 +1986,25 @@
   }
 
   function bindPersonaGrid() {
+    // v45.23：立绘是 478 MB 大图，不入库（走 Release 分卷）。clone 后第一次打开角色页
+    // 五张卡片全是裂图，Tauri 里还会一直刷 ERR_FILE_NOT_FOUND。这里降级成同尺寸占位块：
+    // 卡片保留名字/描述仍可点选，并提示一次去哪里补素材。
+    let artWarned = false;
+    document.querySelectorAll('#personaGrid .persona-card img').forEach((im) => {
+      const fail = () => {
+        if (im.dataset.failed === '1') return;
+        im.dataset.failed = '1';
+        const card = im.closest('.persona-card');
+        if (card) card.classList.add('no-art');
+        if (!artWarned) {
+          artWarned = true;
+          toast('角色立绘未安装：项目根执行 bash fetch_personas.sh 可补齐（不进仓库）');
+        }
+      };
+      im.addEventListener('error', fail, { once: true });
+      // 监听挂晚了的兜底（缓存命中/早已失败）
+      if (im.complete && im.naturalWidth === 0) fail();
+    });
     $('personaGrid').addEventListener('click', async (e) => {
       const c = e.target.closest('.persona-card');
       if (!c) return;

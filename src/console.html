@@ -733,6 +733,19 @@
       </div>
     </div>
 
+    <!-- 启动与常驻（v45.23：补 set_autostart/get_autostart 一直没有 UI 入口的缺口） -->
+    <div class="settings-card" id="startupCard">
+      <h2>启动与常驻</h2>
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">开机自启</div>
+          <div class="desc">登录系统后自动启动元气小小，桌宠直接出现在桌面</div>
+        </div>
+        <div class="switch" id="swAutostart" data-on="false"></div>
+      </div>
+      <div class="hint" id="autostartHint" style="margin-top:6px;">开关状态由系统读取，与设置文件无关，改完立即生效。</div>
+    </div>
+
     <!-- 关于与更新（迭代⑥） -->
     <div class="settings-card" id="aboutCard" data-setgroup="general">
       <h2>关于与更新</h2>
