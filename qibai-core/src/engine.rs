@@ -2663,6 +2663,21 @@ PASS_WITH_WARNINGS，FAIL 就改 spec 重渲）→ `anima_mux` 合成 MP4；\n\
     }
 
     pub async fn send_message(&mut self, text: &str) -> Result<SendMessageOutput, EngineError> {
+        /// v45.21：不可取消场景（测试 / 内部调用）用的常量标志——永远为 false。
+        static NEVER_CANCEL: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
+        self.send_message_cancellable(text, &NEVER_CANCEL).await
+    }
+
+    /// v45.21：可取消版本。用户点「停止」时把 `cancel` 置 true，
+    /// 工具循环会在「下一次请求模型之前」和「下一个工具开跑之前」两处刹车。
+    /// 语义是**软停**：当前正在跑的工具会先跑完（不留半截文件），然后正常收尾，
+    /// 已经产出的文件全部保留，并给出「停在第几步」的交代。
+    pub async fn send_message_cancellable(
+        &mut self,
+        text: &str,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<SendMessageOutput, EngineError> {
         // v45.8-A：空文本硬闸——拔麦/转写为空时不进 LLM、不写会话、不 emit thinking。
         if text.trim().is_empty() {
             let n = self.conversation.all().len();
@@ -2995,9 +3010,15 @@ PASS_WITH_WARNINGS，FAIL 就改 spec 重渲）→ `anima_mux` 合成 MP4；\n\
             mcp_pending: &'a std::sync::Mutex<
                 std::collections::HashMap<String, (String, String, serde_json::Value)>,
             >,
+            /// v45.21：用户是否已叫停。工具循环在「下一轮请求前」「下一个工具前」各读一次。
+            cancel: &'a std::sync::atomic::AtomicBool,
         }
         #[async_trait::async_trait]
         impl<'a> crate::llm_client::ToolExecutor for EngineToolExecutor<'a> {
+            fn cancelled(&self) -> bool {
+                use std::sync::atomic::Ordering;
+                self.cancel.load(Ordering::SeqCst)
+            }
             async fn invoke(
                 &mut self,
                 name: &str,
@@ -3388,6 +3409,7 @@ PASS_WITH_WARNINGS，FAIL 就改 spec 重渲）→ `anima_mux` 合成 MP4；\n\
             personas: &mut self.personas,
             mcp_lock: &self.mcp,
             mcp_pending: &self.mcp_pending,
+            cancel,
         };
 
         // v18.8-fix27：流式朗读——LLM 逐段输出文本时经 sink 广播 qibai://tts-chunk，
@@ -3479,6 +3501,34 @@ PASS_WITH_WARNINGS，FAIL 就改 spec 重渲）→ `anima_mux` 合成 MP4；\n\
                     } else {
                         None
                     },
+                })
+            }
+            // v45.21：用户叫停 ≠ 失败。正常收尾：会话照常落一笔，已产出文件全部保留，
+            // 气泡里明确交代「停下了 + 去哪看进度」，并带 cancelled 标记——
+            // 前端据此显示成「已停止」，绝不落到「连接失败」那条兜底文案上。
+            Err(LlmError::Cancelled) => {
+                let msg = "已经停下了。前面跑出来的文件都还在，控制台「执行过程」里能看到停在第几步；要接着做，跟我说一声我再往下走。";
+                let _ = self.conversation.append("user", text);
+                let _ = self.conversation.append("assistant", msg);
+                let active = self.personas.active_persona().to_string();
+                let _ = self.personas.append_memory(&active, "user", text);
+                let _ = self.personas.append_memory(&active, "assistant", msg);
+                let _ = self.personas.persist();
+                self.sink
+                    .emit("qibai://conversation-updated", serde_json::json!({}));
+                self.sink
+                    .emit("qibai://llm-status", serde_json::json!({"state": "done"}));
+                Ok(SendMessageOutput {
+                    reply: msg.to_string(),
+                    emotion: crate::enums::Emotion::Focused,
+                    action: None,
+                    skill: None,
+                    ui_cmd: None,
+                    secret: None,
+                    secret_entry_id: None,
+                    speak_text: Some(msg.to_string()),
+                    streamed,
+                    markers: Some(serde_json::json!({"cancelled": true})),
                 })
             }
             Err(e) => {

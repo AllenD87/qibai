@@ -46,6 +46,10 @@ struct AppState {
     /// v45.3 只读快照：长任务持 engine 锁期间，所有只读命令改从这里读，
     /// 不再排队在 write 后面。见 read_cache.rs。
     read_cache: Arc<RwLock<ReadCache>>,
+    /// v45.21 用户叫停标志。**刻意放在 engine 锁之外**——`send_message` 会整条链
+    /// 持着 engine 锁 await，若 stop 命令也去抢这把锁，就会被堵到任务跑完，
+    /// 等于没有取消。停止只置位这个原子量，工具循环自己在检查点上收手。
+    cancel: Arc<AtomicBool>,
 }
 
 /// X11 软件渲染且缺少可靠合成时，透明窗会保留旧帧表面。此时创建不透明兼容窗，
@@ -737,6 +741,23 @@ async fn save_settings_partial(
     serde_json::to_value(&out).map_err(|e| e.to_string())
 }
 
+/// v45.21：用户主动叫停当前这一轮。
+/// 只置位锁外的原子量——**不去 lock engine**，否则会被正在跑的 send_message
+/// 堵在队列里直到任务结束，命令等于无效。软停语义：当前工具跑完就刹车。
+#[tauri::command]
+fn stop_message(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    state.cancel.store(true, Ordering::SeqCst);
+    eprintln!("[qibai] stop_message: 已置位取消标志（当前工具跑完后生效）");
+    Ok(true)
+}
+
+/// v45.21：前端判断当前是否处于「已请求停止、但引擎还没收手」的过渡态，
+/// 用来把按钮文案显示成「正在停…」而不是让用户以为没反应。
+#[tauri::command]
+fn stop_state(state: tauri::State<'_, AppState>) -> bool {
+    state.cancel.load(Ordering::SeqCst)
+}
+
 #[tauri::command]
 async fn send_message(
     app: tauri::AppHandle,
@@ -749,8 +770,12 @@ async fn send_message(
         return Err("空消息，已忽略".to_string());
     }
     let out = {
+        // v45.21：开新一轮先把取消标志清零（上一轮可能留下了 true）；
+        // clone 一份 Arc 传进引擎，停止命令改的是同一个原子量。
+        state.cancel.store(false, Ordering::SeqCst);
+        let cancel = state.cancel.clone();
         let mut engine = state.engine.lock().await;
-        engine.send_message(&text).await
+        engine.send_message_cancellable(&text, cancel.as_ref()).await
     };
     let result = match out {
         Ok(o) => {
@@ -4147,6 +4172,8 @@ fn main() {
             let listen = Arc::new(listener::ListenerShared::new());
             // v45.3：只读快照缓存——先空快照（None），首次刷新由 spawn 立即补一次。
             let read_cache = Arc::new(RwLock::new(ReadCache::default()));
+            // v45.21：用户叫停标志（engine 锁外，见 AppState 注释）。
+            let cancel_flag = Arc::new(AtomicBool::new(false));
             // setup 是同步块不能 await；spawn 一个 task 立即刷一次（启动期 engine 锁空闲，try_lock 必成功）。
             {
                 let e = engine.clone();
@@ -4166,6 +4193,7 @@ fn main() {
                     qibai_core::screen::GuiGuard::default(),
                 )),
                 read_cache: read_cache.clone(),
+                cancel: cancel_flag.clone(),
             });
 
             // v18.8-fix17：启动时按设置自动启用免提聆听（根治"重启后听不到"——
@@ -4466,6 +4494,8 @@ fn main() {
             save_settings,
             list_audio_devices,
             send_message,
+            stop_message,
+            stop_state,
             get_conversation,
             get_skills_status,
             set_skill_enabled,

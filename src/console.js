@@ -284,8 +284,20 @@
     if (s) s.scrollTop = s.scrollHeight;
   }
 
+  // v45.21：工具名对用户不可读（`animacode/anima_render` 看不出在干嘛），
+  // 映射成动作词；认不出来的保留原名，保证「正在执行哪些工具」一眼能懂。
+  const TOOL_LABELS = {
+    anima_schema: '检查画面脚本', anima_build: '构建场景', anima_render: '渲染帧',
+    anima_qa: '质检', anima_mux: '合成视频',
+    web_search: '联网搜索', fetch_page: '抓网页', file_ops: '文件操作',
+    code_scan: '代码扫描', check_code: '代码检查', run_tests: '跑测试',
+    git_status: '看仓库状态', launch_app: '启动应用', open_folder: '打开目录',
+  };
   function execTraceShort(tool) {
     const t = String(tool || '');
+    const leaf = t.includes('/') ? t.slice(t.lastIndexOf('/') + 1) : t;
+    const label = TOOL_LABELS[leaf];
+    if (label) return label;
     return t.length > 46 ? t.slice(0, 20) + '…' + t.slice(-20) : t;
   }
 
@@ -295,7 +307,16 @@
     if (!head) return;
     const lines = execTraceEl.querySelectorAll('.exec-step');
     const running = execTraceEl.querySelectorAll('.exec-step[data-phase="start"]');
-    head.textContent = (running.length ? '执行中 · ' : '执行过程 · ') + lines.length + ' 步';
+    // v45.21：结束态要能一眼读出来——跑完了 / 被我叫停 / 有几步失败，
+    // 以前一律写「执行过程」，用户分不清是还没跑完还是已经结束。
+    if (running.length) { head.textContent = '执行中 · 共 ' + lines.length + ' 步'; return; }
+    if (execTraceEl.getAttribute('data-stopped') === '1') {
+      head.textContent = '已停止 · 停在第 ' + lines.length + ' 步（前面做好的都留着）';
+      return;
+    }
+    let fail = 0;
+    execTraceEl.querySelectorAll('.exec-ico').forEach((i) => { if (i.textContent === '✗') fail += 1; });
+    head.textContent = (fail ? '有 ' + fail + ' 步失败 · 共 ' : '已完成 · 共 ') + lines.length + ' 步';
   }
 
   function execTraceTickerStart() {
@@ -330,6 +351,7 @@
     line.appendChild(document.createTextNode(' '));
     const nm = document.createElement('b');
     nm.textContent = execTraceShort(p.tool);
+    nm.title = String(p.tool || '');
     line.appendChild(nm);
     const args = String(p.args_summary || '');
     if (args) {
@@ -558,6 +580,48 @@
     return Promise.race([promise, guard]).finally(() => clearTimeout(timer));
   }
 
+  // v45.21：停止按钮——只在「这一轮正在跑」的时候出现。
+  // 它只发一个锁外的叫停信号，引擎在下一个工具边界收手（软停，不留半截文件）。
+  const stopBtn = document.getElementById('stopBtn');
+  let stopRequested = false;
+  function setRunning(on) {
+    stopRequested = false;
+    if (!stopBtn) return;
+    stopBtn.style.display = on ? '' : 'none';
+    stopBtn.disabled = !on;
+    stopBtn.textContent = '停止';
+  }
+  // v45.21：软停之外的硬停兜底——用户点了停止，但当前那个工具（比如整片渲染）
+  // 可能要跑几十秒才回到边界。30s 还没回来就把界面强制交还给用户，
+  // 不然「点了停止还是没反应」，和不能打断没区别。
+  let stopHardTimer = null;
+  function hardStop() {
+    if (!sendBusy) return;
+    sendBusy = false;
+    setRunning(false);
+    $('sendBtn').disabled = false;
+    $('chatInput').disabled = false;
+    if (execTraceEl) { execTraceEl.setAttribute('data-stopped', '1'); execTraceHeadRefresh(); }
+    appendBubble('sys', '这条工具太长，30 秒内没走到停止点：界面已交还给你。后台这一轮跑完的结果会被丢弃，产物文件照样留在目录里。');
+  }
+  async function doStop() {
+    if (!sendBusy || stopRequested) return;
+    stopRequested = true;
+    if (stopBtn) { stopBtn.disabled = true; stopBtn.textContent = '正在停…'; }
+    // 卡片标题同步转「已停止 · 停在第 N 步」，用户不用猜是被截断还是还在跑
+    if (execTraceEl) { execTraceEl.setAttribute('data-stopped', '1'); execTraceHeadRefresh(); }
+    // 点了必须有反馈：最怕的是按下去没动静，用户以为没生效又去重启
+    appendBubble('sys', '已叫停，等当前这一步收尾…（已经产出的文件都会留下）');
+    if (stopHardTimer) clearTimeout(stopHardTimer);
+    stopHardTimer = setTimeout(hardStop, 30000);
+    try {
+      if (isTauri) await invoke('stop_message');
+    } catch (e) {
+      console.warn(e);
+      toast('停止指令没送达，可以关掉这一轮重来');
+    }
+  }
+
   async function doSend() {
     const input = $('chatInput');
     await doSendWithText(input.value);
@@ -571,9 +635,16 @@
     const text = (rawText || '').trim();
     const auto = !!(opts && opts.auto);
     if (!auto) autoChain = 0;
+    // v45.21：运行中直接输入「停」= 叫停，而不是排队当新消息（否则要等这轮跑完才生效）
+    if (sendBusy && /^(停|停一下|停止|停下|别做了|取消|算了)$/.test(text)) {
+      $('chatInput').value = '';
+      doStop();
+      return;
+    }
     if (!text || sendBusy) return;
     sendBusy = true;
     $('sendBtn').disabled = true;
+    setRunning(true);
     $('chatInput').disabled = true;
     appendBubble('user', text);
     // v45.14：新一轮开始，清掉上轮残留的执行留痕缓存与气泡指针，
@@ -595,7 +666,10 @@
           }
         } catch (e) { /* 命令未就绪 → 走正常聊天 */ }
       }
-      const res = await invokeTimeout(invoke('send_message', { text }), 130000, '大模型');
+      // v45.20：出片类长任务会被 130s 误杀——animacode 双格式实测工具侧就 186.6s，
+      // 前端一断、后端还在跑，用户只看到「失败」，MP4 其实还在生成或刚被截断。
+      // 前端等待窗口必须 ≥ 后端工具循环上限（420s），这里给 450s 只作最后兜底。
+      const res = await invokeTimeout(invoke('send_message', { text }), 450000, '大模型');
       const replyText = (res && res.reply) || '（…）';
       // v45.15：把 core 的假完成标记透传给气泡——护栏命中时挂「⚠ 未执行 · 声称已完成」小标
       appendBubble('assistant', replyText, true, (res && res.markers) ? { markers: res.markers } : null);
@@ -631,7 +705,14 @@
       const msg = String((e && e.message) || e || '');
       let friendly;
       if (/超时|timeout/i.test(msg)) {
-        friendly = '（大模型响应超时（130s）：请缩短问题后重试）';
+        // v45.20：长任务超时 ≠ 没产物。出片渲染可能已经把 build/ 与成片写出来了，
+        // 不能再提示「缩短问题后重试」，否则用户会重复触发一遍（又等 3 分钟）。
+        friendly = '（这轮超过 450s 还没收尾：出片类长任务可能已在后台产出文件，先看「执行记录」和产物目录，别急着重跑）';
+      } else if (/工具循环|轮数到顶|反复试了|MaxIterations/i.test(msg)) {
+        // v45.20：工具循环打满的文案里没有「超时」，以前会落到最后一条兜底
+        // 「连接失败，请稍后再试」——把「步骤太多被截断」误报成「网络断了」，
+        // 用户就会去重连、重启，而真正该做的是看执行记录里卡在第几步。
+        friendly = '（这轮步骤太多、撞到工具循环上限被截断：任务可能差最后一步没跑完，先看「执行记录」里停在哪）';
       } else if (/overdue balance|insufficient balance|arrears|欠费|余额不足/i.test(msg)) {
         friendly = '（大模型服务欠费：请到火山方舟充值，或在设置中配置备用 Key）';
       } else if (/401|403|unauthorized|invalid.*key|api.?key|鉴权|密钥/i.test(msg)) {
@@ -643,7 +724,9 @@
       }
       appendBubble('sys', friendly);
     } finally {
+      if (stopHardTimer) { clearTimeout(stopHardTimer); stopHardTimer = null; }
       sendBusy = false;
+      setRunning(false);
       $('sendBtn').disabled = false;
       $('chatInput').disabled = false;
     }

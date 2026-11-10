@@ -1125,12 +1125,55 @@
     return Promise.race([promise, guard]).finally(() => clearTimeout(timer));
   }
 
+  // v45.21：发送中把「发送」按钮就地变成「停止」——桌宠窗口小，不再塞一个独立按钮。
+  // 用户的核心诉求是「知道自己能不能打断」，所以运行态必须一直看得见这个出口。
+  const SEND_ICON = btnSend ? btnSend.innerHTML : '';
+  function setSendBusy(on) {
+    if (!btnSend) return;
+    btnSend.classList.toggle('is-stop', on);
+    // 用实心方块而非 emoji/几何字符：⏹ 在部分 CJK 字体里会渲染成缺字方框
+    btnSend.innerHTML = on ? '■' : SEND_ICON;
+    btnSend.title = on ? '点一下停下（当前这一步跑完就停）' : '';
+    btnSend.disabled = false;
+    btnSend.style.opacity = '1';
+  }
+  // v45.21：软停 30s 没到边界就硬停——界面上先把控制权交还给用户。
+  // 那个工具本身停不掉（外部进程），但它跑完的结果会被丢弃，产物文件仍在。
+  let stopHardTimer = null;
+  function hardStopTurn() {
+    if (!state.sending) return;
+    state.sending = false;
+    state.stopping = false;
+    setSendBusy(false);
+    say('这条工具太长，没在 30 秒内停下来，我先交还给你。它跑完的结论我不会用，产出的文件都留着。', 8000, true);
+    toast('已强制结束这一轮（后台可能还在收尾）');
+  }
+  async function stopCurrentTurn() {
+    if (!state.sending || state.stopping) return;
+    state.stopping = true;
+    say('好，我停手～这一步跑完就停，已经做好的都留着。', 3500, true);
+    toast('已叫停（当前工具跑完生效）');
+    if (stopHardTimer) clearTimeout(stopHardTimer);
+    stopHardTimer = setTimeout(hardStopTurn, 30000);
+    if (isTauri) {
+      try { await invoke('stop_message'); } catch (e) { toast('停止指令没送达，可以直接关掉重来'); }
+    }
+  }
+
   async function sendChat(rawText) {
     const t = (rawText || '').trim();
+    // v45.21：运行中直接说「停」就是叫停，不当作新消息发出去（否则会排在队列里等这轮跑完）。
+    if (state.sending && /^(停|停一下|停止|停下|别做了|取消|算了)$/.test(t)) {
+      chatInput.value = '';
+      stopCurrentTurn();
+      return;
+    }
     if (!t || state.sending) return; // 空输入/发送中防重
     state.sending = true;
+    state.stopping = false;
+    execStepN = 0; // v45.20：新一轮重置执行步骤计数（气泡进度文案）
     chatInput.value = '';
-    if (btnSend) { btnSend.disabled = true; btnSend.style.opacity = '.4'; }
+    setSendBusy(true);
     try {
       // v21：Tauri 权威语音路由 voice_ui_dispatch（并行 Rust 子代理提供）。
       // 命中 → say(reply) 并 return；命令未就绪/未命中/浏览器 mock → 落到本地兜底链路。
@@ -1163,7 +1206,9 @@
           dismissBubble('thinking-timeout');
         }
       }, 15000);
-      const r = await invokeTimeout(invoke('send_message', { text: t }), 130000, '大模型');
+      // v45.20：与后端工具循环（12 轮 / 420s）对齐。出片双格式实测 186.6s，
+      // 旧的 130s 会在渲染中途就把前端判死，而 Rust 侧还在跑 → 用户以为失败。
+      const r = await invokeTimeout(invoke('send_message', { text: t }), 450000, '大模型');
       const reply = (r && r.reply) || '';
       if (r && r.emotion) setEmotion(r.emotion);
       // v31：回复内容自动映射动作（不依赖 LLM 字段）——inferMood 按文本关键词
@@ -1193,12 +1238,14 @@
         // 空错误 = STT 空转写（没听到说话）
         say('刚才没听清，再说一遍好吗？', 2600);
       } else if (msg.includes('超时')) {
-        say('我这边响应太慢了，稍等一下再问我好吗？', 2600);
-        toast('大模型超时：' + msg.slice(0, 120));
+        // v45.20：长任务超时先别喊重试——渲染可能已经把文件写出来了。
+        say('这轮跑太久了，我去执行记录看看进度好吗？', 3000);
+        toast('这轮超过 450s：出片类任务可能已产出文件，先看产物目录再决定要不要重跑');
       } else if (msg.includes('反复试了') || msg.includes('工具循环') || msg.includes('MaxIterations')) {
-        // v45.7：工具循环打满（MaxIterations）——不是网络问题，是卡在需要确认的操作上
-        say('这一轮我卡在等确认上了，先停一下～', 2600);
-        toast('这轮卡在需要你确认的操作上，不是网络问题');
+        // v45.20：轮数到顶 ≠ 卡在等确认。以前这句会把「出片步骤太多被截断」
+        // 说成「卡在需要你确认的操作上」，用户就一直在等一个不会来的确认框。
+        say('这轮步骤太多了，我先停一下～再让我接着做就行', 3000);
+        toast('撞到工具循环上限被截断：去看执行记录，通常只差最后一步（合成 MP4）');
       } else if (msg.includes('拒绝') || msg.includes('白名单') || msg.includes('越界') || msg.includes('不在工作区')) {
         say('我没法写到那个位置：' + msg.slice(0, 40), 3200);
         toast(msg.slice(0, 120));
@@ -1211,7 +1258,10 @@
         toast(msg.slice(0, 120));
       }
     } finally {
+      if (stopHardTimer) { clearTimeout(stopHardTimer); stopHardTimer = null; }
       state.sending = false;
+      state.stopping = false;
+      setSendBusy(false);
       if (btnSend) { btnSend.disabled = !chatInput.value.trim(); btnSend.style.opacity = chatInput.value.trim() ? '1' : '.4'; }
     }
   }
@@ -1600,6 +1650,59 @@
       pulseSpeaking();
     } catch (e) {
       toast('朗读暂时不可用');
+    }
+  });
+
+  // v45.20：出片类长任务动辄 2-3 分钟，桌面上看不到控制台的「执行过程」卡片，
+  // 气泡只挂「正在想」还会 15s 后自动收起——用户就会以为它死了/连接失败了。
+  // 这里把每一步工具直接翻到气泡正文：⟳ anima_render 执行中（第 3 步），
+  // 并把兜底计时重置为 45s（有进度就是还活着）。
+  let execStepN = 0;
+  // v45.21：工具名映射成动作词（`anima_render` → 渲染帧），桌宠空间小，名字要能看懂。
+  const STEP_LABELS = {
+    anima_schema: '检查画面脚本', anima_build: '构建场景', anima_render: '渲染帧',
+    anima_qa: '质检', anima_mux: '合成视频',
+    web_search: '联网搜索', fetch_page: '抓网页', file_ops: '文件操作',
+    code_scan: '代码扫描', check_code: '代码检查', run_tests: '跑测试',
+  };
+  function stepLabel(tool) {
+    const t = String(tool || '工具');
+    const leaf = t.includes('/') ? t.slice(t.lastIndexOf('/') + 1) : t;
+    return STEP_LABELS[leaf] || t.slice(0, 28);
+  }
+  // v45.21：气泡不只是「第 N 步在跑」，还要回答「这一步干完了没有」——
+  // 完成 / 失败 / 等你确认 三种结局各自有明确符号，停在哪个状态一眼可辨。
+  listen('qibai://exec-step', (event) => {
+    if (!state.sending) return;
+    const p = (event && event.payload) || {};
+    const label = stepLabel(p.tool);
+    const cur = (speechText.textContent || '').trim();
+    // 只覆盖「空气泡」或「我们自己写的进度文案」，别把正在流式显示的回复顶掉
+    const own = cur === '' || /^(正在想|⟳|✓ 第|✗ 第|❓)/.test(cur);
+    if (!own) return;
+    const paint = (text) => {
+      speechText.textContent = text;
+      bubble.classList.remove('hidden');
+      bubble.classList.add('thinking');
+      if (speechTime) { speechTime.textContent = hhmm(); speechTime.classList.remove('hidden'); }
+      if (state.speechTimer) clearTimeout(state.speechTimer);
+      // 有进度 = 还活着，兜底收起时间给足 45s
+      state.speechTimer = setTimeout(() => {
+        if (/^(⟳|✓ 第|✗ 第|❓)/.test((speechText.textContent || '').trim())) dismissBubble('thinking-timeout');
+      }, 45000);
+      hardRepaint();
+    };
+    if (p.phase === 'start') {
+      execStepN += 1;
+      paint(`⟳ ${label} 执行中（第 ${execStepN} 步）`);
+    } else if (p.phase === 'pending') {
+      paint(`❓ ${label} 等你确认（第 ${execStepN} 步）`);
+    } else if (p.phase === 'done') {
+      const ok = p.ok !== false;
+      const secs = Math.round((Number(p.elapsed_ms) || 0) / 1000);
+      paint(ok
+        ? `✓ 第 ${execStepN} 步完成${secs ? '（' + secs + 's）' : ''}`
+        : `✗ 第 ${execStepN} 步没成功`);
     }
   });
 
@@ -2938,13 +3041,18 @@
 
     // 对话输入条绑定：发送/回车/按住说话（D3：元素存在性保护，杜绝 ReferenceError 中断 init）
     if (btnSend && chatInput) {
-      btnSend.addEventListener('click', () => sendChat(chatInput.value));
+      // v45.21：同一个按钮两副面孔——空闲是「发送」，运行中是「⏹ 停止」。
+      btnSend.addEventListener('click', () => {
+        if (state.sending) { stopCurrentTurn(); return; }
+        sendChat(chatInput.value);
+      });
       chatInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendChat(chatInput.value); } });
-      // 空输入禁用发送钮；发送中防重（sendChat 内已有空值守卫）
+      // 空输入禁用发送钮；**发送中不禁用**（那正是停止入口，禁用等于断掉唯一的打断路径）
       const syncSendState = () => {
+        if (state.sending) { btnSend.disabled = false; btnSend.style.opacity = '1'; return; }
         const empty = !chatInput.value.trim();
-        btnSend.disabled = empty || !!state.sending;
-        btnSend.style.opacity = (empty || state.sending) ? '.4' : '1';
+        btnSend.disabled = empty;
+        btnSend.style.opacity = empty ? '.4' : '1';
       };
       chatInput.addEventListener('input', syncSendState);
       syncSendState();
