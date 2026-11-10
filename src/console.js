@@ -1582,9 +1582,9 @@
       const outSel = $('audioOutputSelect');
       if (outSel) {
         let curOut = 'default';
-        try { curOut = (await invoke('current_audio_output')) || 'default'; } catch (e) {}
+        try { curOut = (await invoke('current_audio_output')) || 'default'; } catch (e) { console.warn('[audio] 读当前输出设备失败，用默认值', e); }
         let outDevs = [];
-        try { outDevs = (await invoke('list_output_devices')) || []; } catch (e) {}
+        try { outDevs = (await invoke('list_output_devices')) || []; } catch (e) { console.warn('[audio] 枚举输出设备失败，用默认列表', e); }
         outSel.innerHTML = '';
         const defOpt = document.createElement('option');
         defOpt.value = 'default';
@@ -1624,7 +1624,7 @@
       const seSel = $('searchEngineSelect');
       if (seSel) {
         let curSe = 'auto';
-        try { curSe = (await invoke('current_search_engine')) || 'auto'; } catch (e) {}
+        try { curSe = (await invoke('current_search_engine')) || 'auto'; } catch (e) { console.warn('[search] 读搜索引擎失败，用 auto', e); }
         seSel.value = ['auto','baidu','360','sogou'].includes(curSe) ? curSe : 'auto';
         seSel.onchange = async () => {
           try {
@@ -4356,7 +4356,7 @@
       if (resolved) return;
       resolved = true;
       cleanup();
-      try { await invoke('skill_install_cancel', { stage_id: summary.stage_id }); } catch (e) {}
+      try { await invoke('skill_install_cancel', { stage_id: summary.stage_id }); } catch (e) { toast('取消安装没成功：' + ((e && e.message) || e)); }
       toast('已取消安装');
     };
     const doConfirm = async () => {
@@ -4863,7 +4863,7 @@
     try {
       const s = await invoke('get_settings') || {};
       if (parallelInput) parallelInput.value = (s.task_parallel_max != null) ? s.task_parallel_max : 3;
-    } catch (e) {}
+    } catch (e) { console.warn('[task] 读并行上限失败，显示默认 3', e); }
   }
   if (parallelInput) {
     parallelInput.onchange = async () => {
@@ -4890,7 +4890,7 @@
       if (currentTaskId && pl.task_id === currentTaskId) openDetail(currentTaskId);
       else refreshList();
     });
-  } catch (e) {}
+  } catch (e) { console.error('[task] 任务事件监听注册失败，完成/失败提示可能不出现', e); }
 
   refreshList();
 })();
@@ -4994,7 +4994,7 @@
   // 监听 waiting_confirm 事件（core emit）
   try {
     await listen('task://waiting_confirm', (e) => window.__openActionConfirm(e.payload || e));
-  } catch (e) {}
+  } catch (e) { console.error('[task] waiting_confirm 监听注册失败，确认弹窗将不会出现', e); }
 })();
 
 // ===== v45.11：知识库设置 =====
@@ -5014,7 +5014,7 @@
       const totalMb = p.total ? (p.total / 1048576).toFixed(1) : '?';
       embedEl.textContent = `下载向量模型中… ${p.pct || 0}%（${mb} / ${totalMb} MB）`;
     });
-  } catch (e) {}
+  } catch (e) { console.error('[kb] embed_progress 监听注册失败，下载进度条不会更新', e); }
   if (fetchBtn) {
     fetchBtn.onclick = async () => {
       if (fetching) return;
@@ -5114,7 +5114,7 @@
   }
   try {
     await listen('log:audio', (e) => pushLog(String(e.payload || e)));
-  } catch (e) {}
+  } catch (e) { console.warn('[audio] 诊断日志监听注册失败', e); }
   btn.onclick = async () => {
     btn.disabled = true;
     const old = btn.textContent;
@@ -5164,4 +5164,129 @@
 })();
 
 // 主 IIFE 收口（见上：尾部四个模块已并入同一作用域）
+})();
+
+/* ============================================================
+ * v45.22 按钮统一守卫（控制台）
+ * 三件事，全是为了让「点了有没有用」当场可见：
+ *   1) 给有副作用/耗时的按钮补悬停说明，并在点击时防连点（重复装包、重复索引是真事故）
+ *   2) 任何没被 catch 的异常都落一条 toast——以前只进 devtools，用户看到的是「点了没反应」
+ *   3) 危险操作（清空记忆）先给一次确认口气，避免误触
+ * 只作用于 data-async 标记过的按钮，tab / 加减号 / 聊天发送这些高频连点不受影响。
+ * ============================================================ */
+(function initButtonGuard() {
+  // 每个条目：点了会发生什么、要等多久、能不能撤销
+  const ASYNC_TIPS = {
+    btnSave: '把设置写进 settings.json，重开也生效',
+    btnAnnivSave: '保存这条纪念日，到点会提醒你',
+    btnAnnivClear: '清掉纪念日列表（这一步不可撤销）',
+    btnMcpAdd: '添加 MCP 服务器并立即启动，要几秒',
+    sttDeviceRefresh: '重新枚举麦克风设备',
+    btnAudioTest: '播一段测试音，听得到就说明输出设备没问题',
+    btnKbAdd: '把一个目录加进知识库并建索引',
+    btnKbReindex: '重建知识库索引，文件多时要等一会儿',
+    btnKbEmbedFetch: '首次下载向量模型，几十 MB，慢网要等',
+    btnTtsTest: '播放 880Hz 测试音 0.5 秒',
+    btnCheckUpdate: '去 GitHub 查有没有新版本（需要联网）',
+    btnNsConnect: '连接匿名社交服务器',
+    btnNsSaveProfile: '保存你的光点昵称和颜色',
+    btnNsRoam: '重新拉一批陌生人光点',
+    btnNsMatch: '发起一次智能匹配，会花一点时间',
+    btnNsCityGo: '只看同城的陌生人光点，会重新拉一次列表',
+    btnNsSend: '发送这条消息（服务端可能拦截敏感内容）',
+    btnNsBlock: '拉黑后对方再也匹配不到你（影响不可逆）',
+    btnGreet: '让当前角色去跟对面串门（用一次模型额度）',
+    btnPkStart: '开一局猜拳，三局两胜，输赢都记在亲密度里',
+    btnSkillInstallUrl: '从链接下载技能包并安装',
+    btnSkillInstallFile: '选一个本地技能包安装',
+    btnPluginInstall: '安装插件到数据目录',
+    btnConnAdd: '新增一个外部连接器',
+    btnPackInstall: '导入技能包，装完要重启才完全生效',
+    btnSkillOpenDir: '用系统文件管理器打开技能目录',
+    ccRun: '对工作区跑一遍只读代码检查',
+    ccRerun: '按上次的参数再查一遍',
+    btnTasksRefresh: '重新拉任务列表',
+    btnTaskStart: '开始跑这个任务（会占用工具循环）',
+    btnTaskPause: '暂停任务，已完成的步骤保留',
+    btnTaskResume: '从暂停处继续',
+    btnTaskCancel: '取消任务，已产出的文件保留',
+    btnTaskRerunFailed: '只重跑失败的那几步',
+    btnClearOnly: '只清聊天记录，角色记忆保留',
+    btnClearAll: '连角色记忆一起清，删了找不回来',
+  };
+
+  // 说明文案给所有条目补上；但防连点只挂在「重复点会真出事」的那批上——
+  // 打开弹窗/选文件这类幂等按钮拦连点没有收益，反而会吞掉正常的第二次点击。
+  const GUARD_LIST = [
+    'btnSave', 'btnAnnivSave', 'btnAnnivClear', 'btnMcpAdd', 'sttDeviceRefresh',
+    'btnAudioTest', 'btnKbAdd', 'btnKbReindex', 'btnKbEmbedFetch', 'btnTtsTest',
+    'btnCheckUpdate', 'btnNsConnect', 'btnNsSaveProfile', 'btnNsRoam', 'btnNsMatch',
+    'btnNsCityGo', 'btnNsSend', 'btnNsBlock', 'btnGreet', 'btnPkStart',
+    'ccRun', 'ccRerun', 'btnTasksRefresh', 'btnTaskStart', 'btnTaskPause',
+    'btnTaskResume', 'btnTaskCancel', 'btnTaskRerunFailed', 'btnClearOnly', 'btnClearAll',
+  ];
+  Object.keys(ASYNC_TIPS).forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (!el.title) el.title = ASYNC_TIPS[id];
+  });
+  GUARD_LIST.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.dataset.async = '1';
+  });
+
+  // 自建 toast：不依赖主 IIFE 里的 toast()，避免作用域和加载顺序问题
+  function guardToast(text, ms) {
+    let box = document.getElementById('toastBox');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'toastBox';
+      box.className = 'toast-box';
+      document.body.appendChild(box);
+    }
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.textContent = text;
+    box.appendChild(t);
+    requestAnimationFrame(() => t.classList.add('show'));
+    setTimeout(() => {
+      t.classList.remove('show');
+      setTimeout(() => t.remove(), 350);
+    }, ms || 2600);
+  }
+  const lastShown = new Map();
+  function throttledToast(key, text, ms) {
+    const now = Date.now();
+    if (now - (lastShown.get(key) || 0) < 3000) return;
+    lastShown.set(key, now);
+    guardToast(text, ms);
+  }
+
+  // 1) 连点拦截
+  document.addEventListener('click', (e) => {
+    const btn = e.target && e.target.closest ? e.target.closest('button') : null;
+    if (!btn || btn.dataset.async !== '1') return;
+    const now = Date.now();
+    if (now - (+btn.dataset.lastClick || 0) < 1200) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      throttledToast('dbl', '别连点，上一次还在处理', 2000);
+      return;
+    }
+    btn.dataset.lastClick = now;
+  }, true);
+
+  // 2) 全局异常兜底
+  window.addEventListener('unhandledrejection', (ev) => {
+    const r = ev && ev.reason;
+    const msg = (r && (r.message || r.msg)) || String(r || '');
+    if (!msg || /已取消|cancelled/i.test(msg)) return;
+    console.error('[guard] 未处理的异步失败', r);
+    throttledToast('rej:' + msg.slice(0, 40), '有个操作没成功：' + msg.slice(0, 120), 4200);
+  });
+  window.addEventListener('error', (ev) => {
+    if (!ev || !ev.message) return;
+    console.error('[guard] 界面异常', ev.error || ev.message);
+    throttledToast('err:' + ev.message.slice(0, 40), '界面出错了：' + ev.message.slice(0, 120), 4200);
+  });
 })();

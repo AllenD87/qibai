@@ -409,7 +409,7 @@
       hardRepaintTimer = null;
       // v45.6：不再 invoke 原生表面命令（已整条删除，避免 BadDrawable）。
       // 直接走 web 侧整帧重绘即可。
-      try { repaintFrame(); } catch (e) {}
+      try { repaintFrame(); } catch (e) { console.warn('[paint] 重绘失败', e); }
       const waiters = hardRepaintWaiters;
       hardRepaintWaiters = [];
       waiters.forEach((r) => r());
@@ -936,13 +936,21 @@
     // 位置锁定 / 解锁
     { re: /(锁定位置|锁定我|锁住我|位置锁定|固定位置)/,
       fn: async () => {
-        try { await invoke('pet_set_locked', { persona_id: state.persona, locked: true }); } catch (e) {}
+        // v45.22：以前后端失败也照样回「锁死啦」——用户一拖发现还能拖，就是「点了没用」。
+        // 现在先拿后端结果，没锁上就如实说，界面状态不跟着撒谎。
+        let okLock = true;
+        try { await invoke('pet_set_locked', { persona_id: state.persona, locked: true }); }
+        catch (e) { okLock = false; console.warn('[lock] 锁定失败', e); }
+        if (!okLock) { setLocked(false); return '锁定没成功，后端没接住，位置现在还能拖。要不再试一次？'; }
         setLocked(true);
         return '好，位置锁死啦，不随便乱跑～';
       } },
     { re: /(解锁|取消锁定|不要锁定|位置解锁)/,
       fn: async () => {
-        try { await invoke('pet_set_locked', { persona_id: state.persona, locked: false }); } catch (e) {}
+        let okUnlock = true;
+        try { await invoke('pet_set_locked', { persona_id: state.persona, locked: false }); }
+        catch (e) { okUnlock = false; console.warn('[lock] 解锁失败', e); }
+        if (!okUnlock) { return '解锁没成功，后端还是锁着的。要不再说一次「解锁」？'; }
         setLocked(false);
         return '好，解锁啦，可以继续拖着我玩～';
       } },
@@ -1031,7 +1039,10 @@
     // 屏幕面板（眼睛+手）
     { re: /(打开面板|屏幕面板|眼睛面板|操作面板)/,
       fn: async () => {
-        try { await invoke('ui_panel_show', { payload: { mode: 'window', title: '屏幕面板', html: '<p>屏幕面板已打开</p>' } }); } catch (e) {}
+        let okPanel = true;
+        try { await invoke('ui_panel_show', { payload: { mode: 'window', title: '屏幕面板', html: '<p>屏幕面板已打开</p>' } }); }
+        catch (e) { okPanel = false; console.warn('[panel] 打开失败', e); }
+        if (!okPanel) return '屏幕面板没能打开，后端拒绝了这次请求。你可以先打开控制台看看日志。';
         return '屏幕面板打开啦，我可以帮你操作屏幕～';
       } },
     // 隐藏 / 显示气泡
@@ -1351,7 +1362,7 @@
       const ratio = sh > ch ? speechText.scrollTop / (sh - ch) : 0;
       thumb.style.height = thumbH + 'px';
       thumb.style.top = Math.round(maxTop * Math.min(1, Math.max(0, ratio))) + 'px';
-    } catch (e) {}
+    } catch (e) { console.warn('[bubble] 滚动条计算失败', e); }
   }
 
   function bubbleScrollToEnd() {
@@ -1362,7 +1373,7 @@
           speechText.scrollTop = speechText.scrollHeight;
           updateBubbleScrollbar();
         }
-      } catch (e) {}
+      } catch (e) { console.warn('[bubble] 滚动失败', e); }
     };
     // 立即一次 + 排版后一次，覆盖流式文本在同一帧内换行、scrollHeight 后变化的情况。
     scroll();
@@ -2786,7 +2797,7 @@
     listen('qibai://ctx-action', (event) => {
       // 兼容 payload 为 JSON 字符串或已解析对象两种形态
       let payload = event && event.payload;
-      if (typeof payload === 'string') { try { payload = JSON.parse(payload); } catch (e) {} }
+      if (typeof payload === 'string') { try { payload = JSON.parse(payload); } catch (e) { console.warn('[panel] 载荷不是合法 JSON，按原样处理', e); } }
       const action = payload && payload.action;
       if (action === 'lock') doLockAction();
       else if (action === 'guard') doGuardAction();
@@ -3165,4 +3176,99 @@
   };
 
   init();
+})();
+
+/* ============================================================
+ * v45.22 桌宠按钮统一守卫
+ * 桌宠窗口小、按钮全是图标，用户最容易「点了不知道有没有生效」：
+ *   1) 给图标按钮补悬停说明（鼠标停一下就知道这是干什么的）
+ *   2) 发送/说话/麦克风这几个高频按钮防连点（双击会发两条、开两次麦克风）
+ *   3) 未捕获异常落到气泡或 toast，不再只存在于 devtools
+ * ============================================================ */
+(function initPetButtonGuard() {
+  const TIPS = {
+    btnSpeak: '朗读上一条回复（再点一次停止朗读）',
+    btnMic: '按住说话，松开就发（也可以在设置里切成免提）',
+    btnHF: '切换免提：开=不用按键直接说，关=按住说话',
+    btnUser: '打开控制台 / 设置',
+    btnMute: '全局安静：临时不回话也不出声',
+    btnMore: '更多快捷操作（锁位置、守护、透明背景…）',
+    uiPanelExpand: '把面板展开成大窗',
+    uiPanelClose: '收起这个面板',
+    ctxLock: '锁定窗位，之后拖不动了',
+    ctxGuard: '开启守护：看着你的屏幕，别乱点',
+    ctxConsole: '打开控制台（11 个页签都在里面）',
+    ctxWorkspace: '打开本地工作区目录',
+    ctxKB: '打开知识库设置',
+    ctxMinimal: '极简界面 / 完整界面切换',
+    ctxTransBg: '切换透明背景（有的系统上会退化成兼容窗）',
+    ctxExit: '退出元气小小',
+  };
+  const ASYNC_TIPS = {
+    btnSpeak: '要一两秒才开始出声',
+    btnHF: '切换后要重新拿一次麦克风，可能弹出系统授权',
+    btnUser: '控制台在新窗口打开，要等一下',
+    ctxGuard: '守护会申请屏幕读取权限',
+  };
+
+  Object.keys(TIPS).forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (!el.title) el.title = TIPS[id];
+    if (ASYNC_TIPS[id]) {
+      el.dataset.async = '1';
+      el.title = TIPS[id] + '（' + ASYNC_TIPS[id] + '）';
+    }
+  });
+  // 发送按钮在运行中就是停止按钮，语义随状态变，这里只防「对话发送」的连点，
+  // 由 state.sending 分流保证不会误拦停止点击。
+  const sendEl = document.getElementById('btnSend');
+  if (sendEl) sendEl.dataset.async = '1';
+
+  function petToast(text, ms) {
+    const box = document.getElementById('toastBox');
+    if (!box) return;
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.textContent = text;
+    box.appendChild(t);
+    requestAnimationFrame(() => t.classList.add('show'));
+    setTimeout(() => {
+      t.classList.remove('show');
+      setTimeout(() => t.remove(), 350);
+    }, ms || 2600);
+  }
+  const lastShown = new Map();
+  function throttled(key, text, ms) {
+    const now = Date.now();
+    if (now - (lastShown.get(key) || 0) < 3000) return;
+    lastShown.set(key, now);
+    petToast(text, ms);
+  }
+
+  document.addEventListener('click', (e) => {
+    const btn = e.target && e.target.closest ? e.target.closest('button') : null;
+    if (!btn || btn.dataset.async !== '1') return;
+    const now = Date.now();
+    if (now - (+btn.dataset.lastClick || 0) < 1000) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      throttled('dbl', '别连点～上一次还在处理', 1800);
+      return;
+    }
+    btn.dataset.lastClick = now;
+  }, true);
+
+  window.addEventListener('unhandledrejection', (ev) => {
+    const r = ev && ev.reason;
+    const msg = (r && (r.message || r.msg)) || String(r || '');
+    if (!msg || /已取消|cancelled/i.test(msg)) return;
+    console.error('[pet-guard] 未处理失败', r);
+    throttled('rej:' + msg.slice(0, 40), '有个操作没成功：' + msg.slice(0, 100), 4200);
+  });
+  window.addEventListener('error', (ev) => {
+    if (!ev || !ev.message) return;
+    console.error('[pet-guard] 界面异常', ev.error || ev.message);
+    throttled('err:' + ev.message.slice(0, 40), '我这边出错了：' + ev.message.slice(0, 100), 4200);
+  });
 })();
