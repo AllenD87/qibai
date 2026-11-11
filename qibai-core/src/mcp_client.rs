@@ -162,7 +162,7 @@ impl McpSession {
                     match reader.read_line(&mut line).await {
                         Ok(0) | Err(_) => break,
                         Ok(_) => {
-                            let mut buf = tail.lock().unwrap();
+                            let mut buf = tail.lock().unwrap_or_else(|e| e.into_inner());
                             buf.push_str(line.trim_end());
                             buf.push('\n');
                             if buf.len() > 1200 {

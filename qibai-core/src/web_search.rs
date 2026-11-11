@@ -44,26 +44,26 @@ pub fn set_search_engine(engine: &str) {
         _ => "auto".to_string(),
     };
     eprintln!("[qibai] web: engine pref set = {n}");
-    *engine_cell().lock().unwrap() = n;
+    *engine_cell().lock().unwrap_or_else(|e| e.into_inner()) = n;
 }
 pub fn current_search_engine() -> String {
-    engine_cell().lock().unwrap().clone()
+    engine_cell().lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 /// 全局 HTTP 超时 / 结果条数（由 Engine::apply_saved_preferences / save_settings 同步）。
 static HTTP_TIMEOUT: std::sync::OnceLock<std::sync::Mutex<u64>> = std::sync::OnceLock::new();
 static RESULT_N: std::sync::OnceLock<std::sync::Mutex<usize>> = std::sync::OnceLock::new();
 pub fn set_http_timeout_secs(secs: u64) {
-    *HTTP_TIMEOUT.get_or_init(|| std::sync::Mutex::new(8)).lock().unwrap() = secs.clamp(1, 60);
+    *HTTP_TIMEOUT.get_or_init(|| std::sync::Mutex::new(8)).lock().unwrap_or_else(|e| e.into_inner()) = secs.clamp(1, 60);
 }
 pub fn current_http_timeout_secs() -> u64 {
-    HTTP_TIMEOUT.get_or_init(|| std::sync::Mutex::new(8)).lock().unwrap().clone()
+    HTTP_TIMEOUT.get_or_init(|| std::sync::Mutex::new(8)).lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 pub fn set_search_result_n(n: usize) {
-    *RESULT_N.get_or_init(|| std::sync::Mutex::new(8)).lock().unwrap() = n.clamp(1, 20);
+    *RESULT_N.get_or_init(|| std::sync::Mutex::new(8)).lock().unwrap_or_else(|e| e.into_inner()) = n.clamp(1, 20);
 }
 pub fn current_search_result_n() -> usize {
-    RESULT_N.get_or_init(|| std::sync::Mutex::new(8)).lock().unwrap().clone()
+    RESULT_N.get_or_init(|| std::sync::Mutex::new(8)).lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 /// 手工百分号编码（UTF-8），避免引入 url crate。

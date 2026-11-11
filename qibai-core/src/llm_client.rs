@@ -966,8 +966,8 @@ mod tests {
     #[async_trait]
     impl LlmProvider for MockProvider {
         async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
-            self.seen_bodies.lock().unwrap().push(req);
-            self.scripted.lock().unwrap().pop_front().unwrap_or_else(|| {
+            self.seen_bodies.lock().unwrap_or_else(|e| e.into_inner()).push(req);
+            self.scripted.lock().unwrap_or_else(|e| e.into_inner()).pop_front().unwrap_or_else(|| {
                 Ok(ChatResponse {
                     content: Some(r#"{"reply":"好的","emotion":"smiling"}"#.into()),
                     tool_calls: vec![], tokens_used: None,
@@ -1026,7 +1026,7 @@ mod tests {
         #[async_trait]
         impl ToolExecutor for Rec {
             async fn invoke(&mut self, name: &str, args: &serde_json::Value) -> SkillOutcome {
-                self.0.lock().unwrap().push((name.to_string(), args.clone()));
+                self.0.lock().unwrap_or_else(|e| e.into_inner()).push((name.to_string(), args.clone()));
                 SkillOutcome::Ok("launched firefox".into())
             }
         }
@@ -1046,10 +1046,10 @@ mod tests {
         assert_eq!(parsed.emotion, crate::enums::Emotion::Happy);
         assert_eq!(parsed.action, Some(crate::enums::Action::Wave));
         assert_eq!(skill.as_deref(), Some("launch_app"));
-        assert_eq!(exec.0.lock().unwrap().len(), 1);
+        assert_eq!(exec.0.lock().unwrap_or_else(|e| e.into_inner()).len(), 1);
 
         // 验证请求体带了 response_format=json_object（两轮都是）
-        let seen = mock.seen_bodies.lock().unwrap();
+        let seen = mock.seen_bodies.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(seen.len(), 2);
         assert!(seen[0].json_object);
         assert!(seen[1].json_object);
@@ -1274,7 +1274,7 @@ mod tests {
         .unwrap();
         assert!(parsed.reply.contains("确认"), "reply 应含提示确认，实际：{}", parsed.reply);
         // 只发了一轮请求
-        assert_eq!(mock.seen_bodies.lock().unwrap().len(), 1);
+        assert_eq!(mock.seen_bodies.lock().unwrap_or_else(|e| e.into_inner()).len(), 1);
     }
 
     /// executor 永远返回 Denied（同一工具）→ 第 2 次后 break、返回 Ok、文案含原因。
@@ -1442,7 +1442,7 @@ mod tests {
             "叫停后第 2 个工具不得开跑（软停停在工具边界）"
         );
         assert_eq!(
-            mock.seen_bodies.lock().unwrap().len(),
+            mock.seen_bodies.lock().unwrap_or_else(|e| e.into_inner()).len(),
             1,
             "叫停后不得再向模型发请求"
         );
@@ -1561,7 +1561,7 @@ mod tests {
             &mock, "sys", vec![ChatMessage::user("写文件")], None, &mut exec,
             &mut |_: &str| {},
         ).await.unwrap();
-        let seen = mock.seen_bodies.lock().unwrap();
+        let seen = mock.seen_bodies.lock().unwrap_or_else(|e| e.into_inner());
         // 第二轮请求必须带上 tool 回填
         assert!(seen.len() >= 2, "应发两轮请求，实际 {}", seen.len());
         let tool_msgs: Vec<&ChatMessage> = seen[1].messages.iter().filter(|m| m.role == "tool").collect();

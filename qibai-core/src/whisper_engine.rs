@@ -434,7 +434,7 @@ async fn port_open(port: u16) -> bool {
 
 /// 确保 whisper-server 常驻（一次加载模型，多次转写复用）。
 async fn ensure_server(model: &Path, threads: usize) -> Result<u16, String> {
-    let held = SERVER_PID.lock().unwrap().clone();
+    let held = SERVER_PID.lock().unwrap_or_else(|e| e.into_inner()).clone();
     if let Some(pid) = held {
         if process_alive(pid) && port_open(SERVER_PORT).await {
             eprintln!("[qibai] whisper-server 复用(pid={pid} port=9186)");
@@ -443,7 +443,7 @@ async fn ensure_server(model: &Path, threads: usize) -> Result<u16, String> {
     }
     // 端口已被占用（可能是外部已启动的 whisper-server）→ 直接复用
     if port_open(SERVER_PORT).await {
-        *SERVER_PID.lock().unwrap() = None;
+        *SERVER_PID.lock().unwrap_or_else(|e| e.into_inner()) = None;
         eprintln!("[qibai] whisper-server 复用外部实例(port=9186)");
         return Ok(SERVER_PORT);
     }
@@ -463,7 +463,7 @@ async fn ensure_server(model: &Path, threads: usize) -> Result<u16, String> {
         .spawn()
         .map_err(|e| format!("whisper-server 启动失败: {e}"))?;
     let pid = child.id();
-    *SERVER_PID.lock().unwrap() = Some(pid);
+    *SERVER_PID.lock().unwrap_or_else(|e| e.into_inner()) = Some(pid);
     eprintln!("[qibai] whisper-server 启动(pid={pid} model={} port=9186)", model.display());
     // 等待就绪（首次加载模型需数秒；最多 10s）
     for _ in 0..50 {
@@ -478,7 +478,7 @@ async fn ensure_server(model: &Path, threads: usize) -> Result<u16, String> {
 
 /// 停止常驻 whisper-server（应用退出时调用）。跨平台：Unix kill / Windows taskkill。
 pub fn shutdown_server() {
-    if let Some(pid) = SERVER_PID.lock().unwrap().take() {
+    if let Some(pid) = SERVER_PID.lock().unwrap_or_else(|e| e.into_inner()).take() {
         match std::env::consts::OS {
             "windows" => {
                 let _ = std::process::Command::new("taskkill")

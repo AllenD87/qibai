@@ -78,7 +78,18 @@
   // v20：unlisten 注册表——统一收集注销函数；当前窗口生命周期内无害（窗毁即毁），
   // 为「窗口复用重建」场景预留 disposeAll 清理路径。
   const unlistenFns = new Set();
+  // v45.25：订阅失败不再静默。以前 listen 内部抛错时，未 catch 的调用点会变成
+  // unhandled rejection——功能悄悄失效，日志里一个字都没有，排查只能靠猜。
   async function listen(event, handler) {
+    try {
+      return await listenRaw(event, handler);
+    } catch (err) {
+      console.error('[qibai] 事件订阅失败，依赖它的功能会静默失效：', event, err);
+      return () => {};
+    }
+  }
+
+  async function listenRaw(event, handler) {
     if (isTauri) {
       // Tauri v2：优先 withGlobalTauri 暴露的 event.listen
       if (global.__TAURI__ && global.__TAURI__.event && global.__TAURI__.event.listen) {

@@ -1,4 +1,25 @@
-# 按钮与命令链路审计（v45.16）
+# 按钮与命令链路审计
+
+> **本文件是「命令契约 + 已修缺陷」的审计记录**：基线 v45.16，v45.24 复测结论见下节。
+> 按钮清册与「点了会发生什么」的口径在 [`BUTTONS.md`](BUTTONS.md)，两者不要互相抄。
+
+## 当前实测（v45.24 复测）
+
+| 项 | 实测 | 取数方式 |
+|---|---|---|
+| 后端注册命令 | **178** | `src-tauri/src/main.rs` 的 `generate_handler![` 列表逐行数 |
+| 前端调用点 | **270 处** | `scripts/audit_ui_links.py` |
+| 字面命令数 | **147** | 同上（同名命令多次调用只计一次） |
+| 按钮总数 | **112** | `console.html` 88 + `pet.html` 24 |
+| 无 `id` 按钮 | **24** | 11 `.ctab` + 5 `.persona-card` + 3 `.set-subtab` + 2 `.ns-subtab` + 3 `pkMoves[data-move]`，全部靠事件委托 |
+| 契约/绑定/事件名问题 | **0** | `python3 scripts/audit_ui_links.py` → EXIT=0 |
+
+**结论**：v45.24 起，178 个命令里没有「前端调用但后端不存在」的，也没有「后端注册但前端零入口」的
+（`plugin_install` 已被 `skill_pack_install_bytes` 取代、`task_create` 由对话+计划审批创建，
+二者属预期内的零调用）。
+
+以下 v45.16 的缺陷表保留作历史记录——那些坑修完就不再犯：缺 `rename_all`、缺外层 `input` key、
+写死 demo 路径、`landing.idx` vs `landing.index`。
 
 对本轮「所有按钮 / 功能链路」体检的结论与修复记录。审计方式：解析 `src-tauri/src/main.rs` 里每个
 `#[tauri::command]` 的参数名（含 `rename_all` 判定 camelCase / snake_case），与 `src/*.js` 中

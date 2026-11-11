@@ -4554,11 +4554,11 @@
       ? summary.source_url.replace(/^https?:\/\//, '').replace(/\/.*$/, '')
       : (summary.file_name || '?');
     body.innerHTML = `
-      <div class="row"><span class="k">名称</span><span>${summary.name || '?'}</span></div>
-      <div class="row"><span class="k">版本</span><span>${summary.version || '未知'}</span></div>
-      <div class="row"><span class="k">作者</span><span>${summary.author || '未知'}</span></div>
-      <div class="row"><span class="k">来源</span><span>${sourceDomain}</span></div>
-      <div class="row"><span class="k">说明</span><span>${summary.description || '无'}</span></div>
+      <div class="row"><span class="k">名称</span><span>${escapeHtml(summary.name || '?')}</span></div>
+      <div class="row"><span class="k">版本</span><span>${escapeHtml(summary.version || '未知')}</span></div>
+      <div class="row"><span class="k">作者</span><span>${escapeHtml(summary.author || '未知')}</span></div>
+      <div class="row"><span class="k">来源</span><span>${escapeHtml(sourceDomain)}</span></div>
+      <div class="row"><span class="k">说明</span><span>${escapeHtml(summary.description || '无')}</span></div>
       <div class="perms">${permHtml}</div>
       <div class="row" style="margin-top:6px;"><span class="k">文件数</span><span>${summary.file_count || 0}</span></div>
       <div class="row"><span class="k">总大小</span><span>${summary.total_size || 0} 字节</span></div>
@@ -5007,7 +5007,7 @@
       const div = document.createElement('div');
       div.className = 'task-step ' + (s.state || s.status || 'pending');
       const attempts = s.attempts ? ` · 重试 ${s.attempts}` : '';
-      div.innerHTML = `<span>${i + 1}. ${s.title || s.intent || '—'}${attempts}</span>`;
+      div.innerHTML = `<span>${i + 1}. ${escapeHtml(s.title || s.intent || '—')}${attempts}</span>`;
       if (s.error) {
         const err = document.createElement('div');
         err.style.cssText = 'color:#b91c1c;font-size:12px;margin-top:2px;';
@@ -5132,7 +5132,7 @@
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;gap:6px;align-items:center;padding:4px 0;border-bottom:1px solid #f0e6d8;';
       row.innerHTML = `
-        <span style="flex:1;"><input value="${(s.title || s.intent || '').replace(/"/g,'&quot;')}" style="width:100%;border:1px solid #e5d9c8;border-radius:4px;padding:2px 6px;font-size:13px;"></span>
+        <span style="flex:1;"><input value="${escapeHtml(s.title || s.intent || '')}" style="width:100%;border:1px solid #e5d9c8;border-radius:4px;padding:2px 6px;font-size:13px;"></span>
         <button type="button" class="mini-btn up">↑</button>
         <button type="button" class="mini-btn down">↓</button>
         <button type="button" class="mini-btn del">删</button>
@@ -5280,7 +5280,7 @@
       (s.folders || []).forEach((f) => {
         const row = document.createElement('div');
         row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:2px 0;font-size:13px;';
-        row.innerHTML = `<span style="overflow:hidden;text-overflow:ellipsis;">${f}</span>`;
+        row.innerHTML = `<span style="overflow:hidden;text-overflow:ellipsis;">${escapeHtml(f)}</span>`;
         const rm = document.createElement('button');
         rm.className = 'mini-btn'; rm.textContent = '移除';
         rm.onclick = async () => {
@@ -5292,14 +5292,14 @@
       if (!s.folders || !s.folders.length) {
         foldersEl.innerHTML = '<div class="hint" style="font-size:12px;">还没有知识库目录。加一个文件夹，小小就能在里面找资料。</div>';
       }
-      const err = s.last_error ? `<span style="color:#b91c1c;">${s.last_error}</span>` : '';
+      const err = s.last_error ? `<span style="color:#b91c1c;">${escapeHtml(s.last_error)}</span>` : '';
       // 后端 indexed_at 是 Unix 秒；万一有的是毫秒也兼容
       const ts = s.indexed_at > 1e12 ? s.indexed_at : s.indexed_at * 1000;
       const when = s.indexed_at ? ' · 上次索引 ' + new Date(ts).toLocaleString('zh-CN') : '';
       statusEl.innerHTML = `文件 ${s.files || 0} · 块 ${s.chunks || 0}${when} ${err}`;
       refreshEmbed();
     } catch (e) {
-      statusEl.innerHTML = '<span style="color:#b91c1c;">状态读取失败：' + ((e && e.message) || e) + '</span>';
+      statusEl.innerHTML = '<span style="color:#b91c1c;">状态读取失败：' + escapeHtml((e && e.message) || e) + '</span>';
     }
   }
 
@@ -5327,8 +5327,7 @@
   const searchBtn = $('btnKbSearch');
   const searchBox = $('kbSearchResult');
   if (searchBtn && searchInput && searchBox) {
-    const esc = (s) => String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const esc = escapeHtml; // 复用全局转义，别在本作用域再造一套
     const baseName = (p) => {
       const t = String(p || '');
       const i = t.lastIndexOf('/');

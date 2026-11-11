@@ -383,8 +383,8 @@ impl NetsocialManager {
         match mgr.restore() {
             Ok(()) => {}
             Err(e) => {
-                *mgr.load_error.lock().unwrap() = Some(e.to_string());
-                mgr.inner.lock().unwrap().last_error = Some(e.to_string());
+                *mgr.load_error.lock().unwrap_or_else(|e| e.into_inner()) = Some(e.to_string());
+                mgr.inner.lock().unwrap_or_else(|e| e.into_inner()).last_error = Some(e.to_string());
             }
         }
         // 自引用：后台会话循环据此回写缓存（hello 服务端 anon_id 等）。
@@ -400,18 +400,18 @@ impl NetsocialManager {
 
     /// 后台帧处理写脏后落盘（hello 回写服务端 anon_id 等）。
     pub fn flush_if_dirty(&self) {
-        let dirty = self.inner.lock().unwrap().dirty;
+        let dirty = self.inner.lock().unwrap_or_else(|e| e.into_inner()).dirty;
         if dirty && self.persist().is_ok() {
-            self.inner.lock().unwrap().dirty = false;
+            self.inner.lock().unwrap_or_else(|e| e.into_inner()).dirty = false;
         }
     }
 
     pub fn state(&self) -> NetState {
-        self.inner.lock().unwrap().state
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).state
     }
 
     pub fn anon_id(&self) -> Option<String> {
-        self.inner.lock().unwrap().cache.anon_id.clone()
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).cache.anon_id.clone()
     }
 
     // ---- §7.3 加密缓存原语 ----
@@ -469,7 +469,7 @@ impl NetsocialManager {
     /// 加密落盘（AES-256-GCM，§7.3）。
     fn persist(&self) -> Result<(), NetError> {
         let key = self.load_or_create_key()?;
-        let cache = self.inner.lock().unwrap().cache.clone();
+        let cache = self.inner.lock().unwrap_or_else(|e| e.into_inner()).cache.clone();
         let plain = serde_json::to_vec(&cache).map_err(|e| NetError::Protocol(e.to_string()))?;
         let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| NetError::Crypto(e.to_string()))?;
         let mut nonce_bytes = [0u8; 12];
@@ -518,7 +518,7 @@ impl NetsocialManager {
             .map_err(|_| NetError::Crypto("缓存密文或密钥被篡改，无法解密".to_string()))?;
         let cache: PersistedCache =
             serde_json::from_slice(&plain).map_err(|e| NetError::Protocol(e.to_string()))?;
-        self.inner.lock().unwrap().cache = cache;
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).cache = cache;
         Ok(())
     }
 
@@ -526,7 +526,7 @@ impl NetsocialManager {
 
     /// `netsocial_status`。
     pub fn status(&self) -> serde_json::Value {
-        let g = self.inner.lock().unwrap();
+        let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         serde_json::json!({
             "state": g.state.as_str(),
             "anon_id": g.cache.anon_id.clone(),
@@ -536,14 +536,14 @@ impl NetsocialManager {
             "server_url": g.cache.server_url.clone(),
             "online": g.state == NetState::Online,
             "registered": g.cache.server_registered,
-            "last_error": g.last_error.clone().or_else(|| self.load_error.lock().unwrap().clone()),
+            "last_error": g.last_error.clone().or_else(|| self.load_error.lock().unwrap_or_else(|e| e.into_inner()).clone()),
         })
     }
 
     /// `netsocial_register`（§7.1：本地生成 UUIDv4；若已配置 server_url 则补注册换 token）。
     pub async fn register(&self, input: &serde_json::Value) -> Result<serde_json::Value, NetError> {
         {
-            let mut g = self.inner.lock().unwrap();
+            let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if g.state == NetState::Online {
                 return Err(NetError::InvalidTransition("在线中请先 disconnect 再重设身份".into()));
             }
@@ -554,13 +554,13 @@ impl NetsocialManager {
         }
         // 已配置服务器地址且未服务端注册 → 在线注册换 token
         let (url, need_reg) = {
-            let g = self.inner.lock().unwrap();
+            let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             (g.cache.server_url.clone(), !g.cache.server_registered)
         };
         if !url.is_empty() && need_reg {
             let body = self.register_body();
             let resp = self.http_post(&url, "/register", &body).await?;
-            let mut g = self.inner.lock().unwrap();
+            let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(token) = resp.get("token").and_then(|t| t.as_str()) {
                 g.cache.token = Some(token.to_string());
             }
@@ -571,7 +571,7 @@ impl NetsocialManager {
             g.cache.server_registered = true;
         }
         {
-            let mut g = self.inner.lock().unwrap();
+            let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if g.state == NetState::Unregistered {
                 g.state = NetState::Registered;
             } else if g.state == NetState::Offline {
@@ -579,7 +579,7 @@ impl NetsocialManager {
             }
         }
         self.persist()?;
-        let g = self.inner.lock().unwrap();
+        let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         Ok(serde_json::json!({
             "ok": true,
             "anon_id": g.cache.anon_id.clone(),
@@ -589,7 +589,7 @@ impl NetsocialManager {
     }
 
     fn register_body(&self) -> serde_json::Value {
-        let g = self.inner.lock().unwrap();
+        let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         serde_json::json!({
             "nickname": g.cache.nickname,
             "color_idx": g.cache.color_idx,
@@ -604,14 +604,14 @@ impl NetsocialManager {
     /// `netsocial_connect`（§7.1：Registered/Offline → Online；握手成功才算 Online）。
     pub async fn connect(&self, server_url: Option<String>) -> Result<serde_json::Value, NetError> {
         {
-            let g = self.inner.lock().unwrap();
+            let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if g.cache.anon_id.is_none() {
                 return Err(NetError::NotRegistered);
             }
         }
         // 解析 server_url：入参 > 已存
         let url = {
-            let g = self.inner.lock().unwrap();
+            let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             match server_url {
                 Some(u) if !u.trim().is_empty() => u.trim().to_string(),
                 _ => {
@@ -623,20 +623,20 @@ impl NetsocialManager {
             }
         };
         // 先停掉旧连接任务（幂等）。
-        if let Some(tx) = self.cmd_tx.lock().unwrap().take() {
+        if let Some(tx) = self.cmd_tx.lock().unwrap_or_else(|e| e.into_inner()).take() {
             let _ = tx.send(WsCmd::Shutdown);
         }
         {
-            let mut g = self.inner.lock().unwrap();
+            let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             g.cache.server_url = url.clone();
         }
         self.persist()?;
         // 未服务端注册 → 先 HTTP 注册换 token
-        let need_reg = self.inner.lock().unwrap().cache.server_registered;
+        let need_reg = self.inner.lock().unwrap_or_else(|e| e.into_inner()).cache.server_registered;
         if !need_reg {
             let body = self.register_body();
             let resp = self.http_post(&url, "/register", &body).await?;
-            let mut g = self.inner.lock().unwrap();
+            let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(token) = resp.get("token").and_then(|t| t.as_str()) {
                 g.cache.token = Some(token.to_string());
             }
@@ -668,18 +668,18 @@ impl NetsocialManager {
             .connect(&ws_url, &token)
             .await
             .map_err(|e| {
-                let mut g = self.inner.lock().unwrap();
+                let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                 g.last_error = Some(e.to_string());
                 e
             })?;
         {
-            let mut g = self.inner.lock().unwrap();
+            let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             g.state = NetState::Online;
             g.last_error = None;
             push_event(&mut g, "connected", serde_json::json!({"server_url": url}));
         }
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        *self.cmd_tx.lock().unwrap() = Some(tx);
+        *self.cmd_tx.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
         let inner = self.inner.clone();
         let connector = self.connector.clone();
         let mgr = self.self_ref.get().unwrap().clone();
@@ -692,7 +692,7 @@ impl NetsocialManager {
     /// `netsocial_disconnect`（§7.1：Online → Offline 同步迁移；停止后台重连任务）。
     pub fn disconnect(&self) -> Result<serde_json::Value, NetError> {
         {
-            let mut g = self.inner.lock().unwrap();
+            let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if g.state != NetState::Online {
                 return Err(NetError::NotOnline);
             }
@@ -700,7 +700,7 @@ impl NetsocialManager {
             g.state = NetState::Offline;
             push_event(&mut g, "disconnected", serde_json::json!({"reason": "user_requested"}));
         }
-        if let Some(tx) = self.cmd_tx.lock().unwrap().take() {
+        if let Some(tx) = self.cmd_tx.lock().unwrap_or_else(|e| e.into_inner()).take() {
             let _ = tx.send(WsCmd::Shutdown);
         }
         Ok(serde_json::json!({"ok": true, "state": "offline"}))
@@ -709,16 +709,16 @@ impl NetsocialManager {
     /// `netsocial_set_profile`（本地持久化；在线时 PUT /api/me）。
     pub async fn set_profile(&self, input: &serde_json::Value) -> Result<serde_json::Value, NetError> {
         {
-            let mut g = self.inner.lock().unwrap();
+            let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if g.cache.anon_id.is_none() {
                 return Err(NetError::NotRegistered);
             }
             apply_profile_input(&mut g.cache, input);
         }
-        let online = self.inner.lock().unwrap().state == NetState::Online;
+        let online = self.inner.lock().unwrap_or_else(|e| e.into_inner()).state == NetState::Online;
         if online {
             let body = {
-                let g = self.inner.lock().unwrap();
+                let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                 serde_json::json!({
                     "token": g.cache.token,
                     "nickname": g.cache.nickname,
@@ -728,7 +728,7 @@ impl NetsocialManager {
                     "avatar": g.cache.avatar,
                 })
             };
-            let url = self.inner.lock().unwrap().cache.server_url.clone();
+            let url = self.inner.lock().unwrap_or_else(|e| e.into_inner()).cache.server_url.clone();
             self.http_put(&url, "/me", &body).await?;
         }
         self.persist()?;
@@ -825,7 +825,7 @@ impl NetsocialManager {
         let peer = peer_key(id);
         let ts = now_secs();
         {
-            let mut g = self.inner.lock().unwrap();
+            let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             g.cache.messages.push(MessageRecord {
                 peer_key: peer.clone(),
                 text: text.to_string(),
@@ -834,7 +834,7 @@ impl NetsocialManager {
             });
             trim_messages(&mut g);
         }
-        if let Some(tx) = self.cmd_tx.lock().unwrap().as_ref() {
+        if let Some(tx) = self.cmd_tx.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             let _ = tx.send(WsCmd::SendMsg {
                 to: id.to_string(),
                 body: text.to_string(),
@@ -846,7 +846,7 @@ impl NetsocialManager {
 
     /// `netsocial_history`（按 peer_key 过滤或全部；不含原始 anon_id）。
     pub fn history(&self, id: Option<&str>) -> Result<serde_json::Value, NetError> {
-        let g = self.inner.lock().unwrap();
+        let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let key = id.map(peer_key);
         let contacts: Vec<&ContactRecord> = match &key {
             Some(k) => g.cache.contacts.iter().filter(|c| &c.peer_key == k).collect(),
@@ -870,7 +870,7 @@ impl NetsocialManager {
 
     /// `netsocial_poll`（消费事件队列并清空）。
     pub fn poll(&self) -> serde_json::Value {
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let events: Vec<serde_json::Value> = g.events.drain(..).collect();
         serde_json::json!({"events": events})
     }
@@ -894,9 +894,9 @@ impl NetsocialManager {
                 std::fs::remove_file(&p).map_err(|e| NetError::Io(e.to_string()))?;
             }
         }
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         *g = Inner::default();
-        if let Some(tx) = self.cmd_tx.lock().unwrap().take() {
+        if let Some(tx) = self.cmd_tx.lock().unwrap_or_else(|e| e.into_inner()).take() {
             let _ = tx.send(WsCmd::Shutdown);
         }
         Ok(serde_json::json!({"ok": true}))
@@ -905,7 +905,7 @@ impl NetsocialManager {
     // ---- HTTP 小助手 ----
 
     fn base_url(&self) -> Result<String, NetError> {
-        let g = self.inner.lock().unwrap();
+        let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if g.cache.server_url.is_empty() {
             Err(NetError::MissingServerUrl)
         } else {
@@ -914,12 +914,12 @@ impl NetsocialManager {
     }
 
     fn auth_body(&self) -> serde_json::Value {
-        let g = self.inner.lock().unwrap();
+        let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         serde_json::json!({"token": g.cache.token.clone().unwrap_or_default()})
     }
 
     fn require_online(&self) -> Result<(), NetError> {
-        let g = self.inner.lock().unwrap();
+        let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if g.state != NetState::Online {
             return Err(NetError::NotOnline);
         }
@@ -947,7 +947,7 @@ impl NetsocialManager {
 
     async fn http_get(&self, path: &str, qs: &[(String, String)]) -> Result<serde_json::Value, NetError> {
         let base = self.base_url()?;
-        let token = self.inner.lock().unwrap().cache.token.clone().unwrap_or_default();
+        let token = self.inner.lock().unwrap_or_else(|e| e.into_inner()).cache.token.clone().unwrap_or_default();
         let mut all: Vec<(String, String)> = vec![("token".to_string(), token)];
         all.extend_from_slice(qs);
         let q: Vec<String> = all.iter().map(|(k, v)| format!("{k}={v}")).collect();
@@ -1109,7 +1109,7 @@ fn handle_frame(inner: &Arc<Mutex<Inner>>, text: &str) {
             // 联调口径：服务端 hello 下发的 anon_id 为联网正身，写回状态与加密缓存；
             // 本地生成的仅作注册前占位（§7.1 × §3）。
             let server_id = v.get("anon_id").and_then(|x| x.as_str()).map(str::to_string);
-            let mut g = inner.lock().unwrap();
+            let mut g = inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(sid) = &server_id {
                 if g.cache.anon_id.as_deref() != Some(sid.as_str()) {
                     g.cache.anon_id = Some(sid.clone());
@@ -1129,7 +1129,7 @@ fn handle_frame(inner: &Arc<Mutex<Inner>>, text: &str) {
                     continue;
                 }
                 let key = peer_key(from);
-                let mut g = inner.lock().unwrap();
+                let mut g = inner.lock().unwrap_or_else(|e| e.into_inner());
                 upsert_contact(&mut g, &key, None, None, Some(true), ts);
                 g.cache.messages.push(MessageRecord {
                     peer_key: key,
@@ -1140,7 +1140,7 @@ fn handle_frame(inner: &Arc<Mutex<Inner>>, text: &str) {
                 trim_messages(&mut g);
                 count += 1;
             }
-            let mut g = inner.lock().unwrap();
+            let mut g = inner.lock().unwrap_or_else(|e| e.into_inner());
             push_event(&mut g, "inbox", serde_json::json!({"count": count}));
         }
         Some("msg.deliver") => {
@@ -1151,13 +1151,13 @@ fn handle_frame(inner: &Arc<Mutex<Inner>>, text: &str) {
                 return;
             }
             // dir 判定：from == 当前缓存的 anon_id（可能已被 hello 回写为服务端正身）→ out
-            let self_id = inner.lock().unwrap().cache.anon_id.clone().unwrap_or_default();
+            let self_id = inner.lock().unwrap_or_else(|e| e.into_inner()).cache.anon_id.clone().unwrap_or_default();
             let dir = if from == self_id { "out" } else { "in" };
             let key = peer_key(&from);
             if dir == "out" {
                 // 自己消息的送达回执：send() 已按正确 peer 落盘，这里不重复写缓存、
                 // 不建联系人，仅透传事件（前端可据此更新发送状态）。
-                let mut g = inner.lock().unwrap();
+                let mut g = inner.lock().unwrap_or_else(|e| e.into_inner());
                 push_event(
                     &mut g,
                     "msg",
@@ -1169,7 +1169,7 @@ fn handle_frame(inner: &Arc<Mutex<Inner>>, text: &str) {
                 return;
             }
             let (nick, color) = {
-                let mut g = inner.lock().unwrap();
+                let mut g = inner.lock().unwrap_or_else(|e| e.into_inner());
                 upsert_contact(&mut g, &key, None, None, Some(true), ts);
                 let c = g.cache.contacts.iter().find(|c| c.peer_key == key);
                 let nick = c.map(|c| c.peer_nick.clone()).unwrap_or_else(|| "星尘光点".to_string());
@@ -1183,7 +1183,7 @@ fn handle_frame(inner: &Arc<Mutex<Inner>>, text: &str) {
                 trim_messages(&mut g);
                 (nick, color)
             };
-            let mut g = inner.lock().unwrap();
+            let mut g = inner.lock().unwrap_or_else(|e| e.into_inner());
             push_event(
                 &mut g,
                 "msg",
@@ -1201,14 +1201,14 @@ fn handle_frame(inner: &Arc<Mutex<Inner>>, text: &str) {
             }
             let key = peer_key(&who);
             {
-                let mut g = inner.lock().unwrap();
+                let mut g = inner.lock().unwrap_or_else(|e| e.into_inner());
                 upsert_contact(&mut g, &key, None, None, Some(online), 0);
             }
-            let mut g = inner.lock().unwrap();
+            let mut g = inner.lock().unwrap_or_else(|e| e.into_inner());
             push_event(&mut g, "presence", serde_json::json!({"peer_key": key, "online": online}));
         }
         Some("error") => {
-            let mut g = inner.lock().unwrap();
+            let mut g = inner.lock().unwrap_or_else(|e| e.into_inner());
             push_event(
                 &mut g,
                 "error",
@@ -1242,7 +1242,7 @@ async fn ws_session_loop(
                 Ok(s) => s,
                 Err(e) => {
                     {
-                        let mut g = inner.lock().unwrap();
+                        let mut g = inner.lock().unwrap_or_else(|e| e.into_inner());
                         g.state = NetState::Offline;
                         g.last_error = Some(e.to_string());
                         push_event(&mut g, "error", serde_json::json!({"code":"connect_failed","message":e.to_string()}));
@@ -1264,7 +1264,7 @@ async fn ws_session_loop(
         };
         attempt = 0;
         {
-            let mut g = inner.lock().unwrap();
+            let mut g = inner.lock().unwrap_or_else(|e| e.into_inner());
             g.state = NetState::Online;
             g.last_error = None;
         }
@@ -1281,7 +1281,7 @@ async fn ws_session_loop(
                         }
                         Err(e) => {
                             {
-                                let mut g = inner.lock().unwrap();
+                                let mut g = inner.lock().unwrap_or_else(|e| e.into_inner());
                                 g.state = NetState::Offline;
                                 push_event(&mut g, "disconnected", serde_json::json!({"reason": e.to_string()}));
                             }
@@ -1307,11 +1307,11 @@ async fn ws_session_loop(
             }
         }
         {
-            let mut g = inner.lock().unwrap();
+            let mut g = inner.lock().unwrap_or_else(|e| e.into_inner());
             g.state = NetState::Offline;
         }
         if shutdown {
-            let mut g = inner.lock().unwrap();
+            let mut g = inner.lock().unwrap_or_else(|e| e.into_inner());
             push_event(&mut g, "disconnected", serde_json::json!({"reason":"shutdown"}));
             break;
         }

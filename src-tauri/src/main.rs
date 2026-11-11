@@ -1992,11 +1992,11 @@ fn voice_diag(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, St
     Ok(serde_json::json!({
         "enabled": l.enabled.load(std::sync::atomic::Ordering::SeqCst),
         "state": l.state.load(std::sync::atomic::Ordering::SeqCst),
-        "device": l.diag.device.lock().unwrap().clone(),
-        "rate": *l.diag.rate.lock().unwrap(),
-        "rms": *l.diag.rms.lock().unwrap(),
+        "device": l.diag.device.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        "rate": *l.diag.rate.lock().unwrap_or_else(|e| e.into_inner()),
+        "rms": *l.diag.rms.lock().unwrap_or_else(|e| e.into_inner()),
         "vad_count": l.diag.vad_count.load(std::sync::atomic::Ordering::SeqCst),
-        "last_text": l.diag.last_text.lock().unwrap().clone(),
+        "last_text": l.diag.last_text.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         "stt_engine": {
             "server_found": stt.server_found,
             "server_path": stt.server_path,

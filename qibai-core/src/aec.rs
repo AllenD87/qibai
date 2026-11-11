@@ -486,7 +486,7 @@ mod tests {
                 let block: Vec<f32> = (0..160)
                     .map(|i| noise_to_f32(k * 160 + i, 0xBEEF))
                     .collect();
-                e1.lock().unwrap().ingest(&block, PROC_SAMPLE_RATE, 1);
+                e1.lock().unwrap_or_else(|e| e.into_inner()).ingest(&block, PROC_SAMPLE_RATE, 1);
             }
         });
         let e2 = eng.clone();
@@ -495,7 +495,7 @@ mod tests {
                 let mut block: Vec<f32> = (0..160)
                     .map(|i| noise_to_f32(k * 160 + i, 0xC0FE))
                     .collect();
-                e2.lock().unwrap().process(&mut block, PROC_SAMPLE_RATE);
+                e2.lock().unwrap_or_else(|e| e.into_inner()).process(&mut block, PROC_SAMPLE_RATE);
             }
         });
         t1.join().expect("播放线程");

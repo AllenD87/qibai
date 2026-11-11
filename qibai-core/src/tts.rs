@@ -462,7 +462,7 @@ fn audio_device_cell() -> &'static std::sync::Mutex<String> {
 /// core 入口：设置输出设备（main.rs IPC 用）。空 / "default" = 系统默认。
 pub fn set_audio_output(name: &str) {
     let n = if name.trim().is_empty() { "default".to_string() } else { name.trim().to_string() };
-    *audio_device_cell().lock().unwrap() = n.clone();
+    *audio_device_cell().lock().unwrap_or_else(|e| e.into_inner()) = n.clone();
     eprintln!("[qibai] audio: output device set = {n}");
     // 通知播放线程重建流
     if let Some(tx) = queue_tx() {
@@ -472,7 +472,7 @@ pub fn set_audio_output(name: &str) {
 }
 
 pub fn current_audio_output() -> String {
-    audio_device_cell().lock().unwrap().clone()
+    audio_device_cell().lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 /// 列出可用输出设备（名字列表，兼容旧 IPC）。
@@ -689,11 +689,11 @@ type ToastHook = Box<dyn Fn(&str) + Send + Sync>;
 static TOAST_HOOK: std::sync::Mutex<Option<ToastHook>> = std::sync::Mutex::new(None);
 
 pub fn set_toast_hook<F: Fn(&str) + Send + Sync + 'static>(f: F) {
-    *TOAST_HOOK.lock().unwrap() = Some(Box::new(f));
+    *TOAST_HOOK.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(f));
 }
 
 fn emit_toast(msg: &str) {
-    if let Some(h) = TOAST_HOOK.lock().unwrap().as_ref() {
+    if let Some(h) = TOAST_HOOK.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
         h(msg);
     }
 }
@@ -3018,7 +3018,7 @@ mod audio_device_tests {
     fn set_audio_output_normalizes_empty_to_default() {
         // 串行锁：避免并行测试踩全局 AUDIO_DEVICE
         static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _g = LOCK.lock().unwrap();
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         set_audio_output("");
         assert_eq!(current_audio_output(), "default");
         set_audio_output("   ");

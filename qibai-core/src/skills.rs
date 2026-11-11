@@ -1612,7 +1612,7 @@ mod tests {
             Ok(format!("ran {}", argv.join(",")))
         }
         async fn check_code(&self, req: crate::codecheck::CheckRequest) -> Result<String, String> {
-            self.checked.lock().unwrap().push(req);
+            self.checked.lock().unwrap_or_else(|e| e.into_inner()).push(req);
             if self.fail {
                 Err("boom".into())
             } else {
@@ -1830,7 +1830,7 @@ mod tests {
             other => panic!("unexpected {other:?}"),
         }
 
-        let reqs = recorder.lock().unwrap();
+        let reqs = recorder.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(reqs.len(), 2);
         assert_eq!(reqs[0].source, CheckSource::Path);
         assert_eq!(reqs[0].path.as_deref().unwrap().to_string_lossy(), "/tmp/a.py");

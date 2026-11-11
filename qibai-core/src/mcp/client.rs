@@ -68,7 +68,7 @@ impl McpClient {
             std::thread::spawn(move || {
                 let reader = BufReader::new(stderr);
                 for line in reader.lines().flatten() {
-                    let mut g = tail.lock().unwrap();
+                    let mut g = tail.lock().unwrap_or_else(|e| e.into_inner());
                     g.push(line);
                     if g.len() > 20 {
                         let overflow = g.len() - 20;
@@ -249,15 +249,15 @@ impl McpClient {
     pub fn poll_notifications(&mut self) -> Vec<Value> {
         // 先把后台线程通道里尚未入队的非阻塞取完。
         while let Ok(line) = {
-            self.lines_rx.lock().unwrap().try_recv()
+            self.lines_rx.lock().unwrap_or_else(|e| e.into_inner()).try_recv()
         } {
             if let Ok(v) = serde_json::from_str::<Value>(&line) {
                 if v.get("method").is_some() {
-                    self.notifications.lock().unwrap().push(v);
+                    self.notifications.lock().unwrap_or_else(|e| e.into_inner()).push(v);
                 }
             }
         }
-        let mut q = self.notifications.lock().unwrap();
+        let mut q = self.notifications.lock().unwrap_or_else(|e| e.into_inner());
         let mut out = Vec::new();
         let mut i = 0;
         while i < q.len() {
@@ -318,7 +318,7 @@ impl McpClient {
     /// 非 JSON 行跳过；有 method 的消息当通知入队。
     fn read_response(&mut self, expected_id: u64) -> Result<Value, String> {
         loop {
-            let recv = self.lines_rx.lock().unwrap().recv_timeout(self.timeout);
+            let recv = self.lines_rx.lock().unwrap_or_else(|e| e.into_inner()).recv_timeout(self.timeout);
             match recv {
                 Ok(line) => {
                     let v: Value = match serde_json::from_str(&line) {
@@ -338,7 +338,7 @@ impl McpClient {
                     }
                     // 其他消息：有 method 视为通知，入队；否则视为 stray 响应丢弃。
                     if v.get("method").is_some() {
-                        self.notifications.lock().unwrap().push(v);
+                        self.notifications.lock().unwrap_or_else(|e| e.into_inner()).push(v);
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {

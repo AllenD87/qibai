@@ -909,7 +909,7 @@ impl Engine {
     /// 惰性初始化 MCP 注册表：仅当 `settings.mcp_servers` 非空时 `from_configs`。
     /// **空数组时保持 None——绝不 spawn 任何子进程**（启动耗时与未接入前一致）。
     pub fn mcp_ensure_initialized(&mut self) {
-        let mut guard = self.mcp.lock().unwrap();
+        let mut guard = self.mcp.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_some() {
             return;
         }
@@ -935,14 +935,14 @@ impl Engine {
             );
             Some(crate::mcp::registry::McpRegistry::from_configs(&self.settings.mcp_servers))
         };
-        *self.mcp.lock().unwrap() = fresh;
+        *self.mcp.lock().unwrap_or_else(|e| e.into_inner()) = fresh;
     }
 
     /// 服务器列表：以配置为底，叠加 registry **真实**状态（state / 工具数 / 错误原因 / trust）。
     /// 状态一律来自 registry 查询，绝不写死"已连接"。
     pub fn mcp_list(&mut self) -> Vec<serde_json::Value> {
         self.mcp_ensure_initialized();
-        let guard = self.mcp.lock().unwrap();
+        let guard = self.mcp.lock().unwrap_or_else(|e| e.into_inner());
         let mut by_name: std::collections::HashMap<String, serde_json::Value> =
             std::collections::HashMap::new();
         if let Some(reg) = guard.as_ref() {
@@ -1054,7 +1054,7 @@ impl Engine {
     /// 手动重连（重启该 server 子进程）。状态来自 registry 真实返回。
     pub fn mcp_restart(&mut self, name: &str) -> Result<(), EngineError> {
         self.mcp_ensure_initialized();
-        let mut guard = self.mcp.lock().unwrap();
+        let mut guard = self.mcp.lock().unwrap_or_else(|e| e.into_inner());
         let reg = guard
             .as_mut()
             .ok_or_else(|| EngineError::Skill("MCP 注册表未初始化（未配置服务器）".to_string()))?;
@@ -1070,7 +1070,7 @@ impl Engine {
         args: serde_json::Value,
     ) -> Result<serde_json::Value, EngineError> {
         self.mcp_ensure_initialized();
-        let mut guard = self.mcp.lock().unwrap();
+        let mut guard = self.mcp.lock().unwrap_or_else(|e| e.into_inner());
         let reg = guard
             .as_mut()
             .ok_or_else(|| EngineError::Skill("MCP 未配置任何服务器".to_string()))?;
@@ -1324,7 +1324,7 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
     // 复用同一个 approve_skill IPC 与前端审批弹窗，但pending 单独记账（不进 skills.pending）。
     // 被拒时返回可读文本、绝不执行；批准时才经 registry 真实调用。
     if request_id.starts_with("mcp-appr-") {
-        let pending = self.mcp_pending.lock().unwrap().remove(request_id);
+        let pending = self.mcp_pending.lock().unwrap_or_else(|e| e.into_inner()).remove(request_id);
         let Some((server, tool, args)) = pending else {
             return Err(EngineError::Skill(
                 "MCP 待确认请求不存在或已过期（可能已被重启注册表清掉）".into(),
@@ -1361,7 +1361,7 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
             }),
         );
         let call_outcome: Result<(String, bool), String> = {
-            let mut guard = self.mcp.lock().unwrap();
+            let mut guard = self.mcp.lock().unwrap_or_else(|e| e.into_inner());
             let Some(reg) = guard.as_mut() else {
                 // v45.19：这里也要收口，否则前端会永远停在「正在执行」。
                 let msg = "MCP 注册表未初始化，无法执行已确认的外部调用".to_string();
@@ -1529,7 +1529,7 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
         };
         let stage_id = staged.stage_id.clone();
         let v = serde_json::to_value(&staged).map_err(|e| e.to_string())?;
-        Self::staged_registry().lock().unwrap().insert(stage_id, staged);
+        Self::staged_registry().lock().unwrap_or_else(|e| e.into_inner()).insert(stage_id, staged);
         Ok(v)
     }
 
@@ -1596,7 +1596,7 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
 
     /// cancel：删临时目录。
     pub fn skill_install_cancel(&self, stage_id: &str) -> Result<(), String> {
-        if let Some(staged) = Self::staged_registry().lock().unwrap().remove(stage_id) {
+        if let Some(staged) = Self::staged_registry().lock().unwrap_or_else(|e| e.into_inner()).remove(stage_id) {
             crate::skill_install::cancel(staged);
         }
         Ok(())
@@ -2915,7 +2915,7 @@ PASS_WITH_WARNINGS，FAIL 就改 spec 重渲）→ `anima_mux` 合成 MP4；\n\
         self.mcp_ensure_initialized();
         let mut mcp_ready_pairs: Vec<(String, crate::mcp::McpTool)> = Vec::new();
         {
-            let guard = self.mcp.lock().unwrap();
+            let guard = self.mcp.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(reg) = guard.as_ref() {
                 for (srv, handle) in &reg.servers {
                     if matches!(handle.state, crate::mcp::McpState::Ready) {
@@ -2932,7 +2932,7 @@ PASS_WITH_WARNINGS，FAIL 就改 spec 重渲）→ `anima_mux` 合成 MP4；\n\
                 .iter()
                 .filter_map(|s| s["function"]["name"].as_str().map(String::from))
                 .collect();
-            let guard = self.mcp.lock().unwrap();
+            let guard = self.mcp.lock().unwrap_or_else(|e| e.into_inner());
             let reg = guard.as_ref().expect("mcp registry must be Some when pairs non-empty");
             let bridged = bridge::build_schemas(reg, &mcp_ready_pairs, &local_names);
             for s in bridged.schemas {
@@ -3306,7 +3306,7 @@ PASS_WITH_WARNINGS，FAIL 就改 spec 重渲）→ `anima_mux` 合成 MP4；\n\
                     ReadyRun,
                 }
                 let gate = {
-                    let mut guard = self.mcp_lock.lock().unwrap();
+                    let mut guard = self.mcp_lock.lock().unwrap_or_else(|e| e.into_inner());
                     let Some(reg) = guard.as_mut() else {
                         return crate::skills::SkillOutcome::Denied(
                             "MCP 通道未初始化（未配置任何外部服务器）".to_string(),
@@ -3352,7 +3352,7 @@ PASS_WITH_WARNINGS，FAIL 就改 spec 重渲）→ `anima_mux` 合成 MP4；\n\
                 match gate {
                     Gate::NeedConfirm => {
                         let request_id = format!("mcp-appr-{}", next_mcp_confirm_seq());
-                        self.mcp_pending.lock().unwrap().insert(
+                        self.mcp_pending.lock().unwrap_or_else(|e| e.into_inner()).insert(
                             request_id.clone(),
                             (server.to_string(), tool.to_string(), args.clone()),
                         );
@@ -3377,7 +3377,7 @@ PASS_WITH_WARNINGS，FAIL 就改 spec 重渲）→ `anima_mux` 合成 MP4；\n\
                     Gate::ReadyRun => {
                         // 重新取锁执行（上一临界区已 drop）。reg.call 是同步阻塞调用
                         // （内部 recv_timeout 等子进程响应），阻塞期间不跨 await。
-                        let mut guard = self.mcp_lock.lock().unwrap();
+                        let mut guard = self.mcp_lock.lock().unwrap_or_else(|e| e.into_inner());
                         let Some(reg) = guard.as_mut() else {
                             return crate::skills::SkillOutcome::Denied(
                                 "MCP 通道未初始化（未配置任何外部服务器）".to_string(),
@@ -4848,7 +4848,7 @@ mod tests {
     }
     impl EventSink for RecordingSink {
         fn emit(&self, event: &str, payload: serde_json::Value) {
-            self.events.lock().unwrap().push((event.to_string(), payload));
+            self.events.lock().unwrap_or_else(|e| e.into_inner()).push((event.to_string(), payload));
         }
     }
 
@@ -4861,7 +4861,7 @@ mod tests {
             &self,
             _req: crate::llm_client::ChatRequest,
         ) -> Result<ChatResponse, LlmError> {
-            self.scripted.lock().unwrap().pop_front().unwrap_or_else(|| {
+            self.scripted.lock().unwrap_or_else(|e| e.into_inner()).pop_front().unwrap_or_else(|| {
                 Ok(ChatResponse {
                     content: Some(r#"{"reply":"嗯","emotion":"smiling"}"#.into()),
                     tool_calls: vec![], tokens_used: None,
@@ -4884,7 +4884,7 @@ mod tests {
     }
     impl EventSink for VecSink {
         fn emit(&self, event: &str, payload: serde_json::Value) {
-            self.events.lock().unwrap().push((event.to_string(), payload));
+            self.events.lock().unwrap_or_else(|e| e.into_inner()).push((event.to_string(), payload));
         }
     }
 
@@ -5044,7 +5044,7 @@ mod tests {
                 &self,
                 _req: crate::llm_client::ChatRequest,
             ) -> Result<ChatResponse, LlmError> {
-                *self.calls.lock().unwrap() += 1;
+                *self.calls.lock().unwrap_or_else(|e| e.into_inner()) += 1;
                 Ok(ChatResponse {
                     content: Some(r#"{"reply":"我是不该被调用的LLM","emotion":"smiling"}"#.into()),
                     tool_calls: vec![], tokens_used: None,
@@ -5075,7 +5075,7 @@ mod tests {
         let out = e.send_message("我的微博密码是多少").await.unwrap();
 
         // 1) LLM 一次都没被调用
-        assert_eq!(*calls.lock().unwrap(), 0, "拦截路径绝不调用 LLM");
+        assert_eq!(*calls.lock().unwrap_or_else(|e| e.into_inner()), 0, "拦截路径绝不调用 LLM");
         // 2) 拦截命中字段
         assert_eq!(out.secret, Some(true));
         assert_eq!(out.secret_entry_id.as_deref(), Some(id.as_str()));
@@ -5103,7 +5103,7 @@ mod tests {
         // 6) 非拦截消息仍走原 LLM 路径（mock 被消费一次）——对比拦截路径 0 调用。
         let out2 = e.send_message("讲个笑话吧").await.unwrap();
         assert!(out2.reply.contains("不该被调用"), "非拦截应走 LLM");
-        assert_eq!(*calls.lock().unwrap(), 1);
+        assert_eq!(*calls.lock().unwrap_or_else(|e| e.into_inner()), 1);
         unsafe { std::env::remove_var("QIBAI_DATA_DIR") };
     }
 
@@ -6349,7 +6349,7 @@ mod tests {
         };
         e.approve_skill(&id, true).await.expect("审批后必须真执行");
 
-        let events = evs.lock().unwrap();
+        let events = evs.lock().unwrap_or_else(|e| e.into_inner());
         let exec = events
             .iter()
             .find(|(n, _)| n == "qibai://executions")
@@ -7570,7 +7570,7 @@ mod v459_task_wiring_tests {
     }
     impl EventSink for RecordingSink {
         fn emit(&self, event: &str, payload: serde_json::Value) {
-            self.events.lock().unwrap().push((event.to_string(), payload.to_string()));
+            self.events.lock().unwrap_or_else(|e| e.into_inner()).push((event.to_string(), payload.to_string()));
         }
     }
 
@@ -7594,7 +7594,7 @@ mod v459_task_wiring_tests {
         e.task_start(&id).unwrap();
         // 等后台线程跑完（dangerous 步会立即落 waiting_confirm）
         std::thread::sleep(std::time::Duration::from_millis(500));
-        let evs = sink.events.lock().unwrap();
+        let evs = sink.events.lock().unwrap_or_else(|e| e.into_inner());
         let has_waiting = evs.iter().any(|(name, payload)| {
             name == "task://waiting_confirm" && payload.contains("\"risk\"")
         });
@@ -7613,7 +7613,7 @@ mod save_settings_partial_tests {
 
     /// 隔离 HOME 避免碰真配置。
     fn isolated_engine() -> Engine {
-        let _g = TEST_LOCK.lock().unwrap();
+        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = std::env::temp_dir().join(format!("qibai_settings_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         std::fs::create_dir_all(&tmp).unwrap();
         // 用 QIBAI_DATA_DIR 直接重定向 settings.json 目录
@@ -7696,12 +7696,12 @@ mod save_settings_partial_tests {
         assert!(e.settings.mcp_servers.is_empty());
         e.mcp_ensure_initialized();
         assert!(
-            e.mcp.lock().unwrap().is_none(),
+            e.mcp.lock().unwrap_or_else(|e| e.into_inner()).is_none(),
             "空配置时 registry 必须保持 None（绝不 spawn）"
         );
         // mcp_list 也不 panic，且返回空
         assert!(e.mcp_list().is_empty());
-        assert!(e.mcp.lock().unwrap().is_none(), "mcp_list 不得触发 spawn");
+        assert!(e.mcp.lock().unwrap_or_else(|e| e.into_inner()).is_none(), "mcp_list 不得触发 spawn");
     }
 
     /// clamp 清洗：name 空 / command 空剔除；transport 非 stdio 降级 disabled。
@@ -7734,7 +7734,7 @@ mod save_settings_partial_tests {
     #[tokio::test]
     async fn mcp_confirm_rejection_is_readable_and_never_calls() {
         let mut e = isolated_engine();
-        e.mcp_pending.lock().unwrap().insert(
+        e.mcp_pending.lock().unwrap_or_else(|e| e.into_inner()).insert(
             "mcp-appr-99".into(),
             (
                 "fs".into(),
@@ -7750,9 +7750,9 @@ mod save_settings_partial_tests {
         assert!(msg.contains("已取消"), "拒绝文案: {msg}");
         assert!(msg.contains("mcp__fs__write_file"), "应点名被取消的工具: {msg}");
         // 注册表从未被构造（没有任何子进程/spawn 行为发生）
-        assert!(e.mcp.lock().unwrap().is_none());
+        assert!(e.mcp.lock().unwrap_or_else(|e| e.into_inner()).is_none());
         // 待确认项已消费，不残留
-        assert!(e.mcp_pending.lock().unwrap().is_empty());
+        assert!(e.mcp_pending.lock().unwrap_or_else(|e| e.into_inner()).is_empty());
     }
 
     // v45.15：假完成标记的序列化契约——命中才带 markers，未命中不出现该键。
