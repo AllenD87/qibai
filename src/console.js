@@ -3974,6 +3974,54 @@
     exts.forEach((p) => box.appendChild(renderPluginCard(p)));
   }
 
+  /* v45.24：两个通用小部件，专门收拾「命令有了但界面上够不着」的那几个。
+   *   openDocModal —— 只读正文（技能 SKILL.md）
+   *   askConfirm   —— 不可逆动作先问一句（卸载以前点一下就直接删）
+   * ============================================================ */
+  function openDocModal(title, body) {
+    const modal = $('docModal');
+    if (!modal) return;
+    $('docModalTitle').textContent = title || '技能文档';
+    $('docModalBody').textContent = body || '（没有内容）';
+    modal.removeAttribute('hidden');
+  }
+  (function bindDocModal() {
+    const modal = $('docModal');
+    if (!modal) return;
+    const close = () => modal.setAttribute('hidden', '');
+    $('btnDocClose').addEventListener('click', close);
+    modal.querySelector('.clear-modal-mask').addEventListener('click', close);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !modal.hidden) close();
+    });
+  })();
+
+  let confirmActionCb = null;
+  function askConfirm(title, desc, okLabel, onOk) {
+    const modal = $('confirmActionModal');
+    if (!modal) { if (onOk) onOk(); return; }
+    $('confirmActionTitle').textContent = title;
+    $('confirmActionDesc').textContent = desc;
+    $('btnConfirmActionOk').textContent = okLabel || '确认';
+    confirmActionCb = onOk || null;
+    modal.removeAttribute('hidden');
+  }
+  (function bindConfirmAction() {
+    const modal = $('confirmActionModal');
+    if (!modal) return;
+    const close = () => { modal.setAttribute('hidden', ''); confirmActionCb = null; };
+    $('btnConfirmActionCancel').addEventListener('click', close);
+    modal.querySelector('.clear-modal-mask').addEventListener('click', close);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !modal.hidden) close();
+    });
+    $('btnConfirmActionOk').addEventListener('click', () => {
+      const cb = confirmActionCb;
+      close();
+      if (cb) cb();
+    });
+  })();
+
   function renderPluginCard(p) {
     const card = document.createElement('div');
     card.className = 'plg-card' + (p.error ? ' plg-error' : '');
@@ -4080,14 +4128,44 @@
     foot.appendChild(sw);
     const un = document.createElement('button');
     un.type = 'button'; un.className = 'ghost danger-ghost'; un.textContent = '卸载';
-    un.addEventListener('click', async () => {
-      try {
-        await invoke('plugin_uninstall', { id: p.id });
-        toast(`已卸载 ${p.name}`);
-      } catch (e) { console.warn(e); }
-      refreshPluginList(); refreshExpertList();
+    // v45.24：以前点一下就 remove_dir_all，没有二次确认——误触就是目录没了
+    un.addEventListener('click', () => {
+      askConfirm(
+        `卸载「${p.name || p.id}」`,
+        `会删掉这个技能的本地目录（${p.id}），已授予的权限一并失效，且不可恢复。`,
+        '确认卸载',
+        async () => {
+          un.disabled = true;
+          try {
+            await invoke('plugin_uninstall', { id: p.id });
+            toast(`已卸载 ${p.name || p.id}`);
+          } catch (e) {
+            toast('卸载失败：' + ((e && e.message) || e));
+          } finally {
+            refreshPluginList(); refreshExpertList();
+          }
+        },
+      );
     });
     foot.appendChild(un);
+    // v45.24：技能装了只有一行 description，正文（SKILL.md）根本看不到
+    const doc = document.createElement('button');
+    doc.type = 'button'; doc.className = 'ghost'; doc.textContent = '查看文档';
+    doc.addEventListener('click', async () => {
+      doc.disabled = true;
+      const old = doc.textContent;
+      doc.textContent = '读取中…';
+      try {
+        const body = await invoke('skill_read_doc', { name: p.name || p.id });
+        openDocModal(`${p.name || p.id} · 技能说明`, String(body || ''));
+      } catch (e) {
+        toast('读取技能文档失败：' + ((e && e.message) || e));
+      } finally {
+        doc.disabled = false;
+        doc.textContent = old;
+      }
+    });
+    foot.appendChild(doc);
     card.appendChild(foot);
     return card;
   }
@@ -4230,7 +4308,27 @@
       } else {
         const url = $('connUrl').value.trim();
         if (!url) { toast('请填写 HTTP 端点 URL'); return; }
-        args = { id, name, kind, command: '', args: [], url, description: desc, enabled };
+        // v45.24：不让用户填完之后一头雾水——HTTP 传输后端还是占位，落库即停用
+        askConfirm(
+          'HTTP 连接器暂不支持',
+          `当前版本只有 stdio MCP 能真正连上。这条 HTTP 配置会被保存，但后端强制标记为「停用」、不会发起任何连接。确定先存下来吗？`,
+          '仍然保存为占位',
+          async () => {
+            try {
+              await invoke('connector_add', {
+                id, name, kind, command: '', args: [], url, description: desc, enabled: false,
+              });
+              toast('已保存为占位（HTTP 传输未实现，不会连接）');
+            } catch (e) {
+              toast('添加失败：' + ((e && e.message) || e));
+            }
+            ['connId', 'connName', 'connDesc', 'connCommand', 'connArgs', 'connUrl'].forEach((k) => {
+              const el = $(k); if (el) el.value = '';
+            });
+            refreshConnectorList();
+          },
+        );
+        return;
       }
       if (!/^[a-zA-Z0-9_]+$/.test(id)) { toast('ID 仅支持字母、数字、下划线'); return; }
       try {
@@ -4334,6 +4432,42 @@
       refreshSkillPackList();
     });
   }
+
+  /* v45.24：扫描插件目录。以前只能一个个走「安装插件」选文件，
+   * 从别处拷来一整目录的技能时完全没有入口。 */
+  (function bindSkillScan() {
+    const btn = $('btnSkillScan');
+    const inp = $('skillScanDir');
+    if (!btn || !inp) return;
+    async function run() {
+      const dir = (inp.value || '').trim();
+      if (!dir) {
+        toast('先填插件目录路径；不确定的话点「打开技能目录」看实际位置');
+        inp.focus();
+        return;
+      }
+      btn.disabled = true;
+      const old = btn.textContent;
+      btn.textContent = '扫描中…';
+      try {
+        const n = await invoke('scan_plugin_library', { dir });
+        const cnt = Number(n) || 0;
+        toast(cnt > 0
+          ? `扫描完成：登记 ${cnt} 个插件（默认停用，需逐项授权）`
+          : '这个目录里没有 qibai-plugin.json，或插件已被登记');
+        if (cnt > 0) { refreshPluginList(); refreshExpertList(); }
+      } catch (e) {
+        toast('扫描失败：' + ((e && e.message) || e));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = old;
+      }
+    }
+    btn.addEventListener('click', run);
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); run(); }
+    });
+  })();
 
   // v45.8：三段式安装（stage → 确认摘要 → commit / 取消）
   function bindSkillInstall() {
@@ -5186,6 +5320,60 @@
       refreshStatus();
     } catch (e) { toast('索引失败：' + ((e && e.message) || e)); refreshStatus(); }
   };
+
+  /* v45.24：知识库试搜。以前只能加目录、建索引，用户没有任何办法验证
+   * 索引到底有没有用——只能靠「问小小，它答不出来」这种间接信号。 */
+  const searchInput = $('kbSearchInput');
+  const searchBtn = $('btnKbSearch');
+  const searchBox = $('kbSearchResult');
+  if (searchBtn && searchInput && searchBox) {
+    const esc = (s) => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const baseName = (p) => {
+      const t = String(p || '');
+      const i = t.lastIndexOf('/');
+      return i >= 0 ? t.slice(i + 1) : t;
+    };
+    async function doKbSearch() {
+      const q = (searchInput.value || '').trim();
+      if (!q) { toast('先输入要搜的词'); searchInput.focus(); return; }
+      searchBtn.disabled = true;
+      const oldLabel = searchBtn.textContent;
+      searchBtn.textContent = '检索中…';
+      searchBox.innerHTML = '<div class="hint" style="font-size:12px;">检索中…</div>';
+      try {
+        const topK = parseInt(($('kbTopK') && $('kbTopK').value) || '6', 10) || 6;
+        const hits = await invoke('kb_search', { query: q, top_k: topK });
+        if (!hits || !hits.length) {
+          searchBox.innerHTML = '<div class="hint" style="font-size:12px;">没有命中。'
+            + '先确认「已索引」且块数不为 0，或换个词再试。</div>';
+          return;
+        }
+        searchBox.innerHTML = hits.map((h) => {
+          const path = esc(baseName(h.file_path));
+          const full = esc(h.file_path);
+          const head = (h.heading_path || []).map(esc).join(' › ');
+          const score = typeof h.score === 'number' ? h.score.toFixed(3) : '—';
+          return '<div style="border:1px solid #e5d9c8;border-radius:6px;padding:6px 8px;'
+            + 'margin-bottom:6px;background:#fffdf8;">'
+            + `<div style="font-size:11px;color:#8b7d6b;">得分 ${score} · `
+            + `<span title="${full}">${path}</span></div>`
+            + (head ? `<div style="font-size:11.5px;color:#8b7d6b;">${head}</div>` : '')
+            + `<div style="font-size:12px;color:#4b5563;line-height:1.55;white-space:pre-wrap;">${esc(h.snippet)}</div>`
+            + '</div>';
+        }).join('');
+      } catch (e) {
+        searchBox.innerHTML = `<div class="hint" style="font-size:12px;color:#b91c1c;">搜索失败：${esc((e && e.message) || e)}</div>`;
+      } finally {
+        searchBtn.disabled = false;
+        searchBtn.textContent = oldLabel;
+      }
+    }
+    searchBtn.onclick = doKbSearch;
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); doKbSearch(); }
+    });
+  }
   refreshStatus();
 })();
 
@@ -5248,6 +5436,46 @@
     } finally {
       btn.disabled = false;
       btn.textContent = old;
+    }
+  };
+
+  /* v45.24：「只看环境」——audio_diagnose 只探测后端与工具链，不出声。
+   * 排障时经常「我不想突然被扬声器吼一下，只想看清是 pacat 没装还是设备选错」。 */
+  const dg = $('btnAudioDiagnose');
+  if (dg) dg.onclick = async () => {
+    dg.disabled = true;
+    const old = dg.textContent;
+    dg.textContent = '探测中…';
+    result.textContent = '';
+    result.style.color = '';
+    try {
+      const r = await invoke('audio_diagnose');
+      pushLog('[ui] audio_diagnose ok: ' + JSON.stringify(r));
+      const tools = r.tools || {};
+      const toolLine = ['pacat', 'pw-play', 'paplay', 'rodio']
+        .map((k) => `${k} ${tools[k] ? '✓' : '✗'}`).join('  /  ');
+      const selName = r.selected_name || r.selected || 'default';
+      const landName = r.sink_landing_name || 'unknown';
+      result.innerHTML =
+        '<div style="margin-top:4px;line-height:1.7;font-size:12px;">'
+        + `<div>当前选择：<b>${selName}</b></div>`
+        + `<div>后端：<b>${r.backend || '?'}</b></div>`
+        + `<div style="color:#6b7280;">工具链：${toolLine}</div>`
+        + '<div style="font-size:11px;color:#9ca3af;margin-top:2px;">'
+        + '本模式不发声，只读环境。要看实际落点，用左边「测试输出设备」。</div>'
+        + (r.note ? `<div style="font-size:11px;color:#9ca3af;">${r.note}</div>` : '')
+        + (landName && landName !== 'unknown'
+          ? `<div style="font-size:11px;color:#9ca3af;">最近一次落点：${landName}</div>` : '')
+        + '</div>';
+      result.style.color = '';
+    } catch (e) {
+      const msg = (e && e.message) || String(e);
+      result.style.color = '#b91c1c';
+      result.textContent = '诊断失败：' + msg;
+      pushLog('[ui] audio_diagnose FAIL: ' + msg);
+    } finally {
+      dg.disabled = false;
+      dg.textContent = old;
     }
   };
 })();
@@ -5352,14 +5580,17 @@
   }
 
   // 1) 连点拦截
+  // v45.24：原来只有 1.2s 时间窗——「第一次请求 3 秒才失败，第 2 秒再点一下」
+  // 仍会发出去两条。现在同时看按钮是否已被业务置为 disabled，窗口也放宽到 2.5s，
+  // 覆盖绝大多数后端往返。仍不是事务级锁（真正的事务锁得由业务在 Promise 里持）。
   document.addEventListener('click', (e) => {
     const btn = e.target && e.target.closest ? e.target.closest('button') : null;
     if (!btn || btn.dataset.async !== '1') return;
     const now = Date.now();
-    if (now - (+btn.dataset.lastClick || 0) < 1200) {
+    if (btn.disabled || now - (+btn.dataset.lastClick || 0) < 2500) {
       e.preventDefault();
       e.stopImmediatePropagation();
-      throttledToast('dbl', '别连点，上一次还在处理', 2000);
+      throttledToast('dbl', '上一次还没结束，别连点', 2000);
       return;
     }
     btn.dataset.lastClick = now;
