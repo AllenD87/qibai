@@ -46,6 +46,10 @@ struct AppState {
     /// v45.3 只读快照：长任务持 engine 锁期间，所有只读命令改从这里读，
     /// 不再排队在 write 后面。见 read_cache.rs。
     read_cache: Arc<RwLock<ReadCache>>,
+    /// v45.21 用户叫停标志。**刻意放在 engine 锁之外**——`send_message` 会整条链
+    /// 持着 engine 锁 await，若 stop 命令也去抢这把锁，就会被堵到任务跑完，
+    /// 等于没有取消。停止只置位这个原子量，工具循环自己在检查点上收手。
+    cancel: Arc<AtomicBool>,
 }
 
 /// X11 软件渲染且缺少可靠合成时，透明窗会保留旧帧表面。此时创建不透明兼容窗，
@@ -737,6 +741,23 @@ async fn save_settings_partial(
     serde_json::to_value(&out).map_err(|e| e.to_string())
 }
 
+/// v45.21：用户主动叫停当前这一轮。
+/// 只置位锁外的原子量——**不去 lock engine**，否则会被正在跑的 send_message
+/// 堵在队列里直到任务结束，命令等于无效。软停语义：当前工具跑完就刹车。
+#[tauri::command]
+fn stop_message(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    state.cancel.store(true, Ordering::SeqCst);
+    eprintln!("[qibai] stop_message: 已置位取消标志（当前工具跑完后生效）");
+    Ok(true)
+}
+
+/// v45.21：前端判断当前是否处于「已请求停止、但引擎还没收手」的过渡态，
+/// 用来把按钮文案显示成「正在停…」而不是让用户以为没反应。
+#[tauri::command]
+fn stop_state(state: tauri::State<'_, AppState>) -> bool {
+    state.cancel.load(Ordering::SeqCst)
+}
+
 #[tauri::command]
 async fn send_message(
     app: tauri::AppHandle,
@@ -749,8 +770,12 @@ async fn send_message(
         return Err("空消息，已忽略".to_string());
     }
     let out = {
+        // v45.21：开新一轮先把取消标志清零（上一轮可能留下了 true）；
+        // clone 一份 Arc 传进引擎，停止命令改的是同一个原子量。
+        state.cancel.store(false, Ordering::SeqCst);
+        let cancel = state.cancel.clone();
         let mut engine = state.engine.lock().await;
-        engine.send_message(&text).await
+        engine.send_message_cancellable(&text, cancel.as_ref()).await
     };
     let result = match out {
         Ok(o) => {
@@ -816,28 +841,39 @@ async fn send_message(
     }
 }
 
-/// v30：打开本地工作区目录（与 qibai-core 三闸门同根目录口径：
-/// 默认 ~/.qibai_workspace，环境变量 QIBAI_WORKSPACE 可覆盖）。
+/// v30：打开本地工作区目录。
+/// 口径直接取 qibai-core 的唯一根（`QIBAI_WORKSPACE` 覆盖，否则
+/// `$HOME/Documents/qibai`）——这里以前自己维护了一份 `~/.qibai_workspace`，
+/// 与真正写入文件的目录不一致，用户点「打开工作区」看到的是旧空目录、
+/// 找不到刚生成的视频。
 #[tauri::command]
 fn code_open_workspace() -> Result<String, String> {
-    let root = if let Ok(w) = std::env::var("QIBAI_WORKSPACE") {
-        let w = w.trim().to_string();
-        if w.is_empty() { default_workspace_root() } else { w }
-    } else {
-        default_workspace_root()
-    };
+    let root = qibai_core::engine::qibai_workspace_root_public();
+    let root = root.to_string_lossy().to_string();
     let _ = std::fs::create_dir_all(&root);
-    let opened = std::process::Command::new("xdg-open").arg(&root).spawn().is_ok();
+    let opened = open_in_file_manager(&root);
     if opened {
         Ok(format!("已打开本地工作区：{root}"))
     } else {
-        Ok(format!("工作区路径：{root}（未找到 xdg-open，请手动打开该目录）"))
+        Ok(format!(
+            "工作区路径：{root}（未能自动打开文件管理器，请手动打开该目录）"
+        ))
     }
 }
 
-fn default_workspace_root() -> String {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    format!("{home}/.qibai_workspace")
+/// 按平台唤起文件管理器。
+fn open_in_file_manager(path: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    let (prog, arg): (&str, Option<&str>) = ("explorer", Some(path));
+    #[cfg(target_os = "macos")]
+    let (prog, arg): (&str, Option<&str>) = ("open", Some(path));
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let (prog, arg): (&str, Option<&str>) = ("xdg-open", Some(path));
+    let mut cmd = std::process::Command::new(prog);
+    if let Some(a) = arg {
+        cmd.arg(a);
+    }
+    cmd.spawn().is_ok()
 }
 
 /// v31：打开本地知识库目录（与 qibai-core kb_search 同口径：
@@ -933,14 +969,10 @@ async fn set_skill_enabled(
 #[tauri::command]
 async fn skill_install_stage(
     state: tauri::State<'_, AppState>,
-    source: serde_json::Value,
+    kind: String,
+    value: String,
 ) -> Result<serde_json::Value, String> {
-    let kind = source
-        .get("kind")
-        .and_then(|v| v.as_str())
-        .unwrap_or("file")
-        .to_string();
-    let value = source.get("value").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let source = serde_json::json!({ "kind": kind.clone(), "value": value.clone() });
     // v45.8：url 分支先下载（不持锁、不跨 await 占着 engine），拿到本地路径后再 stage。
     let staged_source = match kind.as_str() {
         "url" => {
@@ -961,7 +993,7 @@ async fn skill_install_stage(
 }
 
 /// v45.8：commit 已 staged 的技能（overwrite=true 覆盖冲突）。
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 async fn skill_install_commit(
     state: tauri::State<'_, AppState>,
     stage_id: String,
@@ -976,7 +1008,7 @@ async fn skill_install_commit(
 }
 
 /// v45.8：取消 staged 的安装，清理临时文件。
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 async fn skill_install_cancel(
     state: tauri::State<'_, AppState>,
     stage_id: String,
@@ -2522,6 +2554,85 @@ fn ptt_stop() -> Result<serde_json::Value, String> {
     Ok(serde_json::json!({"audio_b64": b64}))
 }
 
+/// 输出设备自检：播 1s 测试音并抓 `pactl list sink-inputs` 的实际落点。
+/// 原来前端点了 `audio_test_output` 但命令根本没注册，按钮必然报找不到命令。
+#[tauri::command(rename_all = "snake_case")]
+async fn audio_test_output(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
+    state
+        .engine
+        .lock()
+        .await
+        .audio_test_output()
+        .map_err(|e| e.to_string())
+}
+
+/// 只探测不发声（排障时想先看清后端与工具链）。
+#[tauri::command(rename_all = "snake_case")]
+async fn audio_diagnose(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
+    state
+        .engine
+        .lock()
+        .await
+        .audio_diagnose()
+        .map_err(|e| e.to_string())
+}
+
+/// 打开用户技能目录（`<数据目录>/plugins/skills`），跨平台唤起资源管理器。
+/// 原前端调 `open_workspace_dir` 但没这个命令，catch 里只能吐一句写死的
+/// `~/.qibai_skills`——既没打开目录，路径也是错的。
+#[tauri::command(rename_all = "snake_case")]
+fn skill_open_dir() -> Result<String, String> {
+    let root = qibai_core::skill_install::user_skills_root();
+    let _ = std::fs::create_dir_all(&root);
+    let shown = root.display().to_string();
+    if open_path(&shown) {
+        Ok(format!("已打开技能目录：{shown}"))
+    } else {
+        Ok(format!("技能目录：{shown}（未能自动打开，请手动进入）"))
+    }
+}
+
+/// 用系统默认程序打开路径或 URL（`open_external` / `skill_open_dir` 共用）。
+fn open_path(target: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", "start", "", target]);
+        c
+    };
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("open");
+        c.arg(target);
+        c
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut cmd = {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(target);
+        c
+    };
+    cmd.stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .is_ok()
+}
+
+/// 打开外部链接（聊天里出现的来源 URL）。原先该命令不存在，`pet.js` 只能落回
+/// `window.open`，在 Tauri 里会开一个空白 WebView。
+#[tauri::command(rename_all = "snake_case")]
+fn open_external(url: String) -> Result<(), String> {
+    let u = url.trim();
+    if !(u.starts_with("http://") || u.starts_with("https://") || u.starts_with("mailto:")) {
+        return Err("只允许 http/https/mailto 链接".to_string());
+    }
+    if open_path(u) {
+        Ok(())
+    } else {
+        Err(format!("无法唤起系统浏览器：{u}"))
+    }
+}
+
 /// v20：播放测试音自检——合成 0.5s 880Hz 正弦 wav 走全局 rodio 播放管道，
 /// 用于真机定位「输出设备是否出声」。返回实际时长/错误（无声时明确归因）。
 #[tauri::command]
@@ -3078,15 +3189,18 @@ async fn connector_add(
     kind: String,
     command: String,
     args: Vec<String>,
-    url: String,
-    headers: serde_json::Value,
+    // 前端按需只填一侧（MCP 只给 command，HTTP 只给 url），url/headers 必须可缺省，
+    // 否则缺 key 时 Tauri 直接判「参数不合法」，添加连接器按钮必失败。
+    url: Option<String>,
+    headers: Option<serde_json::Value>,
     description: String,
     enabled: bool,
 ) -> Result<(), String> {
-    let headers: std::collections::BTreeMap<String, String> = if headers.is_null() {
-        std::collections::BTreeMap::new()
-    } else {
-        serde_json::from_value(headers).map_err(|e| format!("headers 解析失败: {e}"))?
+    let headers: std::collections::BTreeMap<String, String> = match headers {
+        Some(v) if !v.is_null() => {
+            serde_json::from_value(v).map_err(|e| format!("headers 解析失败: {e}"))?
+        }
+        _ => std::collections::BTreeMap::new(),
     };
     let cfg = qibai_core::connectors::ConnectorConfig {
         id,
@@ -3098,7 +3212,7 @@ async fn connector_add(
         },
         command,
         args,
-        url,
+        url: url.unwrap_or_default(),
         headers,
         description,
         enabled,
@@ -3131,7 +3245,7 @@ async fn connector_list(state: tauri::State<'_, AppState>) -> Result<Vec<serde_j
 // ---- 技能包（.qbpk 打包/导入/导出） ----
 
 /// 导入安装技能包（zip）：安全解压 → manifest 校验 → 复制进 plugins/ → 注册。
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 async fn skill_pack_install(state: tauri::State<'_, AppState>, zip_path: String) -> Result<(), String> {
     state
         .engine
@@ -3141,8 +3255,62 @@ async fn skill_pack_install(state: tauri::State<'_, AppState>, zip_path: String)
         .map_err(|e| e.to_string())
 }
 
+/// 导入安装技能包（字节形态）：前端把 .qbpk 内容读成 base64 传来。
+/// WebView 的 `<input type=file>` 给不出可信路径（早先前端传 `demo://文件名` 必然失败），
+/// 所以这里解码 → 交引擎落临时文件 → 复用同一条安全校验与安装链。
+#[tauri::command(rename_all = "snake_case")]
+async fn skill_pack_install_bytes(
+    state: tauri::State<'_, AppState>,
+    file_name: String,
+    data_b64: String,
+) -> Result<serde_json::Value, String> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_b64.trim())
+        .map_err(|e| format!("技能包内容解码失败（多半是读取中断或文件损坏）: {e}"))?;
+    let mut engine = state.engine.lock().await;
+    engine
+        .skill_pack_install_bytes(file_name, &bytes)
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({"ok": true, "bytes": bytes.len()}))
+}
+
+/// 技能安装 stage（字节形态）：同 skill_pack 的思路，前端读文件内容后在这里落临时文件，
+/// 再复用 `.md` / `.zip` 两条既有暂存链，避免依赖 WebView 不可靠的 `f.path`。
+#[tauri::command(rename_all = "snake_case")]
+async fn skill_install_stage_bytes(
+    state: tauri::State<'_, AppState>,
+    file_name: String,
+    data_b64: String,
+) -> Result<serde_json::Value, String> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_b64.trim())
+        .map_err(|e| format!("文件内容解码失败（多半是读取中断或文件损坏）: {e}"))?;
+    state
+        .engine
+        .lock()
+        .await
+        .skill_install_stage_bytes(&file_name, &bytes)
+}
+
+/// 导出技能包到 <数据目录>/exports/，返回落盘路径。
+#[tauri::command(rename_all = "snake_case")]
+async fn skill_pack_export_default(
+    state: tauri::State<'_, AppState>,
+    plugin_id: String,
+) -> Result<serde_json::Value, String> {
+    let path = state
+        .engine
+        .lock()
+        .await
+        .skill_pack_export_default(plugin_id)
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({"ok": true, "path": path}))
+}
+
 /// 导出技能包（zip）：从 plugins/<id> 打包。
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 async fn skill_pack_export(
     state: tauri::State<'_, AppState>,
     plugin_id: String,
@@ -4004,6 +4172,8 @@ fn main() {
             let listen = Arc::new(listener::ListenerShared::new());
             // v45.3：只读快照缓存——先空快照（None），首次刷新由 spawn 立即补一次。
             let read_cache = Arc::new(RwLock::new(ReadCache::default()));
+            // v45.21：用户叫停标志（engine 锁外，见 AppState 注释）。
+            let cancel_flag = Arc::new(AtomicBool::new(false));
             // setup 是同步块不能 await；spawn 一个 task 立即刷一次（启动期 engine 锁空闲，try_lock 必成功）。
             {
                 let e = engine.clone();
@@ -4023,6 +4193,7 @@ fn main() {
                     qibai_core::screen::GuiGuard::default(),
                 )),
                 read_cache: read_cache.clone(),
+                cancel: cancel_flag.clone(),
             });
 
             // v18.8-fix17：启动时按设置自动启用免提聆听（根治"重启后听不到"——
@@ -4323,6 +4494,8 @@ fn main() {
             save_settings,
             list_audio_devices,
             send_message,
+            stop_message,
+            stop_state,
             get_conversation,
             get_skills_status,
             set_skill_enabled,
@@ -4474,8 +4647,15 @@ fn main() {
             connector_remove,
             connector_list,
             skill_pack_install,
+            skill_pack_install_bytes,
+            skill_pack_export_default,
             skill_pack_export,
             skill_pack_list,
+            skill_install_stage_bytes,
+            skill_open_dir,
+            open_external,
+            audio_test_output,
+            audio_diagnose,
             netsocial_block,
             netsocial_cache_clear,
             netsocial_city_souls,

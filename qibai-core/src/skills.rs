@@ -14,7 +14,7 @@ use crate::plugin_registry::{BuiltinKind, PluginRegistry, PluginType};
 use crate::settings::{PluginSettings, SkillsSettings};
 use async_trait::async_trait;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use thiserror::Error;
 
 /// 白名单技能名（= 内置 function name；常量保留供测试与旧代码引用）。
@@ -71,7 +71,7 @@ pub enum SkillError {
     Disabled(String),
     #[error("execution failed: {0}")]
     Exec(String),
-    #[error("approval request not found: {0}")]
+    #[error("这条确认已失效：找不到请求 {0}（可能已经执行过、或应用重启过；需要就重新发起同一操作）")]
     NoSuchRequest(String),
 }
 
@@ -171,6 +171,25 @@ struct Pending {
     /// 待执行的函数名（外部插件/MCP 工具名；内置包为空）。
     fn_name: String,
     args: serde_json::Value,
+    /// 批准后写入本任务放行名单的键（外部插件 = `plugin:<id>`；文件写改删 = `file:<动作>:<路径>`）。
+    /// 内置 `execute_command` / `run_tests` 恒为 None——高危命令坚持逐次批准。
+    grant_key: Option<String>,
+}
+
+/// 已处理过的确认（幂等回放用）。
+///
+/// 「允许本次」和「拒绝」都是一次性动作：前端连点两次、IPC 重试、
+/// 或多窗口各点一次时，同一条 request_id 会被提交多次。
+/// 这里记住每条确认的最终结果，重复提交一律回放，绝不二次执行，
+/// 也不再报「找不到请求」这种让人误以为没跑起来的错。
+#[derive(Debug, Clone)]
+enum Resolved {
+    /// 已执行成功（附结果文本）。
+    RanOk(String),
+    /// 已执行但失败（附错误文本）。
+    RanErr(String),
+    /// 用户拒绝。
+    Cancelled,
 }
 
 pub struct SkillsRegistry {
@@ -182,6 +201,11 @@ pub struct SkillsRegistry {
     adapter: crate::skill_adapter::SkillAdapter,
     executor: Box<dyn SkillExecutor>,
     pending: HashMap<String, Pending>,
+    /// 已处理的确认（幂等回放；FIFO 上限 64 条，防无界增长）。
+    resolved: HashMap<String, Resolved>,
+    resolved_order: VecDeque<String>,
+    /// 「允许本次」放行的外部插件（本次任务内后续调用不再重复询问）。
+    granted: HashSet<String>,
     next_seq: u64,
 }
 
@@ -207,8 +231,21 @@ impl SkillsRegistry {
             adapter: crate::skill_adapter::SkillAdapter::new(),
             executor,
             pending: HashMap::new(),
+            resolved: HashMap::new(),
+            resolved_order: VecDeque::new(),
+            granted: HashSet::new(),
             next_seq: 1,
         }
+    }
+
+    /// 新一轮用户请求开始：清掉「允许本次」的任务域放行名单。
+    pub fn clear_approval_grants(&mut self) {
+        self.granted.clear();
+    }
+
+    /// 当前放行名单大小（测试/诊断用）。
+    pub fn granted_len(&self) -> usize {
+        self.granted.len()
     }
 
     pub fn plugins(&self) -> &PluginRegistry {
@@ -327,7 +364,7 @@ impl SkillsRegistry {
                     })
                     .unwrap_or_default();
                 // 测试模式（OPEN_ALL）：危险命令直接执行，不再挂起审批。
-                if crate::engine::OPEN_ALL {
+                if crate::engine::open_all() {
                     let argv2 = argv;
                     if argv2.is_empty() {
                         return SkillOutcome::Denied("命令为空".to_string());
@@ -365,7 +402,7 @@ impl SkillsRegistry {
                         request_id.clone(),
                         Pending {
                             plugin_id: pid,
-                            builtin_argv: argv,
+                            builtin_argv: argv, grant_key: None,
                             fn_name: String::new(),
                             args: args.clone(),
                         },
@@ -390,13 +427,19 @@ impl SkillsRegistry {
                         _ => None,
                     };
                     if let Some(cmd) = launch_cmd {
-                        if !crate::engine::OPEN_ALL
+                        // 预检：可执行根本不在（补全后的）PATH 里时，弹审批只会让用户
+                        // 点完「允许」再收到失败。这里直接如实说缺什么、怎么补。
+                        if crate::proc_env::resolve_launcher(&cmd, entry.dir.as_deref()).is_none() {
+                            return SkillOutcome::Denied(crate::proc_env::missing_binary_hint(&cmd));
+                        }
+                        if !crate::engine::open_all()
                             && crate::skill_adapter::is_dangerous_command(&cmd, args)
+                            && !self.granted.contains(&format!("plugin:{pid}"))
                         {
                             let request_id = format!("approval-{}", self.next_seq);
                             self.next_seq += 1;
                             let description = format!(
-                                "即将执行外部技能 {name}：{cmd}（来自对话技能请求）"
+                                "即将执行外部技能 {name}：{cmd}（来自对话技能请求；允许后本任务内该技能不再重复询问）"
                             );
                             self.pending.insert(
                                 request_id.clone(),
@@ -405,6 +448,7 @@ impl SkillsRegistry {
                                     builtin_argv: vec![],
                                     fn_name: name.to_string(),
                                     args: args.clone(),
+                                    grant_key: Some(format!("plugin:{pid}")),
                                 },
                             );
                             return SkillOutcome::PendingApproval {
@@ -590,31 +634,37 @@ impl SkillsRegistry {
                             sanitized.display()
                         ));
                     }
-                    let n_bytes = args
-                        .get("content")
-                        .and_then(|v| v.as_str())
-                        .map(|c| c.len())
-                        .unwrap_or(0);
-                    let description = match action {
-                        "delete" => format!("即将删除：{}（来自对话技能请求）", path),
-                        "write" => format!("即将写入：{}（{} 字节）", path, n_bytes),
-                        _ => format!("即将修改：{}（{} 字节）", path, n_bytes),
-                    };
-                    let request_id = format!("approval-{}", self.next_seq);
-                    self.next_seq += 1;
-                    self.pending.insert(
-                        request_id.clone(),
-                        Pending {
-                            plugin_id: pid.to_string(),
-                            builtin_argv: vec![],
-                            fn_name: name.to_string(),
-                            args: args.clone(),
-                        },
-                    );
-                    return SkillOutcome::PendingApproval {
-                        request_id,
-                        description,
-                    };
+                    // 同一任务内「同一路径 + 同一动作」批准过一次就不再问：
+                    // 出片流水线每轮都要重写同一份 scene.json，反复弹窗等于卡死。
+                    let gk = format!("file:{action}:{}", sanitized.display());
+                    if !self.granted.contains(&gk) {
+                        let n_bytes = args
+                            .get("content")
+                            .and_then(|v| v.as_str())
+                            .map(|c| c.len())
+                            .unwrap_or(0);
+                        let description = match action {
+                            "delete" => format!("即将删除：{}（来自对话技能请求）", path),
+                            "write" => format!("即将写入：{}（{} 字节）", path, n_bytes),
+                            _ => format!("即将修改：{}（{} 字节）", path, n_bytes),
+                        };
+                        let request_id = format!("approval-{}", self.next_seq);
+                        self.next_seq += 1;
+                        self.pending.insert(
+                            request_id.clone(),
+                            Pending {
+                                plugin_id: pid.to_string(),
+                                builtin_argv: vec![],
+                                grant_key: Some(gk),
+                                fn_name: name.to_string(),
+                                args: args.clone(),
+                            },
+                        );
+                        return SkillOutcome::PendingApproval {
+                            request_id,
+                            description,
+                        };
+                    }
                 }
                 let dest = args.get("dest").and_then(|v| v.as_str());
                 let content = args.get("content").and_then(|v| v.as_str());
@@ -655,7 +705,7 @@ impl SkillsRegistry {
                             request_id.clone(),
                             Pending {
                                 plugin_id: pid.to_string(),
-                                builtin_argv: vec![],
+                                builtin_argv: vec![], grant_key: None,
                                 fn_name: name.to_string(),
                                 args: args.clone(),
                             },
@@ -780,7 +830,7 @@ impl SkillsRegistry {
                         )
                     }
                 };
-                if !crate::engine::OPEN_ALL {
+                if !crate::engine::open_all() {
                     let request_id = format!("approval-{}", self.next_seq);
                     self.next_seq += 1;
                     let description =
@@ -789,7 +839,7 @@ impl SkillsRegistry {
                         request_id.clone(),
                         Pending {
                             plugin_id: pid.to_string(),
-                            builtin_argv: argv,
+                            builtin_argv: argv, grant_key: None,
                             fn_name: name.to_string(),
                             args: args.clone(),
                         },
@@ -875,6 +925,36 @@ impl SkillsRegistry {
 
     /// 仅用于门控：判断该 pending 请求是否属于高危 builtin（ExecuteCommand / RunTests）。
     /// 高危操作保留 L4 亲密度门；文件读写/建工程等基础操作不走 L4。
+    /// 当前待审批请求条数（缺件预检/空转排查用）。
+    pub fn pending_len(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// v45.18：待确认项的可读名字，供审批执行留痕用（`approve` 会把它从表里摘走，
+    /// 调用方必须在 `approve` 之前取）。内置命令返回 `plugin_id`，外部技能返回
+    /// `plugin_id::fn_name`。
+    pub fn pending_label(&self, request_id: &str) -> Option<String> {
+        let pending = self.pending.get(request_id)?;
+        Some(match (pending.plugin_id.is_empty(), pending.fn_name.is_empty()) {
+            (true, true) => request_id.to_string(),
+            (true, false) => pending.fn_name.clone(),
+            (false, true) => pending.plugin_id.clone(),
+            (false, false) => format!("{}::{}", pending.plugin_id, pending.fn_name),
+        })
+    }
+
+    /// v45.19：待确认项的可读参数摘要（「执行过程」实时反馈用）。
+    /// 与 pending_label 一样必须在 approve 之前取——approve 会把 pending 摘走。
+    pub fn pending_args_summary(&self, request_id: &str) -> Option<String> {
+        let pending = self.pending.get(request_id)?;
+        let s = pending.args.to_string();
+        let mut t: String = s.chars().take(120).collect();
+        if s.chars().count() > 120 {
+            t.push('…');
+        }
+        Some(t)
+    }
+
     pub fn is_pending_high_risk(&self, request_id: &str) -> bool {
         let Some(pending) = self.pending.get(request_id) else {
             return false;
@@ -889,14 +969,90 @@ impl SkillsRegistry {
     }
 
     /// 前端确认回调：approve=true 执行，false 取消。
+    ///
+    /// 幂等：同一条确认被重复提交（连点「允许本次」、IPC 重试、两个窗口各点一次）时，
+    /// 已跑过的回上次结果、取消过的不许再批准，都不二次执行。
     pub async fn approve(&mut self, request_id: &str, approve: bool) -> Result<String, SkillError> {
-        let pending = self
-            .pending
-            .remove(request_id)
-            .ok_or_else(|| SkillError::NoSuchRequest(request_id.to_string()))?;
+        let Some(pending) = self.pending.remove(request_id) else {
+            let replay = self.replay_resolved(request_id, approve);
+            // 诊断锚点：复现「点了允许却说没跑起来」时，一眼看出是重放还是真失效。
+            eprintln!(
+                "[qibai] approve: id={request_id} approve={approve} pending={} replay={}",
+                self.pending.len(),
+                match &replay {
+                    Ok(_) => "ok",
+                    Err(_) => "err",
+                }
+            );
+            return replay;
+        };
+        eprintln!(
+            "[qibai] approve: id={request_id} approve={approve} pending={} first-shot",
+            self.pending.len()
+        );
         if !approve {
+            self.remember_resolved(request_id, Resolved::Cancelled);
             return Ok("用户已取消该操作".to_string());
         }
+        let grant_key = pending.grant_key.clone();
+        let result = self.run_pending(pending).await;
+        match &result {
+            Ok(text) => {
+                self.remember_resolved(request_id, Resolved::RanOk(text.clone()));
+                // 批准一次 = 本任务内该项不再重复询问：一条片子要连跑
+                // schema→build→render→qa→mux，且每轮重排都会重写同一份 spec，
+                // 逐步弹窗会被当成「卡住」。内置高危命令仍逐次批准（grant_key=None）。
+                if let Some(k) = grant_key {
+                    self.granted.insert(k);
+                }
+            }
+            Err(e) => self.remember_resolved(request_id, Resolved::RanErr(e.to_string())),
+        }
+        result
+    }
+
+    /// 同一条确认的重复提交：回放上次结果，不二次执行。
+    fn replay_resolved(&self, request_id: &str, approve: bool) -> Result<String, SkillError> {
+        match self.resolved.get(request_id) {
+            // 已执行成功：把上次的真实结果原样回给用户（不再重跑）。
+            Some(Resolved::RanOk(text)) => {
+                Ok(format!("{text}\n（这条确认刚才已经执行过，未重复执行）"))
+            }
+            // 已执行失败：同样的失败原因再报一次，不重试。
+            Some(Resolved::RanErr(text)) => Err(SkillError::Exec(text.clone())),
+            // 已取消：拒绝就直接回同义结果；再想批准必须先重新发起。
+            Some(Resolved::Cancelled) => {
+                if approve {
+                    Err(SkillError::Exec(
+                        "这条确认已经被取消，不会再执行；需要就重新发起一次".to_string(),
+                    ))
+                } else {
+                    Ok("用户已取消该操作".to_string())
+                }
+            }
+            None => Err(SkillError::NoSuchRequest(request_id.to_string())),
+        }
+    }
+
+    /// 记下一条确认的最终结果（FIFO 上限 64，超出丢弃最旧的）。
+    fn remember_resolved(&mut self, request_id: &str, outcome: Resolved) {
+        const CAP: usize = 64;
+        if self
+            .resolved
+            .insert(request_id.to_string(), outcome)
+            .is_none()
+        {
+            self.resolved_order.push_back(request_id.to_string());
+        }
+        while self.resolved_order.len() > CAP {
+            if let Some(old) = self.resolved_order.pop_front() {
+                self.resolved.remove(&old);
+            }
+        }
+    }
+
+    /// 真正执行一条已批准的请求（approve 的执行体）。
+    async fn run_pending(&mut self, pending: Pending) -> Result<String, SkillError> {
         let entry = self
             .plugins
             .entry(&pending.plugin_id)
@@ -1465,6 +1621,21 @@ mod tests {
         }
     }
 
+
+    /// 测试期强制走真实审批链路（debug 下 OPEN_ALL 默认全开，审批链路本来一条都走不到）。
+    struct ForceApprovals;
+    impl ForceApprovals {
+        fn on() -> Self {
+            unsafe { std::env::set_var("QIBAI_FORCE_APPROVALS", "1") };
+            ForceApprovals
+        }
+    }
+    impl Drop for ForceApprovals {
+        fn drop(&mut self) {
+            unsafe { std::env::remove_var("QIBAI_FORCE_APPROVALS") };
+        }
+    }
+
     fn registry() -> SkillsRegistry {
         let r = SkillsRegistry::with_executor(SkillsSettings::default(), Box::new(MockExec::new(false)));
         let schemas = r.tool_schemas();
@@ -1514,7 +1685,8 @@ mod tests {
 
     #[tokio::test]
     async fn dangerous_command_goes_pending_then_approval() {
-        if crate::engine::OPEN_ALL { return; } // 测试模式全开放：危险命令直接执行
+        let _g = crate::test_support::env_lock();
+        let _force = ForceApprovals::on();
         let mut r = registry();
         let out = r
             .invoke(
@@ -1544,9 +1716,73 @@ mod tests {
         }
     }
 
+    /// 连点「允许本次」/ IPC 重试：第二次必须回放上次结果，而不是报「找不到请求」。
     #[tokio::test]
-    async fn executor_error_is_denied_not_panic() {
-        let mut r = SkillsRegistry::with_executor(
+    async fn repeated_approve_replays_result_without_rerun() {
+        let _g = crate::test_support::env_lock();
+        let _force = ForceApprovals::on();
+        let mut r = registry();
+        let out = r
+            .invoke(SKILL_EXECUTE_COMMAND, &serde_json::json!({"argv":["ls"]}))
+            .await;
+        let id = match out {
+            SkillOutcome::PendingApproval { request_id, .. } => request_id,
+            other => panic!("expected pending, got {other:?}"),
+        };
+        let first = r.approve(&id, true).await.unwrap();
+        assert!(first.contains("ls"));
+        assert_eq!(r.pending_len(), 0, "批准后不应残留 pending");
+
+        // 同一条确认再提交一次（用户连点）：结果一致且标明未重复执行。
+        let second = r.approve(&id, true).await.unwrap();
+        expected_replay(&second, &first);
+        assert_eq!(r.pending_len(), 0, "回放不应产生新的 pending");
+    }
+
+    fn expected_replay(second: &str, first: &str) {
+        assert!(second.starts_with(first), "回放应带上原始结果：{second}");
+        assert!(
+            second.contains("未重复执行"),
+            "回放要明说没重复执行：{second}"
+        );
+    }
+
+    /// 未知 / 过期的 request_id：报「确认已失效」并给出下一步，不再像从前那样只说 not found。
+    #[tokio::test]
+    async fn unknown_request_id_explains_what_to_do() {
+        let mut r = registry();
+        let err = r
+            .approve("approval-9999", true)
+            .await
+            .expect_err("未知请求必须报错")
+            .to_string();
+        assert!(err.contains("确认已失效"), "{err}");
+        assert!(err.contains("重新发起"), "{err}");
+        assert!(!err.contains("not found"), "不该再出现 not found：{err}");
+    }
+
+    /// 取消过的确认：再拒绝一次回同义结果，再批准一次明确拒绝（绝不执行）。
+    #[tokio::test]
+    async fn cancelled_request_is_stable_on_repeat() {
+        let _g = crate::test_support::env_lock();
+        let _force = ForceApprovals::on();
+        let mut r = registry();
+        let out = r
+            .invoke(SKILL_EXECUTE_COMMAND, &serde_json::json!({"argv":["ls"]}))
+            .await;
+        let id = match out {
+            SkillOutcome::PendingApproval { request_id, .. } => request_id,
+            other => panic!("expected pending, got {other:?}"),
+        };
+        let first = r.approve(&id, false).await.unwrap();
+        assert!(first.contains("取消"));
+        assert!(r.approve(&id, false).await.unwrap().contains("取消"));
+        let err = r.approve(&id, true).await.expect_err("已取消不能执行");
+        assert!(err.to_string().contains("取消"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn executor_error_is_denied_not_panic() {        let mut r = SkillsRegistry::with_executor(
             SkillsSettings::default(),
             Box::new(MockExec::new(true)),
         );

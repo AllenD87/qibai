@@ -99,7 +99,7 @@ plugins/
 | 模块 | 职责 | 关键点 |
 |---|---|---|
 | `plugin_manifest.rs` | Manifest 结构 + ManifestLoader | `SYNONYM_MAP`：type/capability/plugin_type/category、kind/backend/executor/entry_kind、entry/exec/invoke、command/script/cmd、http/url/endpoint、permissions/perms/grants、functions/tools/actions、system_prompt/prompt/systemPrompt、skills/skill_ids/whitelist、persona_binding/persona/binding；类型值同义词 skill\|capability、expert\|assistant、connector\|integration；kind 值 command\|cli\|shell、http\|api\|webhook、builtin\|native |
-| `plugin_registry.rs` | 扫描/注册表/生命周期 | 扫描根 env `QIBAI_PLUGINS_DIR` 优先，否则 `data_dir()/plugins`；坏 manifest 记录 error 不中止扫描；id 冲突拒后到者；install/uninstall/set_enabled/grant 全部幂等；跨版本安装拒绝（需先卸载）；外部插件声明 kind=builtin 拒绝；`files:write` 对外部插件硬拒 |
+| `plugin_registry.rs` | 扫描/注册表/生命周期 | 扫描根 env `QIBAI_PLUGINS_DIR` 优先，否则 `data_dir()/plugins`；坏 manifest 记录 error 不中止扫描；id 冲突拒后到者；install/uninstall/set_enabled/grant 全部幂等；同版本重复装 = no-op、跨版本就地覆盖升级（保留启停与授权）；重扫走 `rescan()`，不会把已装条目误判成「id 冲突」；外部插件声明 kind=builtin 拒绝；`files:write` 对外部插件硬拒 |
 | `skill_adapter.rs` | 外部执行体 | command：argv 为 `entry.command`，args 序列化为**单行 JSON 经 stdin** 传入；http：POST `entry.http`，body=`{"args": args}`；默认 10s 超时（可注入）；超时/失败 → `SkillOutcome::Denied("技能执行失败（已降级）：{原因}")`；connector → 预留拒绝 |
 | `expert.rs` | 专家体系 | `ExpertRegistry`：activate/deactivate、`expert_prompt(base)` 追加专家段、`whitelist()`（空=全开放）、`persona_binding()`；voice 联动：已知 persona id（gudian/dushi/wenrou/huopo/reqing）经 `voice_profile::default_profile_for` 解析标签，未知字符串原样透传 |
 
@@ -151,7 +151,19 @@ plugins/
 **红线不因插件放宽**：
 - 保险箱明文不进 LLM：`try_vault_intercept` 在 provider 之前拦截，插件无任何权限可关闭；
 - `files:write` 对外部插件永不可授；
-- 危险命令逐次批准：内置 `execute_command` 恒走 pending 审批流；外部 command-kind 命中危险判定（basename ∈ {rm, dd, shutdown, poweroff, reboot, halt, mv, chmod, chown, kill, pkill, systemctl, docker, curl} 或 `mkfs.*` 前缀或 args 含 `-rf`）同样走 pending 审批流；`qibai://skill-approval` 事件 → 前端确认 → approve 后执行。
+- 危险命令审批：内置 `execute_command` / `run_tests` 恒走 pending 审批流且**逐次**批准；外部插件（command / MCP，basename ∈ {rm, dd, shutdown, poweroff, reboot, halt, mv, chmod, chown, kill, pkill, systemctl, docker, curl, bash, sh, zsh, python, python3, node} 或 `mkfs.*` 前缀或 args 含 `-rf`）走 pending 审批流，`qibai://skill-approval` 事件 → 前端确认 → approve 后执行。
+  外部插件批准一次即记入**任务域放行名单**（本次任务内同插件不再重复询问，批准后会连续调用同一 MCP 服务器的多个工具，逐步弹窗会被误认为卡死）；用户发起新一轮请求时清空名单。
+- 文件操作放行同理：同一任务内「同一路径 + 同一动作」批准过一次即放行（`grant_key = file:<动作>:<路径>`）。
+- 审批幂等：同一 `request_id` 重复提交回放上次结果（「未重复执行」），不会报 `approval request not found`；pending 表是纯内存，重启后旧 id 一律按「已失效」话术回应。
+- 缺件预检：启动命令在补全 PATH 后仍解析不到 → 直接 `Denied` + 补救建议，**不生成** pending。
+- MCP 会话健康（v45.16）：会话死亡（server 秒退 / `stdout 关闭` / 写 stdin 失败）时不再复读同一句错误——`SkillAdapter::run_mcp` 会丢弃死会话、重连一次再重试；server 的 stderr（启动 banner、`Cannot find module`、崩溃栈）随错误一起抛出，用户看到的是真实原因而不是「stdout 关闭」。
+- 启动哨兵：spawn 后 240ms 内若已退出，直接回「MCP server 启动后立即退出（exit code）+ stderr」，不再走握手超时。
+- 入口预检：manifest `args` 里绝对路径且扩展名 `.mjs/.js/.cjs` 的入口脚本不存在时，在 spawn 前就拦下并提示「插件装得不完整，请重装技能包」（旧版导入只落清单不落 `mcp/` 目录就会这样）。
+- 单次 MCP 工具调用超时 300s（与 8 轮 / 240s 的工具循环对齐）：`anima_render` 渲 450 帧约 50s，旧的 10s 常量必然把它砍断。
+- 审批执行留痕（v45.18）：审批（`approve_skill`）不经过 LLM 工具循环，此前执行完只回一句「已批准并执行」，`qibai://executions` 轮不到它、聊天区「本轮执行」折叠永远是空的。现在两条审批分支（MCP `mcp-appr-*` 与普通技能）都会广播一条执行记录（工具名 + 参数摘要 ≤120 字 + ok），前端按既有逻辑挂到气泡上。
+- 执行等待可见（v45.18）：`approve_skill` 是同步阻塞的（渲染/构建类可跑 1 分钟以上），前端在弹窗内显示「正在执行 X… 已 Ns」心跳，超 20s 追加「别关窗口」提示；成功后 toast 带耗时，失败仍走原有红条 + 分类话术。
+- 执行过程实时步骤流（v45.19）：新增事件 `qibai://exec-step`，`approve_skill` 两条审批分支与 LLM 工具循环的每次 `ToolExecutor::invoke` 都会先发 `phase=start`（tool / source / args_summary），返回后发 `phase=done`（ok / elapsed_ms / result_summary 或 error），待确认则发 `phase=pending`。前端在聊天流底部维护一张「执行过程」卡片，执行中每秒刷新「已 Ns」，完成后收成 ✓/✗ + 耗时 + 结果摘要；新气泡插在卡片之前，阅读顺序为「执行过程 → 回答」。
+- 落点提示（v45.19）：`anima_*` 的输出目录由调用参数 `out` 决定（`anima_build` 默认落 spec 同级 `build/`，`anima_render` / `anima_mux` 的 `out` 为必填）；`~/Documents/qibai` 只是文件写操作的工作区根，不会自动收到任何产物。想把成片固定收在那里，需在需求里写明绝对路径。
 
 ### 2.5 专家体系装配（T5/T6）
 

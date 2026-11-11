@@ -16,6 +16,17 @@ use crate::social::{Move, SocialStore, GREET_DAILY_LIMIT, LEVELS, PK_DAILY_LIMIT
 /// 亲密度分级门控。正式发布若需临时全开，应改为显式 settings.dev_mode（默认 false），
 /// 绝不允许以 `const true` 进 release。
 pub const OPEN_ALL: bool = cfg!(debug_assertions);
+
+/// 审批链路是否全开（= 危险操作不弹确认）。
+///
+/// 调试构建默认全开（OPEN_ALL），但这意味着**审批链路在 debug 下一条都走不到**，
+/// 出问题也测不出来。`QIBAI_FORCE_APPROVALS=1` 可强制走真实审批链路（测试/诊断用）。
+pub fn open_all() -> bool {
+    if std::env::var("QIBAI_FORCE_APPROVALS").ok().as_deref() == Some("1") {
+        return false;
+    }
+    OPEN_ALL
+}
 use crate::storage::{ConversationStore, StoredMessage};
 use crate::tts;
 use crate::voice_profile::VoiceProfile;
@@ -421,6 +432,17 @@ fn qibai_truncate(s: &str, n: usize) -> String {
     } else {
         s.to_string()
     }
+}
+
+/// v45.19：把工具返回文本压成一行摘要，供「执行过程」实时卡片显示结果。
+/// 只取前 max 字符，空白（含换行）合并为单空格——卡片里不能塞一整篇日志。
+fn exec_inline_summary(s: &str, max: usize) -> String {
+    let flat: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut t: String = flat.chars().take(max).collect();
+    if flat.chars().count() > max {
+        t.push('…');
+    }
+    t
 }
 
 /// 工具入参摘要：仅挑短标量字段打日志；content/body/prompt 等大字段或密钥一律折叠为 `<redacted>`。
@@ -1242,6 +1264,13 @@ impl Engine {
         if crate::skill_docs::catalog().iter().any(|e| e.name == skill) {
             crate::skill_docs::set_enabled(skill, enabled)
                 .map_err(|e| EngineError::Skill(e))?;
+            // 同一个包有两套开关（技能页写 `.disabled` 标记、插件页写 registry.enabled）：
+            // 这里顺手对齐，否则会出现"技能页关了、工具表里还在调"或反之。
+            if let Some(pid) = self.skills.plugins().resolve_by_display(skill) {
+                let _ = self.skills.plugins_mut().set_enabled(&pid, enabled);
+                self.settings.plugins.enabled.insert(pid, enabled);
+                self.settings.save()?;
+            }
             return Ok(());
         }
         // 工具型技能：原有路径
@@ -1259,6 +1288,19 @@ impl Engine {
 /// 批准门控决策（纯函数，便于单测）。
 /// v45.7：只有高危 builtin（ExecuteCommand/RunTests）才查 L4 亲密度；
 /// 文件读写/建工程等基础操作一律不门控。返回 Some(原因) 表示应拒绝。
+/// 执行期报错的人话补丁：spawn 失败（可执行不在 PATH）时补行动建议，
+/// 其余原样交回，不吞真因。
+fn exec_error_hint(msg: String) -> String {
+    if crate::proc_env::looks_like_missing_binary(&msg) {
+        format!(
+            "{msg}\n（缺可执行：装好后重启；已装但不在默认位置时，把所在目录写进环境变量 {}）",
+            crate::proc_env::EXTRA_ENV
+        )
+    } else {
+        msg
+    }
+}
+
 fn approval_gate_reason(is_high_risk: bool, level: u32) -> Option<String> {
     if !is_high_risk {
         return None;
@@ -1273,7 +1315,10 @@ fn approval_gate_reason(is_high_risk: bool, level: u32) -> Option<String> {
     }
 }
 
-// ---- IPC: approve_skill ----
+    /// 批准后自动续跑用的固定续跑口令（与前端 console.js 保持一致）。
+    pub const AUTO_CONTINUE_TOKEN: &'static str = "继续";
+
+    // ---- IPC: approve_skill ----
 pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result<String, EngineError> {
     // v45.12：MCP trust=confirm 的待确认请求（request_id="mcp-appr-<seq>"）。
     // 复用同一个 approve_skill IPC 与前端审批弹窗，但pending 单独记账（不进 skills.pending）。
@@ -1294,21 +1339,71 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
             ));
         }
         // 注册表调用包在独立作用域里：guard 先 drop，才能再 &mut self.append_chat。
-        let text = {
+        // v45.18：参数摘要要在 call 之前算——args 是按值传进 registry 的。
+        let args_summary = {
+            let s = args.to_string();
+            let mut t: String = s.chars().take(120).collect();
+            if s.chars().count() > 120 {
+                t.push('…');
+            }
+            t
+        };
+        // v45.19：执行过程实时反馈——先发 start（前端立刻出现「正在执行」一行），
+        // 结束后再发 done（耗时 + 结果摘要）。此前只有一个结束后的回执，
+        // 渲染类任务跑一分钟，界面全程没有任何动静，用户只能猜是不是卡死了。
+        let label = crate::mcp::bridge::namespaced(&server, &tool);
+        let src_label = crate::mcp::bridge::source_label(&server);
+        let started = std::time::Instant::now();
+        let _ = self.sink.emit(
+            "qibai://exec-step",
+            serde_json::json!({
+                "tool": &label, "source": src_label, "args_summary": args_summary, "phase": "start",
+            }),
+        );
+        let call_outcome: Result<(String, bool), String> = {
             let mut guard = self.mcp.lock().unwrap();
             let Some(reg) = guard.as_mut() else {
-                return Err(EngineError::Skill(
-                    "MCP 注册表未初始化，无法执行已确认的外部调用".into(),
-                ));
+                // v45.19：这里也要收口，否则前端会永远停在「正在执行」。
+                let msg = "MCP 注册表未初始化，无法执行已确认的外部调用".to_string();
+                let _ = self.sink.emit(
+                    "qibai://exec-step",
+                    serde_json::json!({
+                        "tool": &label, "source": &src_label, "phase": "done", "ok": false,
+                        "elapsed_ms": started.elapsed().as_millis() as u64,
+                        "error": msg,
+                    }),
+                );
+                return Err(EngineError::Skill(msg));
             };
-            let result = reg.call(&server, &tool, args).map_err(EngineError::Skill)?;
-            if result.is_error {
+            match reg.call(&server, &tool, args) {
+                Ok(result) if !result.is_error => Ok((result.content, true)),
                 // 工具自报错误：文本原样保留，仅加一行前缀让模型/人看得出边界。
-                format!("MCP 工具返回错误：{}", result.content)
-            } else {
-                result.content
+                Ok(result) => Ok((format!("MCP 工具返回错误：{}", result.content), false)),
+                Err(m) => Err(Engine::exec_error_hint(m)),
             }
         };
+        let (text, ok) = match call_outcome {
+            Ok(v) => v,
+            Err(msg) => {
+                let _ = self.sink.emit(
+                    "qibai://exec-step",
+                    serde_json::json!({
+                        "tool": &label, "source": src_label, "phase": "done", "ok": false,
+                        "elapsed_ms": started.elapsed().as_millis() as u64,
+                        "error": exec_inline_summary(&msg, 200),
+                    }),
+                );
+                return Err(EngineError::Skill(msg));
+            }
+        };
+        let _ = self.sink.emit(
+            "qibai://exec-step",
+            serde_json::json!({
+                "tool": &label, "source": src_label, "phase": "done", "ok": ok,
+                "elapsed_ms": started.elapsed().as_millis() as u64,
+                "result_summary": exec_inline_summary(&text, 200),
+            }),
+        );
         // 与技能批准同一语义：回写会话 + 气泡。
         let reply = format!("已批准并执行：{text}");
         let _ = self.append_chat("assistant", &reply);
@@ -1316,12 +1411,23 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
             "qibai://pet-say",
             serde_json::json!({"text": reply, "flash": true}),
         );
+        // v45.18：审批路径不经过 LLM 工具循环，那次统一广播轮不到它，
+        // 聊天/执行记录里就会空一片（用户只会看到一句「已批准并执行」）。
+        self.sink.emit(
+            "qibai://executions",
+            serde_json::json!({"items": [{
+                "tool": crate::mcp::bridge::namespaced(&server, &tool),
+                "args_summary": args_summary,
+                "ok": true,
+                "error": serde_json::Value::Null,
+            }]}),
+        );
         return Ok(text);
     }
     // v45.7 门控拆分：只有高危 builtin（ExecuteCommand/RunTests，会跑命令/改系统）
     // 才需要亲密度 L4；文件读写/建工程等基础操作直接放行（此前所有批准都被 L4
     // 静默挡掉，表现为"点了允许、没完没了"）。
-    if approve && !OPEN_ALL {
+    if approve && !open_all() {
         let active = self.personas.active_persona().to_string();
         let level = self
             .intimacy
@@ -1340,18 +1446,64 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
             return Err(EngineError::Intimacy(full));
         }
     }
-    let result = self
-        .skills
-        .approve(request_id, approve)
-        .await
-        .map_err(|e| EngineError::Skill(e.to_string()))?;
+    // v45.18：名字要在 approve 之前取——它会把 pending 项摘走。
+    let pending_label = self.skills.pending_label(request_id);
+    // v45.19：参数摘要同理，approve 之后 pending 已不在表里。
+    let pending_args = self.skills.pending_args_summary(request_id);
+    let tool_label = pending_label.clone().unwrap_or_else(|| request_id.to_string());
+    let started = std::time::Instant::now();
+    // v45.19：批准时先亮「正在执行」——approve 是同步阻塞的，构建/渲染类能跑一两分钟。
+    if approve {
+        let _ = self.sink.emit(
+            "qibai://exec-step",
+            serde_json::json!({
+                "tool": &tool_label, "args_summary": pending_args.unwrap_or_default(), "phase": "start",
+            }),
+        );
+    }
+    let result = match self.skills.approve(request_id, approve).await {
+        Ok(r) => r,
+        Err(e) => {
+            let msg = Engine::exec_error_hint(e.to_string());
+            if approve {
+                let _ = self.sink.emit(
+                    "qibai://exec-step",
+                    serde_json::json!({
+                        "tool": &tool_label, "phase": "done", "ok": false,
+                        "elapsed_ms": started.elapsed().as_millis() as u64,
+                        "error": exec_inline_summary(&msg, 200),
+                    }),
+                );
+            }
+            return Err(EngineError::Skill(msg));
+        }
+    };
     // 批准成功：把结果回写进会话并 emit 气泡，否则用户永远不知道成没成。
     if approve {
+        let _ = self.sink.emit(
+            "qibai://exec-step",
+            serde_json::json!({
+                "tool": &tool_label, "phase": "done", "ok": true,
+                "elapsed_ms": started.elapsed().as_millis() as u64,
+                "result_summary": exec_inline_summary(&result, 200),
+            }),
+        );
         let reply = format!("已批准并执行：{result}");
         let _ = self.append_chat("assistant", &reply);
         self.sink.emit(
             "qibai://pet-say",
             serde_json::json!({"text": reply, "flash": true}),
+        );
+        // v45.18：同 mcp-appr 分支——审批执行不经过 LLM 循环，得单独留痕，
+        // 否则聊天区「执行记录」折叠里永远缺这一次。
+        self.sink.emit(
+            "qibai://executions",
+            serde_json::json!({"items": [{
+                "tool": tool_label,
+                "args_summary": "",
+                "ok": true,
+                "error": serde_json::Value::Null,
+            }]}),
         );
     }
     Ok(result)
@@ -1379,6 +1531,57 @@ pub async fn approve_skill(&mut self, request_id: &str, approve: bool) -> Result
         let v = serde_json::to_value(&staged).map_err(|e| e.to_string())?;
         Self::staged_registry().lock().unwrap().insert(stage_id, staged);
         Ok(v)
+    }
+
+    /// stage（字节形态）：WebView 里 `<input type=file>` 拿不到可信本地路径，
+    /// 所以由前端读出文件内容，这里落成临时文件再复用 `stage_from_file`（.md / .zip 两支）。
+    pub fn skill_install_stage_bytes(
+        &self,
+        file_name: &str,
+        data: &[u8],
+    ) -> Result<serde_json::Value, String> {
+        let name = std::path::Path::new(file_name)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if name.is_empty() {
+            return Err("文件名为空".to_string());
+        }
+        let ext = std::path::Path::new(&name)
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if ext != "md" && ext != "zip" {
+            return Err(format!("不支持的文件类型 .{ext}（仅 .md 或 .zip）"));
+        }
+        if data.is_empty() {
+            return Err("文件内容为空".to_string());
+        }
+        if data.len() > crate::skill_pack::MAX_PACK_BYTES as usize {
+            return Err(format!(
+                "文件过大：{} 字节（上限 {} 字节）",
+                data.len(),
+                crate::skill_pack::MAX_PACK_BYTES
+            ));
+        }
+        let tmp_dir = std::env::temp_dir();
+        std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+        let tmp_path = tmp_dir.join(format!(
+            "qibai_stage_bytes_{}_{}.{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+            ext
+        ));
+        std::fs::write(&tmp_path, data).map_err(|e| e.to_string())?;
+        let result = self.skill_install_stage(serde_json::json!({
+            "kind": "file",
+            "value": tmp_path.display().to_string()
+        }));
+        let _ = std::fs::remove_file(&tmp_path);
+        result
     }
 
     /// commit：按 stage_id 取出暂存，落盘到 ~/.qibai_skills/<name>/。
@@ -1859,6 +2062,11 @@ pub(crate) fn reset_plan_for_rerun(
         let selected = crate::tts::current_audio_output();
         let tools = probe_tools();
         let backend = choose_backend(&selected, &tools);
+        let selected_index = if selected.is_empty() || selected == "default" {
+            None
+        } else {
+            sink_name_to_index(&selected)
+        };
         eprintln!("[qibai] audio: test backend={backend:?} device={selected}");
         let _ = crate::tts::play_audio_bytes(&wav, "test-tone");
         // 等 0.3s 让流落地
@@ -1877,7 +2085,12 @@ pub(crate) fn reset_plan_for_rerun(
         } else { "" };
         eprintln!("[qibai] audio: stream landed on {:?}", landing_name.as_deref().unwrap_or("unknown"));
         Ok(serde_json::json!({
+            // 新字段（与 audio_diagnose 一致）；同时保留 legacy `selected` / `sink_landing`
             "selected": selected,
+            "selected_name": selected,
+            "selected_index": selected_index,
+            "sink_landing_index": landing_idx,
+            "sink_landing_name": landing_name,
             "backend": format!("{backend:?}"),
             "tools": { "pacat": tools.pacat, "pw_play": tools.pw_play, "paplay": tools.paplay, "rodio": tools.rodio },
             "sink_landing": { "index": landing_idx, "name": landing_name },
@@ -2050,13 +2263,78 @@ pub(crate) fn reset_plan_for_rerun(
     }
 
     /// 导入安装技能包（zip）：安全解压 → manifest 校验 → 复制进 plugins/ → 注册。
-    pub fn skill_pack_install(&mut self, zip_path: String) -> Result<(), EngineError> {
-        let plugins_dir = self.skills.plugins().plugins_dir().to_path_buf();
-        crate::skill_pack::install_pack(std::path::Path::new(&zip_path), &plugins_dir)
-            .map_err(|e| EngineError::Skill(e.to_string()))?;
-        self.skills.plugins_mut().scan();
+    /// 导入即生效：导入是用户主动动作，视作同意清单声明的权限；
+    /// 之后仍可在插件页关掉。早先"外部包默认停用"导致装完在能力清单里看得见、
+    /// 工具表里却调不到（`tool_schemas` 过滤 !enabled）。
+    fn activate_installed(
+        &mut self,
+        id: &str,
+        name: &str,
+        perms: &[String],
+    ) -> Result<(), EngineError> {
+        let perm_objs: Vec<crate::plugin_manifest::Permission> = perms
+            .iter()
+            .filter_map(|p| crate::plugin_manifest::Permission::from_str(p))
+            .collect();
+        {
+            let reg = self.skills.plugins_mut();
+            reg.set_enabled(id, true).map_err(EngineError::Skill)?;
+            for p in perm_objs.iter().copied() {
+                // files:write 对外部插件永久拒绝：静默跳过，不阻断安装。
+                let _ = reg.grant_permission(id, p, true);
+            }
+        }
+        self.settings.plugins.enabled.insert(id.to_string(), true);
+        self.settings
+            .plugins
+            .grants
+            .insert(id.to_string(), perms.to_vec());
+        self.settings.save()?;
+        // 技能页那份清单可能还挂着一个 `.disabled` 空标记，一并清掉。
+        let _ = crate::skill_docs::set_enabled(name, true);
         self.resync_experts();
         Ok(())
+    }
+
+    pub fn skill_pack_install(&mut self, zip_path: String) -> Result<(), EngineError> {
+        let plugins_dir = self.skills.plugins().plugins_dir().to_path_buf();
+        let m = crate::skill_pack::install_pack(std::path::Path::new(&zip_path), &plugins_dir)
+            .map_err(|e| EngineError::Skill(e.to_string()))?;
+        self.skills.plugins_mut().rescan();
+        let id = m.id.clone();
+        let name = m.name.clone();
+        let perms = m.permissions.clone();
+        self.activate_installed(&id, &name, &perms)
+    }
+
+    /// 导入安装技能包（字节形态）：WebView 只拿得到文件内容、拿不到可信路径时走这条。
+    pub fn skill_pack_install_bytes(
+        &mut self,
+        file_name: String,
+        data: &[u8],
+    ) -> Result<(), EngineError> {
+        let plugins_dir = self.skills.plugins().plugins_dir().to_path_buf();
+        let m = crate::skill_pack::install_pack_bytes(&file_name, data, &plugins_dir)
+            .map_err(|e| EngineError::Skill(e.to_string()))?;
+        self.skills.plugins_mut().rescan();
+        let id = m.id.clone();
+        let name = m.name.clone();
+        let perms = m.permissions.clone();
+        self.activate_installed(&id, &name, &perms)
+    }
+
+    /// 导出技能包到 `<数据目录>/exports/<id>.qbpk`，返回落盘绝对路径。
+    /// WebView 没法直接存盘，所以由后端选目录并把路径回给前端提示。
+    pub fn skill_pack_export_default(&self, plugin_id: String) -> Result<String, EngineError> {
+        let plugins_dir = self.skills.plugins().plugins_dir().to_path_buf();
+        let dir = crate::settings::data_dir()
+            .map(|d| d.join("exports"))
+            .map_err(|e| EngineError::Skill(e.to_string()))?;
+        std::fs::create_dir_all(&dir).map_err(|e| EngineError::Skill(e.to_string()))?;
+        let dest = dir.join(format!("{plugin_id}.qbpk"));
+        crate::skill_pack::export_pack(&plugin_id, &plugins_dir, &dest)
+            .map_err(|e| EngineError::Skill(e.to_string()))?;
+        Ok(dest.display().to_string())
     }
 
     /// 导出技能包（zip）：从 plugins/<id> 打包。
@@ -2097,15 +2375,18 @@ pub(crate) fn reset_plan_for_rerun(
         self.skills.plugins().list_json()
     }
 
-    /// 安装插件（复制目录；幂等）。
+    /// 安装插件（复制目录；幂等；跨版本覆盖升级），装完立刻启用。
     pub fn plugin_install(&mut self, dir: String) -> Result<(), EngineError> {
         let from = std::path::Path::new(&dir).to_path_buf();
-        self.skills
+        let m = self
+            .skills
             .plugins_mut()
             .install(&from)
-            .map_err(|e| EngineError::Skill(e))?;
-        self.resync_experts();
-        Ok(())
+            .map_err(EngineError::Skill)?;
+        let id = m.id.clone();
+        let name = m.name.clone();
+        let perms = m.permissions.clone();
+        self.activate_installed(&id, &name, &perms)
     }
 
     /// 卸载插件（幂等；内置拒绝）。
@@ -2197,8 +2478,17 @@ pub(crate) fn reset_plan_for_rerun(
             .plugins_mut()
             .set_enabled(&id, enabled)
             .map_err(|e| EngineError::Skill(e))?;
-        self.settings.plugins.enabled.insert(id, enabled);
+        self.settings.plugins.enabled.insert(id.clone(), enabled);
         self.settings.save()?;
+        // 反向对齐：插件页关掉 → 技能页那份清单行也要跟着消失（否则用户会以为还开着）。
+        if let Some(name) = self
+            .skills
+            .plugins()
+            .entry(&id)
+            .map(|e| e.manifest.name.clone())
+        {
+            let _ = crate::skill_docs::set_enabled(&name, enabled);
+        }
         Ok(())
     }
 
@@ -2274,12 +2564,130 @@ pub(crate) fn reset_plan_for_rerun(
     }
 
     // ---- IPC: send_message ----
+
+    /// B 方案：视频/动画类需求的强路由判定（纯函数，便于单测）。
+    ///
+    /// 只认"要产出一支片子"的说法；剪辑、加字幕、截帧这类"处理已有素材"的需求排除在外。
+    fn wants_film_generation(text: &str) -> bool {
+        let t = text.to_lowercase();
+        let verbs = [
+            "做", "生成", "出一", "出个", "来一", "来个", "搞", "整", "制作", "渲染", "合成",
+        ];
+        let nouns = [
+            "视频",
+            "动画",
+            "动效",
+            "片头",
+            "片尾",
+            "短片",
+            "宣传片",
+            "演示片",
+            "开屏",
+            "片花",
+            "成片",
+            "mg",
+        ];
+        if !(verbs.iter().any(|v| t.contains(v)) && nouns.iter().any(|n| t.contains(n))) {
+            return false;
+        }
+        let excluded = [
+            "加字幕", "字幕", "裁剪", "截取", "转码", "压缩", "封面", "抽帧", "截帧", "下载",
+        ];
+        !excluded.iter().any(|e| t.contains(e))
+    }
+
+    /// Animacode 强路由：装了就让模型必须走五个工具真出片；没装就如实报缺件。
+    fn animacode_route_hint(&mut self, text: &str) -> Option<String> {
+        if !Self::wants_film_generation(text) {
+            return None;
+        }
+        const ID: &str = "animacode";
+        let snapshot = self.skills.plugins().entry(ID).map(|e| {
+            (
+                e.enabled,
+                e.error.clone(),
+                e.manifest.permissions.clone(),
+            )
+        });
+        match snapshot {
+            None => Some(
+                "【本轮强路由·缺件】用户要做视频/动画，但本机没装 Animacode。本轮先如实说明缺件，\
+并告诉用户在控台「插件」页导入 animacode-v2.2.0.qbpk（导入后会自动启用）；\
+不许凭空描述成片已完成，也不许拿一段 JSON 充当结果。"
+                    .to_string(),
+            ),
+            Some((_, Some(err), _)) => Some(format!(
+                "【本轮强路由·异常】Animacode 条目处于错误态（{err}）。先让用户在插件页删掉该条目后重装，\
+本轮不要假装能出片。"
+            )),
+            Some((enabled, None, perms)) => {
+                let mut changed = !enabled;
+                {
+                    let reg = self.skills.plugins_mut();
+                    if !enabled {
+                        let _ = reg.set_enabled(ID, true);
+                    }
+                    if reg.missing_permission(ID).is_some() {
+                        for p in perms
+                            .iter()
+                            .filter_map(|p| crate::plugin_manifest::Permission::from_str(p))
+                        {
+                            // files:write 对外部插件永久拒绝，这里静默跳过。
+                            let _ = reg.grant_permission(ID, p, true);
+                        }
+                        changed = true;
+                    }
+                }
+                if changed {
+                    let _ = crate::skill_docs::set_enabled("Animacode 动画成片", true);
+                    self.settings.plugins.enabled.insert(ID.to_string(), true);
+                    self.settings
+                        .plugins
+                        .grants
+                        .insert(ID.to_string(), perms.clone());
+                    let _ = self.settings.save();
+                }
+                Some(
+                    "【本轮强路由·Animacode 已就绪】用户要做视频/动画，本轮必须走 Animacode 真出片，\
+不许用文字假装：\n\
+1) `anima_schema` 取 scene.json 字段；\n\
+2) 用 code_write_file 在工作区写 scene.json（title/stat/bars/process/compare/quote/endcard 选块）；\n\
+3) `anima_build` 校验构建 → `anima_render` 渲帧 → `anima_qa` 质检（VERDICT 必须 PASS 或 \
+PASS_WITH_WARNINGS，FAIL 就改 spec 重渲）→ `anima_mux` 合成 MP4；\n\
+4) 回给用户成片绝对路径 + 质检结论。\n\
+口径：这是「写 spec 逐帧渲染」的确定性动画（片头/MG/数据片），不是文生视频；做不了就直说做不了。"
+                        .to_string(),
+                )
+            }
+        }
+    }
+
     pub async fn send_message(&mut self, text: &str) -> Result<SendMessageOutput, EngineError> {
+        /// v45.21：不可取消场景（测试 / 内部调用）用的常量标志——永远为 false。
+        static NEVER_CANCEL: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
+        self.send_message_cancellable(text, &NEVER_CANCEL).await
+    }
+
+    /// v45.21：可取消版本。用户点「停止」时把 `cancel` 置 true，
+    /// 工具循环会在「下一次请求模型之前」和「下一个工具开跑之前」两处刹车。
+    /// 语义是**软停**：当前正在跑的工具会先跑完（不留半截文件），然后正常收尾，
+    /// 已经产出的文件全部保留，并给出「停在第几步」的交代。
+    pub async fn send_message_cancellable(
+        &mut self,
+        text: &str,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<SendMessageOutput, EngineError> {
         // v45.8-A：空文本硬闸——拔麦/转写为空时不进 LLM、不写会话、不 emit thinking。
         if text.trim().is_empty() {
             let n = self.conversation.all().len();
             eprintln!("[qibai] llm: send_blocked empty (history={n})");
             return Err(EngineError::Llm(LlmError::Api("空消息不发送".to_string())));
+        }
+        // 新一轮用户请求 → 清掉「允许本次」的任务域放行名单；自动续跑的固定口令不算新一轮，
+        // 否则同一条流水线（schema→build→render→qa→mux）会每步都重新弹确认。
+        if text.trim() != Self::AUTO_CONTINUE_TOKEN {
+            self.skills.clear_approval_grants();
         }
         // v45.8-B：诊断锚点——真发起请求前打一行，下次复现可一眼分辨"空文本"vs"旧音频被转写"。
         let head: String = text.trim().chars().take(20).collect::<String>().replace('\n', " ");
@@ -2370,6 +2778,10 @@ pub(crate) fn reset_plan_for_rerun(
         let skill_catalog = crate::skill_docs::render_catalog_prompt();
         if !skill_catalog.is_empty() {
             cap_lines.push(skill_catalog);
+        }
+        // B 方案：视频/动画类需求强路由到 Animacode（没装则如实报缺件）。
+        if let Some(hint) = self.animacode_route_hint(text) {
+            cap_lines.push(hint);
         }
         cap_lines.push("知识库：用户自选目录建索引（BM25 + 可选本地语义向量，全程离线）；索引为空时退回 ~/.qibai_kb（或 QIBAI_KB）扫描。".to_string());
         system = format!("{system}\n【可用能力】以下是你当前真实装载的能力（向用户介绍自己时据此如实回答，不要编造没有的能力）：\n{}", cap_lines.join("\n"));
@@ -2565,7 +2977,7 @@ pub(crate) fn reset_plan_for_rerun(
         // 专家白名单过滤：active expert 且 whitelist 非空时，只保留白名单内的工具；
         // start_guard 为引擎级安全工具，始终保留；mcp__ 外部工具是用户主动安装的能力，
         // 同样始终保留（不被专家白名单静默裁掉）。
-        if !OPEN_ALL {
+        if !open_all() {
             if let Some(whitelist) = self.experts.whitelist() {
                 tool_schemas.retain(|s| {
                 let name = s["function"]["name"].as_str().unwrap_or("");
@@ -2598,23 +3010,71 @@ pub(crate) fn reset_plan_for_rerun(
             mcp_pending: &'a std::sync::Mutex<
                 std::collections::HashMap<String, (String, String, serde_json::Value)>,
             >,
+            /// v45.21：用户是否已叫停。工具循环在「下一轮请求前」「下一个工具前」各读一次。
+            cancel: &'a std::sync::atomic::AtomicBool,
         }
         #[async_trait::async_trait]
         impl<'a> crate::llm_client::ToolExecutor for EngineToolExecutor<'a> {
+            fn cancelled(&self) -> bool {
+                use std::sync::atomic::Ordering;
+                self.cancel.load(Ordering::SeqCst)
+            }
             async fn invoke(
                 &mut self,
                 name: &str,
                 args: &serde_json::Value,
             ) -> crate::skills::SkillOutcome {
+                let summary = summarize_tool_args(args);
+                // v45.19：LLM 工具循环里的每一跳也要让用户看得见——先发 start
+                // （前端立刻多出一行「⟳ 正在调用 X」），返回后发 done/pending，
+                // 带上耗时、结果摘要或错误。此前只在整轮收尾广播一次汇总，
+                // 中间几十秒完全静默，长任务和死掉无法区分。
+                let (label, src) = match crate::mcp::bridge::parse_namespaced(name) {
+                    Some((server, tool)) => (
+                        crate::mcp::bridge::namespaced(&server, &tool),
+                        Some(crate::mcp::bridge::source_label(&server)),
+                    ),
+                    None => (name.to_string(), None),
+                };
+                let started = std::time::Instant::now();
+                let _ = self.sink.emit(
+                    "qibai://exec-step",
+                    serde_json::json!({
+                        "tool": &label, "source": src, "args_summary": &summary, "phase": "start",
+                    }),
+                );
                 // 统一落日志：每一次工具调用（含 engine 级 code_* 与技能白名单内全部工具）
                 // 都打一行到 stderr（启动脚本重定向进 app.log），下次排查不再听模型自述。
                 let out = self.dispatch(name, args).await;
-                let summary = summarize_tool_args(args);
                 let status = match &out {
                     crate::skills::SkillOutcome::Ok(_) => "Ok".to_string(),
                     crate::skills::SkillOutcome::Denied(reason) => format!("Denied({reason})"),
                     crate::skills::SkillOutcome::PendingApproval { .. } => "PendingApproval".to_string(),
                 };
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                let mut step = serde_json::json!({
+                    "tool": &label, "source": src, "elapsed_ms": elapsed_ms,
+                });
+                match &out {
+                    crate::skills::SkillOutcome::Ok(text) => {
+                        step["phase"] = serde_json::Value::String("done".into());
+                        step["ok"] = serde_json::Value::Bool(true);
+                        step["result_summary"] =
+                            serde_json::Value::String(exec_inline_summary(text, 200));
+                    }
+                    crate::skills::SkillOutcome::Denied(reason) => {
+                        step["phase"] = serde_json::Value::String("done".into());
+                        step["ok"] = serde_json::Value::Bool(false);
+                        step["error"] =
+                            serde_json::Value::String(exec_inline_summary(reason, 200));
+                    }
+                    // 待确认：工具还没跑，等用户点允许；前端标「待确认」而不是完成。
+                    crate::skills::SkillOutcome::PendingApproval { .. } => {
+                        step["phase"] = serde_json::Value::String("pending".into());
+                        step["ok"] = serde_json::Value::Null;
+                    }
+                }
+                let _ = self.sink.emit("qibai://exec-step", step);
                 eprintln!("[qibai] tool: {name} args={summary} → {status}");
                 out
             }
@@ -2949,6 +3409,7 @@ pub(crate) fn reset_plan_for_rerun(
             personas: &mut self.personas,
             mcp_lock: &self.mcp,
             mcp_pending: &self.mcp_pending,
+            cancel,
         };
 
         // v18.8-fix27：流式朗读——LLM 逐段输出文本时经 sink 广播 qibai://tts-chunk，
@@ -3040,6 +3501,34 @@ pub(crate) fn reset_plan_for_rerun(
                     } else {
                         None
                     },
+                })
+            }
+            // v45.21：用户叫停 ≠ 失败。正常收尾：会话照常落一笔，已产出文件全部保留，
+            // 气泡里明确交代「停下了 + 去哪看进度」，并带 cancelled 标记——
+            // 前端据此显示成「已停止」，绝不落到「连接失败」那条兜底文案上。
+            Err(LlmError::Cancelled) => {
+                let msg = "已经停下了。前面跑出来的文件都还在，控制台「执行过程」里能看到停在第几步；要接着做，跟我说一声我再往下走。";
+                let _ = self.conversation.append("user", text);
+                let _ = self.conversation.append("assistant", msg);
+                let active = self.personas.active_persona().to_string();
+                let _ = self.personas.append_memory(&active, "user", text);
+                let _ = self.personas.append_memory(&active, "assistant", msg);
+                let _ = self.personas.persist();
+                self.sink
+                    .emit("qibai://conversation-updated", serde_json::json!({}));
+                self.sink
+                    .emit("qibai://llm-status", serde_json::json!({"state": "done"}));
+                Ok(SendMessageOutput {
+                    reply: msg.to_string(),
+                    emotion: crate::enums::Emotion::Focused,
+                    action: None,
+                    skill: None,
+                    ui_cmd: None,
+                    secret: None,
+                    secret_entry_id: None,
+                    speak_text: Some(msg.to_string()),
+                    streamed,
+                    markers: Some(serde_json::json!({"cancelled": true})),
                 })
             }
             Err(e) => {
@@ -5678,38 +6167,21 @@ mod tests {
             .expect("datetime 应在列表中");
         assert_eq!(row["type"], "skill");
         assert_eq!(row["installed"], true);
-        assert_eq!(row["enabled"], false); // 外部默认关
+        assert_eq!(row["enabled"], true); // v45.14：导入即启用，不再是"外部默认关"
         assert_eq!(row["permissions"][0], "command:run");
         assert_eq!(row["entry_kind"], "command");
         assert!(!row["builtin"].as_bool().unwrap());
 
-        // 未授权调用 → Denied（权限门控）
-        e.plugin_set_enabled("com.qibai.datetime".into(), true).unwrap();
-        match e.skills.invoke("get_datetime", &serde_json::json!({})).await {
-            crate::skills::SkillOutcome::Denied(msg) => {
-                assert!(msg.contains("command:run"));
-            }
-            other => panic!("expected permission denied, got {other:?}"),
-        }
-
-        // grant → enable → tool_schemas 含 get_datetime
-        e.plugin_grant_permission(
-            "com.qibai.datetime".into(),
-            "command:run".into(),
-            true,
-        )
-        .unwrap();
-        let schemas = e.skills.tool_schemas();
-        assert!(schemas.iter().any(|s| s["function"]["name"] == "get_datetime"));
-
-        // invoke 成功返回日期文本
+        // 导入即授权 → 直接可调，不用再走一次 grant/enable
         match e.skills.invoke("get_datetime", &serde_json::json!({})).await {
             crate::skills::SkillOutcome::Ok(msg) => {
-                // YYYY-MM-DD HH:MM:SS
                 assert!(msg.split_whitespace().next().unwrap().contains('-'));
             }
-            other => panic!("expected ok, got {other:?}"),
+            other => panic!("expected ok（导入自动授权）, got {other:?}"),
         }
+        // tool_schemas 含 get_datetime
+        let schemas = e.skills.tool_schemas();
+        assert!(schemas.iter().any(|s| s["function"]["name"] == "get_datetime"));
 
         // settings.plugins 落盘同步
         assert!(e.settings.plugins.enabled["com.qibai.datetime"]);
@@ -5722,6 +6194,202 @@ mod tests {
 
         unsafe { std::env::remove_var("QIBAI_DATA_DIR") };
         unsafe { std::env::remove_var("QIBAI_PLUGINS_DIR") };
+    }
+
+    /// 外部 MCP 包声明的启动命令不在 PATH 里时：不该先弹「需要你的确认」，
+    /// 因为用户点完必然失败（这就是用户看到的「审批失败」）。应当直接说缺什么。
+    #[tokio::test]
+    async fn missing_launcher_is_reported_instead_of_approved() {
+        let _g = crate::test_support::env_lock();
+        let data = crate::test_support::unique_temp_dir("engine-missbin-data");
+        let plugindir = crate::test_support::unique_temp_dir("engine-missbin-dir");
+        unsafe { std::env::set_var("QIBAI_DATA_DIR", &data) };
+        unsafe { std::env::set_var("QIBAI_PLUGINS_DIR", &plugindir) };
+
+        let src = data.join("nobin-src");
+        std::fs::create_dir_all(&src).unwrap();
+        let manifest = serde_json::json!({
+            "id": "qibai.test.nobin",
+            "type": "connector",
+            "name": "缺件测试",
+            "description": "启动命令不存在的 MCP 包",
+            "version": "1.0.0",
+            "permissions": ["system:launch"],
+            "entry": {"kind": "mcp", "mcp": {"command": "qibai-no-such-binary-xyz", "args": []}},
+            "functions": [{
+                "name": "nobin_probe",
+                "description": "探针",
+                "parameters": {"type": "object", "properties": {}, "required": []}
+            }]
+        });
+        std::fs::write(
+            src.join("qibai-plugin.json"),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        let mut e = Engine::new(Box::new(RecordingSink { events: Mutex::new(vec![]) }));
+        e.plugin_install(src.to_string_lossy().to_string()).unwrap();
+
+        match e.skills.invoke("nobin_probe", &serde_json::json!({})).await {
+            crate::skills::SkillOutcome::Denied(msg) => {
+                assert!(msg.contains("找不到可执行"), "msg={msg}");
+                assert!(msg.contains(crate::proc_env::EXTRA_ENV), "msg 应给出补救方式：{msg}");
+            }
+            other => panic!("expected denied（缺可执行要直说）, got {other:?}"),
+        }
+        // 关键：不再造待审批请求，避免「点了允许 → 失败」的循环
+        assert_eq!(e.skills.pending_len(), 0, "缺件时不应留下 pending");
+
+        unsafe { std::env::remove_var("QIBAI_DATA_DIR") };
+        unsafe { std::env::remove_var("QIBAI_PLUGINS_DIR") };
+    }
+
+    fn node_available() -> bool {
+        std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    /// 审批链路端到端：点「允许本次」要真的跑起 animacode 的 MCP 工具，
+    /// 且本任务内同一插件后续调用不再重复弹确认（一条视频要连跑 5 个工具）。
+    /// 这条用例专门盯「审批通过却跑不起来」——debug 构建默认 OPEN_ALL 全开，
+    /// 不用 QIBAI_FORCE_APPROVALS 就永远测不到这条链路。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn approved_animacode_actually_runs_and_grants_the_task() {
+        if !node_available() {
+            eprintln!("SKIP: 本机没有 node，跳过「审批→真实调用」端到端验收");
+            return;
+        }
+        let _g = crate::test_support::env_lock();
+        let data = crate::test_support::unique_temp_dir("engine-appr-data");
+        let plugindir = crate::test_support::unique_temp_dir("engine-appr-dir");
+        unsafe {
+            std::env::set_var("QIBAI_DATA_DIR", &data);
+            std::env::set_var("QIBAI_PLUGINS_DIR", &plugindir);
+            std::env::set_var("QIBAI_FORCE_APPROVALS", "1");
+        }
+
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/plugins/animacode");
+        let mut e = Engine::new(Box::new(RecordingSink { events: Mutex::new(vec![]) }));
+        e.plugin_install(src.to_string_lossy().to_string()).unwrap();
+        e.skills.set_enabled("animacode", true).unwrap();
+
+        // 第一次调用：node 命中危险表 → 先挂待确认
+        let id = match e.skills.invoke("anima_schema", &serde_json::json!({})).await {
+            crate::skills::SkillOutcome::PendingApproval { request_id, .. } => request_id,
+            other => panic!("首次调用应先弹确认，实际 {other:?}"),
+        };
+        assert_eq!(e.skills.granted_len(), 0, "批准前不该有放行");
+
+        // 用户点「允许本次」→ 必须真的把 MCP 工具跑起来（核心回归点）
+        let ran = e
+            .skills
+            .approve(&id, true)
+            .await
+            .expect("批准后必须真的执行，不许再报「找不到确认」");
+        assert!(!ran.trim().is_empty(), "执行结果不能为空");
+        assert!(
+            ran.contains('{') || ran.contains("anima") || ran.contains("shot"),
+            "结果应来自 anima_schema：{}",
+            ran.chars().take(200).collect::<String>()
+        );
+        assert_eq!(e.skills.pending_len(), 0, "批准后不应残留待确认");
+        assert_eq!(e.skills.granted_len(), 1, "外部插件批准一次应记入本任务放行");
+
+        // 同任务内再次调用同一插件：直接执行，不再弹确认
+        match e.skills.invoke("anima_schema", &serde_json::json!({})).await {
+            crate::skills::SkillOutcome::Ok(_) => {}
+            other => panic!("同任务内应直接执行，实际 {other:?}"),
+        }
+
+        // 新一轮用户请求：放行清空，重新确认
+        e.skills.clear_approval_grants();
+        assert_eq!(e.skills.granted_len(), 0);
+        match e.skills.invoke("anima_schema", &serde_json::json!({})).await {
+            crate::skills::SkillOutcome::PendingApproval { .. } => {}
+            other => panic!("新一轮请求应重新确认，实际 {other:?}"),
+        }
+
+        unsafe {
+            std::env::remove_var("QIBAI_DATA_DIR");
+            std::env::remove_var("QIBAI_PLUGINS_DIR");
+            std::env::remove_var("QIBAI_FORCE_APPROVALS");
+        }
+    }
+
+    /// v45.18：审批（IPC 入口 approve_skill）执行完必须广播 qibai://executions。
+    /// 这条路径不经过 LLM 工具循环，此前只剩一句「已批准并执行」，聊天区的
+    /// 执行记录折叠永远是空的——用户原话「聊天记录里面看不到这一点」。
+    #[tokio::test]
+    async fn approval_path_broadcasts_execution_record() {
+        if !node_available() {
+            eprintln!("SKIP: 本机没有 node，跳过「审批留痕」验收");
+            return;
+        }
+        let _g = crate::test_support::env_lock();
+        let data = crate::test_support::unique_temp_dir("engine-appr-ev-data");
+        let plugindir = crate::test_support::unique_temp_dir("engine-appr-ev-dir");
+        unsafe {
+            std::env::set_var("QIBAI_DATA_DIR", &data);
+            std::env::set_var("QIBAI_PLUGINS_DIR", &plugindir);
+            std::env::set_var("QIBAI_FORCE_APPROVALS", "1");
+        }
+        let evs = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut e = Engine::new(Box::new(VecSink { events: evs.clone() }));
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/plugins/animacode");
+        e.plugin_install(src.to_string_lossy().to_string()).unwrap();
+        e.skills.set_enabled("animacode", true).unwrap();
+
+        let id = match e.skills.invoke("anima_schema", &serde_json::json!({})).await {
+            crate::skills::SkillOutcome::PendingApproval { request_id, .. } => request_id,
+            other => panic!("首次调用应先弹确认，实际 {other:?}"),
+        };
+        e.approve_skill(&id, true).await.expect("审批后必须真执行");
+
+        let events = evs.lock().unwrap();
+        let exec = events
+            .iter()
+            .find(|(n, _)| n == "qibai://executions")
+            .map(|(_, p)| p.clone())
+            .expect("审批路径必须广播 qibai://executions（否则聊天记录看不到执行）");
+        let tool = exec["items"][0]["tool"].as_str().unwrap_or("");
+        assert!(
+            tool.contains("anima_schema"),
+            "留痕里应带技能名，实际 {tool}"
+        );
+        assert_eq!(exec["items"][0]["ok"], serde_json::Value::Bool(true));
+
+        // v45.19：同一次审批还必须广播「执行过程」的 start/done 两步——
+        // 否则聊天区只有事后一句回执，执行期间用户完全看不到进度与耗时。
+        let steps: Vec<serde_json::Value> = events
+            .iter()
+            .filter(|(n, _)| n == "qibai://exec-step")
+            .map(|(_, p)| p.clone())
+            .collect();
+        assert_eq!(
+            steps.len(),
+            2,
+            "审批执行应广播 start + done 两条 exec-step，实际 {steps:?}"
+        );
+        assert_eq!(steps[0]["phase"], "start");
+        assert!(
+            steps[0]["args_summary"].is_string(),
+            "start 必须带参数摘要（卡片上显示调用参数）"
+        );
+        assert!(steps[0]["tool"].as_str().unwrap_or("").contains("anima_schema"));
+        assert_eq!(steps[1]["phase"], "done");
+        assert_eq!(steps[1]["ok"], serde_json::Value::Bool(true));
+        assert!(steps[1]["elapsed_ms"].is_u64(), "done 必须带耗时");
+        assert!(steps[1]["result_summary"].is_string(), "done 必须带结果摘要");
+
+        unsafe {
+            std::env::remove_var("QIBAI_DATA_DIR");
+            std::env::remove_var("QIBAI_PLUGINS_DIR");
+            std::env::remove_var("QIBAI_FORCE_APPROVALS");
+        }
     }
 
     /// v24 联网+编程技能对 LLM 可见：工具表含 web_search（联网）与 git_status/run_tests/code_scan（编程）。
@@ -6185,15 +6853,12 @@ for line in sys.stdin:
             .find(|v| v["id"] == "com.qibai.pack.hello")
             .expect("技能包安装后应可见");
         assert_eq!(row["installed"], true);
-        assert_eq!(row["enabled"], false);
+        assert_eq!(row["enabled"], true); // v45.14：导入即启用
 
-        // 授权+启用后 invoke 成功
-        e.plugin_grant_permission("com.qibai.pack.hello".into(), "command:run".into(), true)
-            .unwrap();
-        e.plugin_set_enabled("com.qibai.pack.hello".into(), true).unwrap();
+        // 导入即授权，直接 invoke 成功
         match e.skills.invoke("pack_hello", &serde_json::json!({})).await {
             crate::skills::SkillOutcome::Ok(msg) => assert!(msg.contains("技能包执行成功")),
-            other => panic!("expected ok, got {other:?}"),
+            other => panic!("expected ok（导入自动授权）, got {other:?}"),
         }
 
         // skill_pack_list 可见（可导出）
@@ -7113,6 +7778,17 @@ mod save_settings_partial_tests {
         miss.markers = None;
         let v = serde_json::to_value(&miss).unwrap();
         assert!(v.get("markers").is_none(), "未命中不应序列化 markers 键");
+    }
+
+    /// B 方案强路由：只把"要产出一支片子"的话拦进 Animacode，别误伤剪辑类需求。
+    #[test]
+    fn film_intent_router_matches_only_generation() {
+        assert!(Engine::wants_film_generation("帮我做个15秒品牌片头"));
+        assert!(Engine::wants_film_generation("生成一支MG动画"));
+        assert!(Engine::wants_film_generation("我想做一条数据科普动画"));
+        assert!(!Engine::wants_film_generation("给这个视频加字幕"));
+        assert!(!Engine::wants_film_generation("我想看个视频"));
+        assert!(!Engine::wants_film_generation("查一下动画的帧率"));
     }
 
 }

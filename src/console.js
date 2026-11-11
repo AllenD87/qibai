@@ -214,7 +214,10 @@
       ex = ex || {};
       const line = document.createElement('div');
       line.style.cssText = 'padding:2px 0;border-top:1px dashed #e5e7eb;';
-      const args = (ex.args && typeof ex.args === 'object') ? JSON.stringify(ex.args) : String(ex.args || '');
+      // v45.18：后端留痕结构体字段是 args_summary，早前这里只读 ex.args，
+      // 参数一栏一直是空的；两个键都认。
+      const rawArgs = ex.args !== undefined && ex.args !== null ? ex.args : ex.args_summary;
+      const args = (rawArgs && typeof rawArgs === 'object') ? JSON.stringify(rawArgs) : String(rawArgs || '');
       const short = args.length > 40 ? args.slice(0, 40) + '…' : args;
       const ok = ex.ok !== false;
       line.innerHTML = `<span style="color:${ok ? '#16a34a' : '#b91c1c'};">${ok ? '✓' : '✗'}</span> ` +
@@ -240,6 +243,191 @@
       det.appendChild(line);
     });
     row.appendChild(det);
+  }
+
+  // v45.19：执行过程实时反馈（对齐对话界面的「正在调用 X」条目）。
+  // 后端在工具真正开跑前 emit start，返回后 emit done/pending（qibai://exec-step）。
+  // 前端在聊天流底部维护一张「执行过程」卡片：跑到第几步、调的是谁、参数、已耗时、
+  // 结果摘要或错误。执行中每秒刷新秒数；上一轮卡片冻结保留可回看，新一轮另起一张。
+  let execTraceEl = null;
+  let execTraceTicker = null;
+  const execTraceLines = new Map(); // tool 名 → 该工具的行（同名工具可能连调多次）
+
+  function execTraceDetach() {
+    if (execTraceTicker) { clearInterval(execTraceTicker); execTraceTicker = null; }
+    execTraceLines.clear();
+    execTraceEl = null;
+  }
+
+  function execTraceEnsure() {
+    if (execTraceEl && execTraceEl.parentNode) return execTraceEl;
+    const scroll = $('chatScroll');
+    const el = document.createElement('div');
+    el.className = 'bubble-row sys exec-trace';
+    el.style.cssText = 'font-size:12px;line-height:1.7;color:#374151;background:#f8fafc;' +
+      'border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;margin:6px 0;';
+    const head = document.createElement('div');
+    head.className = 'exec-trace-head';
+    head.style.cssText = 'font-weight:600;color:#111827;';
+    head.textContent = '执行过程';
+    const body = document.createElement('div');
+    body.className = 'exec-trace-body';
+    el.appendChild(head);
+    el.appendChild(body);
+    scroll.appendChild(el);
+    execTraceEl = el;
+    return el;
+  }
+
+  function execTraceScrollEnd() {
+    const s = $('chatScroll');
+    if (s) s.scrollTop = s.scrollHeight;
+  }
+
+  // v45.21：工具名对用户不可读（`animacode/anima_render` 看不出在干嘛），
+  // 映射成动作词；认不出来的保留原名，保证「正在执行哪些工具」一眼能懂。
+  const TOOL_LABELS = {
+    anima_schema: '检查画面脚本', anima_build: '构建场景', anima_render: '渲染帧',
+    anima_qa: '质检', anima_mux: '合成视频',
+    web_search: '联网搜索', fetch_page: '抓网页', file_ops: '文件操作',
+    code_scan: '代码扫描', check_code: '代码检查', run_tests: '跑测试',
+    git_status: '看仓库状态', launch_app: '启动应用', open_folder: '打开目录',
+  };
+  function execTraceShort(tool) {
+    const t = String(tool || '');
+    const leaf = t.includes('/') ? t.slice(t.lastIndexOf('/') + 1) : t;
+    const label = TOOL_LABELS[leaf];
+    if (label) return label;
+    return t.length > 46 ? t.slice(0, 20) + '…' + t.slice(-20) : t;
+  }
+
+  function execTraceHeadRefresh() {
+    if (!execTraceEl) return;
+    const head = execTraceEl.querySelector('.exec-trace-head');
+    if (!head) return;
+    const lines = execTraceEl.querySelectorAll('.exec-step');
+    const running = execTraceEl.querySelectorAll('.exec-step[data-phase="start"]');
+    // v45.21：结束态要能一眼读出来——跑完了 / 被我叫停 / 有几步失败，
+    // 以前一律写「执行过程」，用户分不清是还没跑完还是已经结束。
+    if (running.length) { head.textContent = '执行中 · 共 ' + lines.length + ' 步'; return; }
+    if (execTraceEl.getAttribute('data-stopped') === '1') {
+      head.textContent = '已停止 · 停在第 ' + lines.length + ' 步（前面做好的都留着）';
+      return;
+    }
+    let fail = 0;
+    execTraceEl.querySelectorAll('.exec-ico').forEach((i) => { if (i.textContent === '✗') fail += 1; });
+    head.textContent = (fail ? '有 ' + fail + ' 步失败 · 共 ' : '已完成 · 共 ') + lines.length + ' 步';
+  }
+
+  function execTraceTickerStart() {
+    if (execTraceTicker) return;
+    execTraceTicker = setInterval(() => {
+      if (!execTraceEl || !execTraceEl.parentNode) {
+        clearInterval(execTraceTicker); execTraceTicker = null; return;
+      }
+      const running = execTraceEl.querySelectorAll('.exec-step[data-phase="start"]');
+      running.forEach((line) => {
+        const t0 = Number(line.getAttribute('data-t0') || 0);
+        const ms = line.querySelector('.exec-ms');
+        if (ms && t0) ms.textContent = '已 ' + Math.max(0, Math.round((Date.now() - t0) / 1000)) + 's';
+      });
+      if (!running.length) { clearInterval(execTraceTicker); execTraceTicker = null; }
+    }, 1000);
+  }
+
+  function execTraceAddStart(p) {
+    const el = execTraceEnsure();
+    const body = el.querySelector('.exec-trace-body');
+    const line = document.createElement('div');
+    line.className = 'exec-step';
+    line.setAttribute('data-phase', 'start');
+    line.setAttribute('data-t0', String(Date.now()));
+    line.style.cssText = 'padding:2px 0;border-top:1px dashed #e5e7eb;';
+    const ico = document.createElement('span');
+    ico.className = 'exec-ico';
+    ico.style.cssText = 'color:#6b7280;';
+    ico.textContent = '⟳';
+    line.appendChild(ico);
+    line.appendChild(document.createTextNode(' '));
+    const nm = document.createElement('b');
+    nm.textContent = execTraceShort(p.tool);
+    nm.title = String(p.tool || '');
+    line.appendChild(nm);
+    const args = String(p.args_summary || '');
+    if (args) {
+      const a = document.createElement('span');
+      a.style.cssText = 'color:#4b5563;';
+      a.textContent = ' ' + (args.length > 60 ? args.slice(0, 60) + '…' : args);
+      line.appendChild(a);
+    }
+    if (p.source) {
+      const pill = document.createElement('span');
+      pill.style.cssText = 'margin-left:6px;padding:0 4px;background:#eef2ff;color:#3730a3;' +
+        'border-radius:3px;font-size:10px;';
+      pill.textContent = String(p.source);
+      line.appendChild(pill);
+    }
+    const ms = document.createElement('span');
+    ms.className = 'exec-ms';
+    ms.style.cssText = 'color:#6b7280;margin-left:6px;';
+    ms.textContent = '已 0s';
+    line.appendChild(ms);
+    body.appendChild(line);
+    const key = String(p.tool);
+    if (!execTraceLines.has(key)) execTraceLines.set(key, []);
+    execTraceLines.get(key).push(line);
+    execTraceTickerStart();
+    execTraceHeadRefresh();
+    execTraceScrollEnd();
+    return line;
+  }
+
+  function execTraceFindRunning(tool) {
+    const arr = execTraceLines.get(String(tool)) || [];
+    for (let i = arr.length - 1; i >= 0; i--) {
+      const st = arr[i] && arr[i].getAttribute('data-phase');
+      if (arr[i] && st !== 'done' && st !== 'pending') return arr[i];
+    }
+    return null;
+  }
+
+  function execTraceFinish(p) {
+    // 没收到 start（事件丢失/直接失败）时补一行，绝不让这一步凭空消失。
+    const line = execTraceFindRunning(p.tool) ||
+      execTraceAddStart({ tool: p.tool, args_summary: '', source: p.source });
+    const phase = p.phase === 'pending' ? 'pending' : 'done';
+    const ok = p.ok !== false;
+    line.setAttribute('data-phase', phase);
+    const ico = line.querySelector('.exec-ico');
+    if (ico) {
+      ico.textContent = phase === 'pending' ? '?' : (ok ? '✓' : '✗');
+      ico.style.color = phase === 'pending' ? '#b45309' : (ok ? '#16a34a' : '#b91c1c');
+    }
+    const ms = line.querySelector('.exec-ms');
+    if (ms) {
+      ms.textContent = phase === 'pending' ? '待确认'
+        : (p.elapsed_ms ? (Math.round(Number(p.elapsed_ms) / 100) / 10).toFixed(1) + 's' : '完成');
+    }
+    if (p.result_summary) {
+      const res = document.createElement('div');
+      res.style.cssText = 'color:#374151;margin-left:15px;word-break:break-all;';
+      res.textContent = '结果：' + String(p.result_summary);
+      line.appendChild(res);
+    }
+    if (p.error) {
+      const err = document.createElement('div');
+      err.style.cssText = 'color:#b91c1c;margin-left:15px;word-break:break-all;';
+      err.textContent = '错误：' + String(p.error);
+      line.appendChild(err);
+    }
+    execTraceHeadRefresh();
+    execTraceScrollEnd();
+  }
+
+  function execTraceHandle(p) {
+    if (!p || !p.tool) return;
+    if (p.phase === 'start') execTraceAddStart(p);
+    else execTraceFinish(p);
   }
 
   function appendBubble(role, content, doScroll = true, meta = null) {
@@ -307,9 +495,13 @@
       }
     }
 
-    scroll.appendChild(row);
+    // v45.19：执行过程卡片始终沉底——新气泡插到它前面，阅读顺序是
+    // 「执行过程 → 回答」，和对话界面的观感一致。
+    if (execTraceEl && execTraceEl.parentNode === scroll) scroll.insertBefore(row, execTraceEl);
+    else scroll.appendChild(row);
     // v20：批量渲染时仅最后一次滚底（调用方 render 完统一滚动），避免 N 次 scrollTop 抖动
-    if (doScroll) scroll.scrollTop = scroll.scrollHeight;
+    if (!doScroll) return;
+    scroll.scrollTop = scroll.scrollHeight;
   }
 
   // v20：聊天记录刷新——epoch 门防旧快照覆盖 + 150ms trailing 合并风暴
@@ -388,23 +580,89 @@
     return Promise.race([promise, guard]).finally(() => clearTimeout(timer));
   }
 
-  async function doSend() {
+  // v45.21：停止按钮——只在「这一轮正在跑」的时候出现。
+  // 它只发一个锁外的叫停信号，引擎在下一个工具边界收手（软停，不留半截文件）。
+  const stopBtn = document.getElementById('stopBtn');
+  let stopRequested = false;
+  function setRunning(on) {
+    stopRequested = false;
+    if (!stopBtn) return;
+    stopBtn.style.display = on ? '' : 'none';
+    stopBtn.disabled = !on;
+    stopBtn.textContent = '停止';
+  }
+  // v45.21：软停之外的硬停兜底——用户点了停止，但当前那个工具（比如整片渲染）
+  // 可能要跑几十秒才回到边界。30s 还没回来就把界面强制交还给用户，
+  // 不然「点了停止还是没反应」，和不能打断没区别。
+  let stopHardTimer = null;
+  function hardStop() {
+    if (!sendBusy) return;
+    sendBusy = false;
+    setRunning(false);
+    $('sendBtn').disabled = false;
+    $('chatInput').disabled = false;
+    if (execTraceEl) { execTraceEl.setAttribute('data-stopped', '1'); execTraceHeadRefresh(); }
+    appendBubble('sys', '这条工具太长，30 秒内没走到停止点：界面已交还给你。后台这一轮跑完的结果会被丢弃，产物文件照样留在目录里。');
+  }
+  async function doStop() {
+    if (!sendBusy || stopRequested) return;
+    stopRequested = true;
+    if (stopBtn) { stopBtn.disabled = true; stopBtn.textContent = '正在停…'; }
+    // 卡片标题同步转「已停止 · 停在第 N 步」，用户不用猜是被截断还是还在跑
+    if (execTraceEl) { execTraceEl.setAttribute('data-stopped', '1'); execTraceHeadRefresh(); }
+    // 点了必须有反馈：最怕的是按下去没动静，用户以为没生效又去重启
+    appendBubble('sys', '已叫停，等当前这一步收尾…（已经产出的文件都会留下）');
+    if (stopHardTimer) clearTimeout(stopHardTimer);
+    stopHardTimer = setTimeout(hardStop, 30000);
+    try {
+      if (isTauri) await invoke('stop_message');
+    } catch (e) {
+      console.warn(e);
+      toast('停止指令没送达，可以关掉这一轮重来');
+    }
+  }
+
+  async function doSend(fromButton) {
     const input = $('chatInput');
-    await doSendWithText(input.value);
+    const v = (input.value || '').trim();
+    // v45.23：空输入点「发送」以前是静默 return——用户以为按钮坏了。
+    // 立绘/资源缺失时界面已经够空，按钮再没反应就只剩「是不是卡死」的猜测。
+    if (!v) {
+      if (fromButton) {
+        toast('先在输入框里说点什么，再点发送');
+        input.focus();
+      }
+      return;
+    }
+    await doSendWithText(v);
   }
   // v20：发送中锁——防连按 Enter/双击发送按钮导致多轮并发 send_message 与事件风暴
   let sendBusy = false;
-  async function doSendWithText(rawText) {
+  // 批准后自动续跑：一次任务里可能连着批好几次，用户点完不该把流程停在半路。
+  // 上限 8 次，用户自己发消息即清零（防跑飞）。
+  let autoChain = 0;
+  async function doSendWithText(rawText, opts) {
     const text = (rawText || '').trim();
+    const auto = !!(opts && opts.auto);
+    if (!auto) autoChain = 0;
+    // v45.21：运行中直接输入「停」= 叫停，而不是排队当新消息（否则要等这轮跑完才生效）
+    if (sendBusy && /^(停|停一下|停止|停下|别做了|取消|算了)$/.test(text)) {
+      $('chatInput').value = '';
+      doStop();
+      return;
+    }
     if (!text || sendBusy) return;
     sendBusy = true;
     $('sendBtn').disabled = true;
+    setRunning(true);
     $('chatInput').disabled = true;
     appendBubble('user', text);
     // v45.14：新一轮开始，清掉上轮残留的执行留痕缓存与气泡指针，
     // 防止 core 抢先 emit 的 executions 被挂到上一轮气泡上。
     pendingExec = [];
     lastAssistantRow = null;
+    // v45.19：上一轮的执行过程卡片冻结保留（可回看），新一轮另起一张。
+    execTraceDetach();
     lastSendAt = Date.now();
     $('chatInput').value = '';
     try {
@@ -418,7 +676,10 @@
           }
         } catch (e) { /* 命令未就绪 → 走正常聊天 */ }
       }
-      const res = await invokeTimeout(invoke('send_message', { text }), 130000, '大模型');
+      // v45.20：出片类长任务会被 130s 误杀——animacode 双格式实测工具侧就 186.6s，
+      // 前端一断、后端还在跑，用户只看到「失败」，MP4 其实还在生成或刚被截断。
+      // 前端等待窗口必须 ≥ 后端工具循环上限（420s），这里给 450s 只作最后兜底。
+      const res = await invokeTimeout(invoke('send_message', { text }), 450000, '大模型');
       const replyText = (res && res.reply) || '（…）';
       // v45.15：把 core 的假完成标记透传给气泡——护栏命中时挂「⚠ 未执行 · 声称已完成」小标
       appendBubble('assistant', replyText, true, (res && res.markers) ? { markers: res.markers } : null);
@@ -454,7 +715,14 @@
       const msg = String((e && e.message) || e || '');
       let friendly;
       if (/超时|timeout/i.test(msg)) {
-        friendly = '（大模型响应超时（130s）：请缩短问题后重试）';
+        // v45.20：长任务超时 ≠ 没产物。出片渲染可能已经把 build/ 与成片写出来了，
+        // 不能再提示「缩短问题后重试」，否则用户会重复触发一遍（又等 3 分钟）。
+        friendly = '（这轮超过 450s 还没收尾：出片类长任务可能已在后台产出文件，先看「执行记录」和产物目录，别急着重跑）';
+      } else if (/工具循环|轮数到顶|反复试了|MaxIterations/i.test(msg)) {
+        // v45.20：工具循环打满的文案里没有「超时」，以前会落到最后一条兜底
+        // 「连接失败，请稍后再试」——把「步骤太多被截断」误报成「网络断了」，
+        // 用户就会去重连、重启，而真正该做的是看执行记录里卡在第几步。
+        friendly = '（这轮步骤太多、撞到工具循环上限被截断：任务可能差最后一步没跑完，先看「执行记录」里停在哪）';
       } else if (/overdue balance|insufficient balance|arrears|欠费|余额不足/i.test(msg)) {
         friendly = '（大模型服务欠费：请到火山方舟充值，或在设置中配置备用 Key）';
       } else if (/401|403|unauthorized|invalid.*key|api.?key|鉴权|密钥/i.test(msg)) {
@@ -466,14 +734,16 @@
       }
       appendBubble('sys', friendly);
     } finally {
+      if (stopHardTimer) { clearTimeout(stopHardTimer); stopHardTimer = null; }
       sendBusy = false;
+      setRunning(false);
       $('sendBtn').disabled = false;
       $('chatInput').disabled = false;
     }
   }
-  $('sendBtn').addEventListener('click', doSend);
+  $('sendBtn').addEventListener('click', () => doSend(true));
   $('chatInput').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') doSend();
+    if (e.key === 'Enter') doSend(false);
   });
 
   // v45.7：清空聊天记录（模态确认：只清聊天 / 连记忆一起清）
@@ -512,6 +782,66 @@
     }
     btnOnly.addEventListener('click', () => doClear('chat'));
     btnAll.addEventListener('click', () => doClear('all'));
+  })();
+
+  /* ============================================================
+   * 开机自启（v45.23）
+   * 后端 set_autostart / get_autostart 早就注册了，但前端一直没有入口——
+   * 桌面伴侣最常见的诉求「开机就出来」在界面上找不到开关。
+   * 状态以系统为准（读系统注册项），所以不进 settings.json，点完立即落盘生效。
+   * ============================================================ */
+  (function bindAutostart() {
+    const sw = $('swAutostart');
+    const hint = $('autostartHint');
+    if (!sw) return;
+    let busy = false;
+
+    function paint(on) {
+      sw.dataset.on = on ? 'true' : 'false';
+      sw.classList.toggle('on', !!on);
+    }
+
+    async function refresh() {
+      try {
+        const on = await invoke('get_autostart');
+        paint(!!on);
+        if (hint) hint.textContent = on
+          ? '已开启：下次登录系统会自动启动。'
+          : '未开启：需要每次手动启动。';
+      } catch (e) {
+        // 沙箱/浏览器 mock 或系统不支持（例如无桌面环境、未装自启插件）
+        paint(false);
+        sw.dataset.unsupported = '1';
+        if (hint) hint.textContent = '当前系统不支持读取自启状态：' + ((e && e.message) || e);
+      }
+    }
+
+    sw.addEventListener('click', async () => {
+      if (busy) return;
+      if (sw.dataset.unsupported === '1') {
+        toast('当前系统不支持开机自启');
+        return;
+      }
+      const next = sw.dataset.on !== 'true';
+      busy = true;
+      paint(next);
+      sw.dataset.busy = '1';
+      try {
+        const applied = await invoke('set_autostart', { enabled: next });
+        paint(applied === undefined ? next : !!applied);
+        toast(applied === false ? '开机自启未能开启（系统拒绝了写入）'
+          : (next ? '已开启开机自启' : '已关闭开机自启'));
+        if (hint) hint.textContent = next ? '已开启：下次登录系统会自动启动。' : '未开启：需要每次手动启动。';
+      } catch (e) {
+        paint(!next);
+        toast('设置开机自启失败：' + ((e && e.message) || e));
+      } finally {
+        busy = false;
+        delete sw.dataset.busy;
+      }
+    });
+
+    refresh();
   })();
 
   /* ============================================================
@@ -1322,9 +1652,9 @@
       const outSel = $('audioOutputSelect');
       if (outSel) {
         let curOut = 'default';
-        try { curOut = (await invoke('current_audio_output')) || 'default'; } catch (e) {}
+        try { curOut = (await invoke('current_audio_output')) || 'default'; } catch (e) { console.warn('[audio] 读当前输出设备失败，用默认值', e); }
         let outDevs = [];
-        try { outDevs = (await invoke('list_output_devices')) || []; } catch (e) {}
+        try { outDevs = (await invoke('list_output_devices')) || []; } catch (e) { console.warn('[audio] 枚举输出设备失败，用默认列表', e); }
         outSel.innerHTML = '';
         const defOpt = document.createElement('option');
         defOpt.value = 'default';
@@ -1364,7 +1694,7 @@
       const seSel = $('searchEngineSelect');
       if (seSel) {
         let curSe = 'auto';
-        try { curSe = (await invoke('current_search_engine')) || 'auto'; } catch (e) {}
+        try { curSe = (await invoke('current_search_engine')) || 'auto'; } catch (e) { console.warn('[search] 读搜索引擎失败，用 auto', e); }
         seSel.value = ['auto','baidu','360','sogou'].includes(curSe) ? curSe : 'auto';
         seSel.onchange = async () => {
           try {
@@ -1602,6 +1932,12 @@
     toast('已停止朗读（检测到你说话）');
   });
 
+  // v45.19：执行过程实时步骤流——正在跑什么工具、带什么参数、花了多久、结果摘要，
+  // 逐条落到聊天区的「执行过程」卡片，不用等整轮跑完才看到一句回执。
+  listen('qibai://exec-step', (ev) => {
+    execTraceHandle((ev && ev.payload) || {});
+  });
+
   // v45.14：core 的工具执行留痕（engine 每轮 emit）——接到气泡折叠块上。
   // 时序有两种：① 事件先到（send_message 还没返回）→ 缓存，等气泡落地时消费；
   // ② 事件后到（气泡已在）→ 挂到最近一条 assistant 气泡上（限制在本次发送后 60s 内，避免挂到陈年旧消息）。
@@ -1650,6 +1986,25 @@
   }
 
   function bindPersonaGrid() {
+    // v45.23：立绘是 478 MB 大图，不入库（走 Release 分卷）。clone 后第一次打开角色页
+    // 五张卡片全是裂图，Tauri 里还会一直刷 ERR_FILE_NOT_FOUND。这里降级成同尺寸占位块：
+    // 卡片保留名字/描述仍可点选，并提示一次去哪里补素材。
+    let artWarned = false;
+    document.querySelectorAll('#personaGrid .persona-card img').forEach((im) => {
+      const fail = () => {
+        if (im.dataset.failed === '1') return;
+        im.dataset.failed = '1';
+        const card = im.closest('.persona-card');
+        if (card) card.classList.add('no-art');
+        if (!artWarned) {
+          artWarned = true;
+          toast('角色立绘未安装：项目根执行 bash fetch_personas.sh 可补齐（不进仓库）');
+        }
+      };
+      im.addEventListener('error', fail, { once: true });
+      // 监听挂晚了的兜底（缓存命中/早已失败）
+      if (im.complete && im.naturalWidth === 0) fail();
+    });
     $('personaGrid').addEventListener('click', async (e) => {
       const c = e.target.closest('.persona-card');
       if (!c) return;
@@ -2910,7 +3265,7 @@
     const box = $('nsRoamList');
     box.innerHTML = '<div class="ns-empty">正在连接星河…</div>';
     try {
-      const res = await invoke('netsocial_roam', {});
+      const res = await invoke('netsocial_roam', { params: {} });
       renderSoulCards(box, res.souls || []);
     } catch (e) {
       console.warn(e);
@@ -3144,7 +3499,7 @@
         const res = await invoke('netsocial_city_souls', { city });
         renderSoulCards(box, res.souls || []);
         // 保存城市到 profile
-        await invoke('netsocial_set_profile', { city }).catch(() => {});
+        await invoke('netsocial_set_profile', { input: { city } }).catch(() => {});
       } catch (e) {
         console.warn(e);
         box.innerHTML = '<div class="ns-empty">' + escapeHtml((e && e.message) || '暂不可用') + '</div>';
@@ -3243,7 +3598,7 @@
       const tags = nsCollectTags();
       nsSaveLocalTags(tags);
       try {
-        await invoke('netsocial_set_profile', { soul_tags: tags });
+        await invoke('netsocial_set_profile', { input: { soul_tags: tags } });
         toast('我的光点已保存');
       } catch (e) { console.warn(e); toast((e && e.message) || '保存失败'); }
     });
@@ -3279,7 +3634,7 @@
     $('btnNsPrivacyOk').addEventListener('click', async () => {
       nsRt.pureMode = $('swNsPure').dataset.on === 'true';
       try {
-        await invoke('netsocial_register', { age_declared: '18plus', pure_mode: nsRt.pureMode });
+        await invoke('netsocial_register', { input: { age_declared: '18plus', pure_mode: nsRt.pureMode } });
       } catch (e) { console.warn(e); }
       localStorage.setItem(NS_PRIVACY_LS, '1');
       $('nsPrivacyModal').hidden = true;
@@ -3290,7 +3645,7 @@
       $('swNsPure').classList.add('on');
       $('swNsPure').dataset.on = 'true';
       try {
-        await invoke('netsocial_register', { age_declared: 'minor', pure_mode: true });
+        await invoke('netsocial_register', { input: { age_declared: 'minor', pure_mode: true } });
       } catch (e) { console.warn(e); }
       localStorage.setItem(NS_PRIVACY_LS, '1');
       $('nsPrivacyModal').hidden = true;
@@ -3312,15 +3667,79 @@
 
   // qibai://skill-approval → 全页审批弹窗
   let currentRequestId = null;
+  let approvalBusy = false;
   listen('qibai://skill-approval', (event) => {
     const p = evtPayload(event);
     currentRequestId = p.request_id;
+    approvalBusy = false;
+    $('approvalAllow').disabled = false;
+    $('approvalDeny').disabled = false;
     $('approvalSkill').textContent = p.skill || 'unknown';
     $('approvalDesc').textContent = p.description || '元气小小想执行一个需要确认的操作。';
     $('approvalModal').classList.add('show');
   });
 
+  // 失败原因 → 人话（不同原因不许一律说「审批已通过但没跑起来」：
+  // 确认已失效/被取消时，这次压根没执行，说成「没跑起来」会把人带偏）。
+  function approvalErrorText(msg, approve) {
+    const raw = String(msg || '').trim();
+    if (/已失效|已经执行过|已被取消/.test(raw)) {
+      return '这条确认已经处理过了（没有重复执行）：' + raw;
+    }
+    if (/亲密度|L4/.test(raw)) return '还差一步权限：' + raw;
+    if (!approve) return '取消失败：' + raw;
+    return '确认已通过，但执行失败：' + raw;
+  }
+
+  // v45.18：审批点的执行是同步阻塞在 approve_skill 里的（渲染/构建类可跑 1 分钟以上），
+  // 期间界面原本一个字都不给，用户只知道「弹窗关了，然后没了」。
+  // 这里给一条本地心跳：正在执行谁、已经跑了多久，长任务额外提示别关窗口。
+  let approvalRunTimer = null;
+  function approvalRunEl() {
+    let el = document.getElementById('approvalRun');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'approvalRun';
+      el.style.cssText =
+        'color:#0b6b3a;font-size:12px;margin:8px 0;padding:6px 8px;background:#e8f5e9;border-radius:4px;white-space:pre-wrap;';
+      document.getElementById('approvalModal').appendChild(el);
+    }
+    return el;
+  }
+  function stopApprovalRun(hide) {
+    if (approvalRunTimer) {
+      clearInterval(approvalRunTimer);
+      approvalRunTimer = null;
+    }
+    const el = document.getElementById('approvalRun');
+    if (el && hide) el.hidden = true;
+  }
+
   async function resolveApproval(approve) {
+    // 连点保护：第一条确认的结果回来之前，第二次点击一律忽略。
+    // 否则两次 approve_skill 会把同一条确认提交两遍（第一次执行、第二次报错，
+    // 用户看到的就是「点了允许却说没跑起来」）。
+    if (approvalBusy || !currentRequestId) return;
+    approvalBusy = true;
+    const skillName = ($('approvalSkill') && $('approvalSkill').textContent) || '技能';
+    const startedAt = Date.now();
+    if (approve) {
+      const runEl = approvalRunEl();
+      runEl.hidden = false;
+      const tick = () => {
+        const secs = Math.round((Date.now() - startedAt) / 1000);
+        runEl.textContent =
+          '正在执行 ' + skillName + '… 已 ' + secs + 's' +
+          (secs >= 20
+            ? '\n（渲染/构建类任务通常 1 分钟上下；别关窗口，跑完这里会自动接着往下走）'
+            : '');
+      };
+      stopApprovalRun(false);
+      tick();
+      approvalRunTimer = setInterval(tick, 500);
+    }
+    $('approvalAllow').disabled = true;
+    $('approvalDeny').disabled = true;
     // v45.7：先 await 结果，成功才关弹窗；失败保留弹窗并把 err 显示在弹窗内。
     let errEl = document.getElementById('approvalErr');
     if (!errEl) {
@@ -3330,16 +3749,37 @@
       document.getElementById('approvalModal').appendChild(errEl);
     }
     errEl.hidden = true;
+    errEl.textContent = '';
     try {
       await invoke('approve_skill', { request_id: currentRequestId, approve });
+      const secs = Math.round((Date.now() - startedAt) / 1000);
+      stopApprovalRun(true);
       $('approvalModal').classList.remove('show');
       currentRequestId = null;
+      if (approve) {
+        // 有结果就要让人看见，而不是只关掉弹窗了事。
+        toast('已执行 ' + skillName + '（' + secs + 's）');
+        if (autoChain >= 8) {
+          toast('连续确认已达上限，接下来请重新说明一次要做的事');
+        } else {
+          autoChain += 1;
+          // 稍等一拍再续跑：让「已批准并执行」的回执先落到聊天里。
+          setTimeout(() => doSendWithText('继续', { auto: true }), 400);
+        }
+      }
     } catch (e) {
+      stopApprovalRun(true);
       const msg = String((e && e.message) || e || '');
-      toast('审批失败：' + msg.slice(0, 120));
-      errEl.textContent = msg || String(e);
+      const text = approvalErrorText(msg, approve);
+      errEl.textContent = text;
       errEl.hidden = false;
+      toast(text.slice(0, 120));
       // 不 currentRequestId = null，保留便于重试
+    } finally {
+      stopApprovalRun(true);
+      approvalBusy = false;
+      $('approvalAllow').disabled = false;
+      $('approvalDeny').disabled = false;
     }
   }
   $('approvalAllow').addEventListener('click', () => resolveApproval(true));
@@ -3534,6 +3974,54 @@
     exts.forEach((p) => box.appendChild(renderPluginCard(p)));
   }
 
+  /* v45.24：两个通用小部件，专门收拾「命令有了但界面上够不着」的那几个。
+   *   openDocModal —— 只读正文（技能 SKILL.md）
+   *   askConfirm   —— 不可逆动作先问一句（卸载以前点一下就直接删）
+   * ============================================================ */
+  function openDocModal(title, body) {
+    const modal = $('docModal');
+    if (!modal) return;
+    $('docModalTitle').textContent = title || '技能文档';
+    $('docModalBody').textContent = body || '（没有内容）';
+    modal.removeAttribute('hidden');
+  }
+  (function bindDocModal() {
+    const modal = $('docModal');
+    if (!modal) return;
+    const close = () => modal.setAttribute('hidden', '');
+    $('btnDocClose').addEventListener('click', close);
+    modal.querySelector('.clear-modal-mask').addEventListener('click', close);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !modal.hidden) close();
+    });
+  })();
+
+  let confirmActionCb = null;
+  function askConfirm(title, desc, okLabel, onOk) {
+    const modal = $('confirmActionModal');
+    if (!modal) { if (onOk) onOk(); return; }
+    $('confirmActionTitle').textContent = title;
+    $('confirmActionDesc').textContent = desc;
+    $('btnConfirmActionOk').textContent = okLabel || '确认';
+    confirmActionCb = onOk || null;
+    modal.removeAttribute('hidden');
+  }
+  (function bindConfirmAction() {
+    const modal = $('confirmActionModal');
+    if (!modal) return;
+    const close = () => { modal.setAttribute('hidden', ''); confirmActionCb = null; };
+    $('btnConfirmActionCancel').addEventListener('click', close);
+    modal.querySelector('.clear-modal-mask').addEventListener('click', close);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !modal.hidden) close();
+    });
+    $('btnConfirmActionOk').addEventListener('click', () => {
+      const cb = confirmActionCb;
+      close();
+      if (cb) cb();
+    });
+  })();
+
   function renderPluginCard(p) {
     const card = document.createElement('div');
     card.className = 'plg-card' + (p.error ? ' plg-error' : '');
@@ -3640,14 +4128,44 @@
     foot.appendChild(sw);
     const un = document.createElement('button');
     un.type = 'button'; un.className = 'ghost danger-ghost'; un.textContent = '卸载';
-    un.addEventListener('click', async () => {
-      try {
-        await invoke('plugin_uninstall', { id: p.id });
-        toast(`已卸载 ${p.name}`);
-      } catch (e) { console.warn(e); }
-      refreshPluginList(); refreshExpertList();
+    // v45.24：以前点一下就 remove_dir_all，没有二次确认——误触就是目录没了
+    un.addEventListener('click', () => {
+      askConfirm(
+        `卸载「${p.name || p.id}」`,
+        `会删掉这个技能的本地目录（${p.id}），已授予的权限一并失效，且不可恢复。`,
+        '确认卸载',
+        async () => {
+          un.disabled = true;
+          try {
+            await invoke('plugin_uninstall', { id: p.id });
+            toast(`已卸载 ${p.name || p.id}`);
+          } catch (e) {
+            toast('卸载失败：' + ((e && e.message) || e));
+          } finally {
+            refreshPluginList(); refreshExpertList();
+          }
+        },
+      );
     });
     foot.appendChild(un);
+    // v45.24：技能装了只有一行 description，正文（SKILL.md）根本看不到
+    const doc = document.createElement('button');
+    doc.type = 'button'; doc.className = 'ghost'; doc.textContent = '查看文档';
+    doc.addEventListener('click', async () => {
+      doc.disabled = true;
+      const old = doc.textContent;
+      doc.textContent = '读取中…';
+      try {
+        const body = await invoke('skill_read_doc', { name: p.name || p.id });
+        openDocModal(`${p.name || p.id} · 技能说明`, String(body || ''));
+      } catch (e) {
+        toast('读取技能文档失败：' + ((e && e.message) || e));
+      } finally {
+        doc.disabled = false;
+        doc.textContent = old;
+      }
+    });
+    foot.appendChild(doc);
     card.appendChild(foot);
     return card;
   }
@@ -3742,13 +4260,22 @@
     });
   }
 
-  // 安装插件入口：打开文件选择（mock 中模拟安装示例插件包）
+  // 安装插件入口：外部插件以 .qbpk/.zip 分发，选中后读内容走字节通道
+  // （旧实现在这里写死 `demo://examples`，点一次必然失败）。
   $('btnPluginInstall').addEventListener('click', () => $('pluginFileInput').click());
   $('pluginFileInput').addEventListener('change', async () => {
+    const f = $('pluginFileInput').files && $('pluginFileInput').files[0];
     $('pluginFileInput').value = ''; // 允许重复选择同名文件
+    if (!f) return;
+    const nm = (f.name || '').toLowerCase();
+    if (!(nm.endsWith('.qbpk') || nm.endsWith('.zip'))) {
+      toast('仅支持插件包 .qbpk / .zip');
+      return;
+    }
     try {
-      await invoke('plugin_install', { dir: 'demo://examples' });
-      toast('示例插件已安装：日期时间（技能）、科学家助手（专家）');
+      const data_b64 = await readFileAsBase64(f);
+      await invoke('skill_pack_install_bytes', { file_name: f.name, data_b64 });
+      toast('插件已安装并启用：可以直接用了');
     } catch (e) {
       console.warn(e);
       toast('安装失败：' + ((e && e.message) || ''));
@@ -3781,7 +4308,27 @@
       } else {
         const url = $('connUrl').value.trim();
         if (!url) { toast('请填写 HTTP 端点 URL'); return; }
-        args = { id, name, kind, command: '', args: [], url, description: desc, enabled };
+        // v45.24：不让用户填完之后一头雾水——HTTP 传输后端还是占位，落库即停用
+        askConfirm(
+          'HTTP 连接器暂不支持',
+          `当前版本只有 stdio MCP 能真正连上。这条 HTTP 配置会被保存，但后端强制标记为「停用」、不会发起任何连接。确定先存下来吗？`,
+          '仍然保存为占位',
+          async () => {
+            try {
+              await invoke('connector_add', {
+                id, name, kind, command: '', args: [], url, description: desc, enabled: false,
+              });
+              toast('已保存为占位（HTTP 传输未实现，不会连接）');
+            } catch (e) {
+              toast('添加失败：' + ((e && e.message) || e));
+            }
+            ['connId', 'connName', 'connDesc', 'connCommand', 'connArgs', 'connUrl'].forEach((k) => {
+              const el = $(k); if (el) el.value = '';
+            });
+            refreshConnectorList();
+          },
+        );
+        return;
       }
       if (!/^[a-zA-Z0-9_]+$/.test(id)) { toast('ID 仅支持字母、数字、下划线'); return; }
       try {
@@ -3850,6 +4397,20 @@
   }
 
   // ===== 段②c：技能包（.qbpk）面板 =====
+  // 把用户选中的文件读成 base64（去掉 data: 前缀）。WebView 拿不到真实路径，只能传内容。
+  function readFileAsBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const raw = String(reader.result || '');
+        const comma = raw.indexOf(',');
+        resolve(comma >= 0 ? raw.slice(comma + 1) : '');
+      };
+      reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
+      reader.readAsDataURL(file);
+    });
+  }
+
   function bindPackInstall() {
     $('btnPackInstall').addEventListener('click', () => $('packFileInput').click());
     $('packFileInput').addEventListener('change', async () => {
@@ -3858,8 +4419,11 @@
       if (!file) return;
       if (!/\.qbpk$/i.test(file.name)) { toast('请选择 .qbpk 技能包文件'); return; }
       try {
-        await invoke('skill_pack_install', { zip_path: 'demo://' + file.name });
-        toast('技能包已安装：' + file.name);
+        // WebView 给不出可信路径，读文件内容走 base64 交给后端落盘安装。
+        const data_b64 = await readFileAsBase64(file);
+        if (!data_b64) throw new Error('读取技能包内容为空');
+        await invoke('skill_pack_install_bytes', { file_name: file.name, data_b64 });
+        toast('技能包已安装并启用：' + file.name);
       } catch (e) {
         console.warn(e);
         toast('安装失败：' + ((e && e.message) || ''));
@@ -3868,6 +4432,42 @@
       refreshSkillPackList();
     });
   }
+
+  /* v45.24：扫描插件目录。以前只能一个个走「安装插件」选文件，
+   * 从别处拷来一整目录的技能时完全没有入口。 */
+  (function bindSkillScan() {
+    const btn = $('btnSkillScan');
+    const inp = $('skillScanDir');
+    if (!btn || !inp) return;
+    async function run() {
+      const dir = (inp.value || '').trim();
+      if (!dir) {
+        toast('先填插件目录路径；不确定的话点「打开技能目录」看实际位置');
+        inp.focus();
+        return;
+      }
+      btn.disabled = true;
+      const old = btn.textContent;
+      btn.textContent = '扫描中…';
+      try {
+        const n = await invoke('scan_plugin_library', { dir });
+        const cnt = Number(n) || 0;
+        toast(cnt > 0
+          ? `扫描完成：登记 ${cnt} 个插件（默认停用，需逐项授权）`
+          : '这个目录里没有 qibai-plugin.json，或插件已被登记');
+        if (cnt > 0) { refreshPluginList(); refreshExpertList(); }
+      } catch (e) {
+        toast('扫描失败：' + ((e && e.message) || e));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = old;
+      }
+    }
+    btn.addEventListener('click', run);
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); run(); }
+    });
+  })();
 
   // v45.8：三段式安装（stage → 确认摘要 → commit / 取消）
   function bindSkillInstall() {
@@ -3895,14 +4495,21 @@
       const f = fileInput.files && fileInput.files[0];
       fileInput.value = '';
       if (!f) return;
-      await stageAndConfirm({ file_name: f.name, file_path: f.path || f.name });
+      let b64 = '';
+      try {
+        b64 = await readFileAsBase64(f);
+      } catch (e) {
+        toast('读取文件失败：' + ((e && e.message) || e));
+        return;
+      }
+      await stageAndConfirm({ file_name: f.name, data_b64: b64 });
     });
     dirBtn.addEventListener('click', async () => {
       try {
-        const r = await invoke('open_workspace_dir');
-        toast(r || '技能目录：~/.qibai_skills');
+        const r = await invoke('skill_open_dir');
+        toast(r || '已打开技能目录');
       } catch (e) {
-        toast('技能目录：~/.qibai_skills');
+        toast('打开技能目录失败：' + ((e && e.message) || e));
       }
     });
   }
@@ -3916,7 +4523,20 @@
     if (fileBtn) fileBtn.disabled = true;
     let summary;
     try {
-      summary = await invoke('skill_install_stage', opts);
+      // 后端契约：skill_install_stage(source = {kind, value})；
+      // 文件走字节通道（WebView 里 f.path 不可靠），不再传文件名假路径。
+      if (opts && opts.data_b64) {
+        summary = await invoke('skill_install_stage_bytes', {
+          file_name: opts.file_name,
+          data_b64: opts.data_b64,
+        });
+      } else if (opts && opts.source_url) {
+        summary = await invoke('skill_install_stage', { kind: 'url', value: opts.source_url });
+      } else if (opts && opts.dir) {
+        summary = await invoke('skill_install_stage', { kind: 'dir', value: opts.dir });
+      } else {
+        summary = await invoke('skill_install_stage', { kind: 'file', value: (opts && opts.file_path) || '' });
+      }
     } catch (e) {
       toast('安装失败：' + ((e && e.message) || e));
       if (urlBtn) urlBtn.disabled = false;
@@ -3959,7 +4579,7 @@
       if (resolved) return;
       resolved = true;
       cleanup();
-      try { await invoke('skill_install_cancel', { stage_id: summary.stage_id }); } catch (e) {}
+      try { await invoke('skill_install_cancel', { stage_id: summary.stage_id }); } catch (e) { toast('取消安装没成功：' + ((e && e.message) || e)); }
       toast('已取消安装');
     };
     const doConfirm = async () => {
@@ -4020,8 +4640,8 @@
       ex.textContent = '导出 .qbpk';
       ex.addEventListener('click', async () => {
         try {
-          await invoke('skill_pack_export', { plugin_id: p.id, zip_path: 'demo://' + p.id + '.qbpk' });
-          toast('技能包已导出：' + p.id + '.qbpk');
+          const r = await invoke('skill_pack_export_default', { plugin_id: p.id });
+          toast('技能包已导出：' + ((r && r.path) || ''));
         } catch (e) {
           console.warn(e);
           toast('导出失败：' + ((e && e.message) || ''));
@@ -4109,7 +4729,7 @@
       switchTab('plugins');
       setTimeout(async () => {
         try {
-          await invoke('plugin_install', { dir: 'demo://examples' });
+          await invoke('plugin_list');
         } catch (e) { console.warn(e); }
         loadPluginsTab();
       }, 400);
@@ -4466,7 +5086,7 @@
     try {
       const s = await invoke('get_settings') || {};
       if (parallelInput) parallelInput.value = (s.task_parallel_max != null) ? s.task_parallel_max : 3;
-    } catch (e) {}
+    } catch (e) { console.warn('[task] 读并行上限失败，显示默认 3', e); }
   }
   if (parallelInput) {
     parallelInput.onchange = async () => {
@@ -4493,7 +5113,7 @@
       if (currentTaskId && pl.task_id === currentTaskId) openDetail(currentTaskId);
       else refreshList();
     });
-  } catch (e) {}
+  } catch (e) { console.error('[task] 任务事件监听注册失败，完成/失败提示可能不出现', e); }
 
   refreshList();
 })();
@@ -4597,7 +5217,7 @@
   // 监听 waiting_confirm 事件（core emit）
   try {
     await listen('task://waiting_confirm', (e) => window.__openActionConfirm(e.payload || e));
-  } catch (e) {}
+  } catch (e) { console.error('[task] waiting_confirm 监听注册失败，确认弹窗将不会出现', e); }
 })();
 
 // ===== v45.11：知识库设置 =====
@@ -4617,7 +5237,7 @@
       const totalMb = p.total ? (p.total / 1048576).toFixed(1) : '?';
       embedEl.textContent = `下载向量模型中… ${p.pct || 0}%（${mb} / ${totalMb} MB）`;
     });
-  } catch (e) {}
+  } catch (e) { console.error('[kb] embed_progress 监听注册失败，下载进度条不会更新', e); }
   if (fetchBtn) {
     fetchBtn.onclick = async () => {
       if (fetching) return;
@@ -4700,6 +5320,60 @@
       refreshStatus();
     } catch (e) { toast('索引失败：' + ((e && e.message) || e)); refreshStatus(); }
   };
+
+  /* v45.24：知识库试搜。以前只能加目录、建索引，用户没有任何办法验证
+   * 索引到底有没有用——只能靠「问小小，它答不出来」这种间接信号。 */
+  const searchInput = $('kbSearchInput');
+  const searchBtn = $('btnKbSearch');
+  const searchBox = $('kbSearchResult');
+  if (searchBtn && searchInput && searchBox) {
+    const esc = (s) => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const baseName = (p) => {
+      const t = String(p || '');
+      const i = t.lastIndexOf('/');
+      return i >= 0 ? t.slice(i + 1) : t;
+    };
+    async function doKbSearch() {
+      const q = (searchInput.value || '').trim();
+      if (!q) { toast('先输入要搜的词'); searchInput.focus(); return; }
+      searchBtn.disabled = true;
+      const oldLabel = searchBtn.textContent;
+      searchBtn.textContent = '检索中…';
+      searchBox.innerHTML = '<div class="hint" style="font-size:12px;">检索中…</div>';
+      try {
+        const topK = parseInt(($('kbTopK') && $('kbTopK').value) || '6', 10) || 6;
+        const hits = await invoke('kb_search', { query: q, top_k: topK });
+        if (!hits || !hits.length) {
+          searchBox.innerHTML = '<div class="hint" style="font-size:12px;">没有命中。'
+            + '先确认「已索引」且块数不为 0，或换个词再试。</div>';
+          return;
+        }
+        searchBox.innerHTML = hits.map((h) => {
+          const path = esc(baseName(h.file_path));
+          const full = esc(h.file_path);
+          const head = (h.heading_path || []).map(esc).join(' › ');
+          const score = typeof h.score === 'number' ? h.score.toFixed(3) : '—';
+          return '<div style="border:1px solid #e5d9c8;border-radius:6px;padding:6px 8px;'
+            + 'margin-bottom:6px;background:#fffdf8;">'
+            + `<div style="font-size:11px;color:#8b7d6b;">得分 ${score} · `
+            + `<span title="${full}">${path}</span></div>`
+            + (head ? `<div style="font-size:11.5px;color:#8b7d6b;">${head}</div>` : '')
+            + `<div style="font-size:12px;color:#4b5563;line-height:1.55;white-space:pre-wrap;">${esc(h.snippet)}</div>`
+            + '</div>';
+        }).join('');
+      } catch (e) {
+        searchBox.innerHTML = `<div class="hint" style="font-size:12px;color:#b91c1c;">搜索失败：${esc((e && e.message) || e)}</div>`;
+      } finally {
+        searchBtn.disabled = false;
+        searchBtn.textContent = oldLabel;
+      }
+    }
+    searchBtn.onclick = doKbSearch;
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); doKbSearch(); }
+    });
+  }
   refreshStatus();
 })();
 
@@ -4717,7 +5391,7 @@
   }
   try {
     await listen('log:audio', (e) => pushLog(String(e.payload || e)));
-  } catch (e) {}
+  } catch (e) { console.warn('[audio] 诊断日志监听注册失败', e); }
   btn.onclick = async () => {
     btn.disabled = true;
     const old = btn.textContent;
@@ -4736,10 +5410,14 @@
       const selName = r.selected_name || r.selected || '?';
       const selIdx = r.selected_index != null ? r.selected_index : (landing.selected_idx != null ? landing.selected_idx : null);
       const landName = r.sink_landing_name || landing.name || 'unknown';
-      const landIdx = r.sink_landing_index != null ? r.sink_landing_index : (landing.idx != null ? landing.idx : null);
+      const landIdx = r.sink_landing_index != null
+        ? r.sink_landing_index
+        : (landing.idx != null ? landing.idx : (landing.index != null ? landing.index : null));
       const idxEq = selIdx !== null && landIdx !== null && selIdx === landIdx;
       const idxKnown = selIdx !== null && landIdx !== null;
-      const status = idxEq
+      const status = !idxKnown
+        ? `<div style="margin-top:4px;padding:4px 8px;background:#374151;color:#e5e7eb;border-radius:4px;font-size:12px;">? 暂时无法判定落点：此刻没有正在播放的音频流。<br><span style="font-size:11px;">先点上方「播放测试音（880Hz·0.5s）」，出声期间再点本按钮就能读到实际 sink。</span></div>`
+        : idxEq
         ? `<div style="margin-top:4px;padding:4px 8px;background:#052e16;color:#86efac;border-radius:4px;font-size:12px;">✓ 已生效：落点与选择一致</div>`
         : `<div style="margin-top:4px;padding:4px 8px;background:#7f1d1d;color:#fecaca;border-radius:4px;font-size:12px;">✗ 选择未生效：实际落在 #${landIdx ?? '?'}，不是 #${selIdx ?? '?'}<br><span style="font-size:11px;">可能原因：pacat/pw-play/paplay 未安装，已回落到 ALSA 默认</span></div>`;
       result.innerHTML =
@@ -4760,7 +5438,175 @@
       btn.textContent = old;
     }
   };
+
+  /* v45.24：「只看环境」——audio_diagnose 只探测后端与工具链，不出声。
+   * 排障时经常「我不想突然被扬声器吼一下，只想看清是 pacat 没装还是设备选错」。 */
+  const dg = $('btnAudioDiagnose');
+  if (dg) dg.onclick = async () => {
+    dg.disabled = true;
+    const old = dg.textContent;
+    dg.textContent = '探测中…';
+    result.textContent = '';
+    result.style.color = '';
+    try {
+      const r = await invoke('audio_diagnose');
+      pushLog('[ui] audio_diagnose ok: ' + JSON.stringify(r));
+      const tools = r.tools || {};
+      const toolLine = ['pacat', 'pw-play', 'paplay', 'rodio']
+        .map((k) => `${k} ${tools[k] ? '✓' : '✗'}`).join('  /  ');
+      const selName = r.selected_name || r.selected || 'default';
+      const landName = r.sink_landing_name || 'unknown';
+      result.innerHTML =
+        '<div style="margin-top:4px;line-height:1.7;font-size:12px;">'
+        + `<div>当前选择：<b>${selName}</b></div>`
+        + `<div>后端：<b>${r.backend || '?'}</b></div>`
+        + `<div style="color:#6b7280;">工具链：${toolLine}</div>`
+        + '<div style="font-size:11px;color:#9ca3af;margin-top:2px;">'
+        + '本模式不发声，只读环境。要看实际落点，用左边「测试输出设备」。</div>'
+        + (r.note ? `<div style="font-size:11px;color:#9ca3af;">${r.note}</div>` : '')
+        + (landName && landName !== 'unknown'
+          ? `<div style="font-size:11px;color:#9ca3af;">最近一次落点：${landName}</div>` : '')
+        + '</div>';
+      result.style.color = '';
+    } catch (e) {
+      const msg = (e && e.message) || String(e);
+      result.style.color = '#b91c1c';
+      result.textContent = '诊断失败：' + msg;
+      pushLog('[ui] audio_diagnose FAIL: ' + msg);
+    } finally {
+      dg.disabled = false;
+      dg.textContent = old;
+    }
+  };
 })();
 
 // 主 IIFE 收口（见上：尾部四个模块已并入同一作用域）
+})();
+
+/* ============================================================
+ * v45.22 按钮统一守卫（控制台）
+ * 三件事，全是为了让「点了有没有用」当场可见：
+ *   1) 给有副作用/耗时的按钮补悬停说明，并在点击时防连点（重复装包、重复索引是真事故）
+ *   2) 任何没被 catch 的异常都落一条 toast——以前只进 devtools，用户看到的是「点了没反应」
+ *   3) 危险操作（清空记忆）先给一次确认口气，避免误触
+ * 只作用于 data-async 标记过的按钮，tab / 加减号 / 聊天发送这些高频连点不受影响。
+ * ============================================================ */
+(function initButtonGuard() {
+  // 每个条目：点了会发生什么、要等多久、能不能撤销
+  const ASYNC_TIPS = {
+    btnSave: '把设置写进 settings.json，重开也生效',
+    btnAnnivSave: '保存这条纪念日，到点会提醒你',
+    btnAnnivClear: '清掉纪念日列表（这一步不可撤销）',
+    btnMcpAdd: '添加 MCP 服务器并立即启动，要几秒',
+    sttDeviceRefresh: '重新枚举麦克风设备',
+    btnAudioTest: '播一段测试音，听得到就说明输出设备没问题',
+    btnKbAdd: '把一个目录加进知识库并建索引',
+    btnKbReindex: '重建知识库索引，文件多时要等一会儿',
+    btnKbEmbedFetch: '首次下载向量模型，几十 MB，慢网要等',
+    btnTtsTest: '播放 880Hz 测试音 0.5 秒',
+    btnCheckUpdate: '去 GitHub 查有没有新版本（需要联网）',
+    btnNsConnect: '连接匿名社交服务器',
+    btnNsSaveProfile: '保存你的光点昵称和颜色',
+    btnNsRoam: '重新拉一批陌生人光点',
+    btnNsMatch: '发起一次智能匹配，会花一点时间',
+    btnNsCityGo: '只看同城的陌生人光点，会重新拉一次列表',
+    btnNsSend: '发送这条消息（服务端可能拦截敏感内容）',
+    btnNsBlock: '拉黑后对方再也匹配不到你（影响不可逆）',
+    btnGreet: '让当前角色去跟对面串门（用一次模型额度）',
+    btnPkStart: '开一局猜拳，三局两胜，输赢都记在亲密度里',
+    btnSkillInstallUrl: '从链接下载技能包并安装',
+    btnSkillInstallFile: '选一个本地技能包安装',
+    btnPluginInstall: '安装插件到数据目录',
+    btnConnAdd: '新增一个外部连接器',
+    btnPackInstall: '导入技能包，装完要重启才完全生效',
+    btnSkillOpenDir: '用系统文件管理器打开技能目录',
+    ccRun: '对工作区跑一遍只读代码检查',
+    ccRerun: '按上次的参数再查一遍',
+    btnTasksRefresh: '重新拉任务列表',
+    btnTaskStart: '开始跑这个任务（会占用工具循环）',
+    btnTaskPause: '暂停任务，已完成的步骤保留',
+    btnTaskResume: '从暂停处继续',
+    btnTaskCancel: '取消任务，已产出的文件保留',
+    btnTaskRerunFailed: '只重跑失败的那几步',
+    btnClearOnly: '只清聊天记录，角色记忆保留',
+    btnClearAll: '连角色记忆一起清，删了找不回来',
+  };
+
+  // 说明文案给所有条目补上；但防连点只挂在「重复点会真出事」的那批上——
+  // 打开弹窗/选文件这类幂等按钮拦连点没有收益，反而会吞掉正常的第二次点击。
+  const GUARD_LIST = [
+    'btnSave', 'btnAnnivSave', 'btnAnnivClear', 'btnMcpAdd', 'sttDeviceRefresh',
+    'btnAudioTest', 'btnKbAdd', 'btnKbReindex', 'btnKbEmbedFetch', 'btnTtsTest',
+    'btnCheckUpdate', 'btnNsConnect', 'btnNsSaveProfile', 'btnNsRoam', 'btnNsMatch',
+    'btnNsCityGo', 'btnNsSend', 'btnNsBlock', 'btnGreet', 'btnPkStart',
+    'ccRun', 'ccRerun', 'btnTasksRefresh', 'btnTaskStart', 'btnTaskPause',
+    'btnTaskResume', 'btnTaskCancel', 'btnTaskRerunFailed', 'btnClearOnly', 'btnClearAll',
+  ];
+  Object.keys(ASYNC_TIPS).forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (!el.title) el.title = ASYNC_TIPS[id];
+  });
+  GUARD_LIST.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.dataset.async = '1';
+  });
+
+  // 自建 toast：不依赖主 IIFE 里的 toast()，避免作用域和加载顺序问题
+  function guardToast(text, ms) {
+    let box = document.getElementById('toastBox');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'toastBox';
+      box.className = 'toast-box';
+      document.body.appendChild(box);
+    }
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.textContent = text;
+    box.appendChild(t);
+    requestAnimationFrame(() => t.classList.add('show'));
+    setTimeout(() => {
+      t.classList.remove('show');
+      setTimeout(() => t.remove(), 350);
+    }, ms || 2600);
+  }
+  const lastShown = new Map();
+  function throttledToast(key, text, ms) {
+    const now = Date.now();
+    if (now - (lastShown.get(key) || 0) < 3000) return;
+    lastShown.set(key, now);
+    guardToast(text, ms);
+  }
+
+  // 1) 连点拦截
+  // v45.24：原来只有 1.2s 时间窗——「第一次请求 3 秒才失败，第 2 秒再点一下」
+  // 仍会发出去两条。现在同时看按钮是否已被业务置为 disabled，窗口也放宽到 2.5s，
+  // 覆盖绝大多数后端往返。仍不是事务级锁（真正的事务锁得由业务在 Promise 里持）。
+  document.addEventListener('click', (e) => {
+    const btn = e.target && e.target.closest ? e.target.closest('button') : null;
+    if (!btn || btn.dataset.async !== '1') return;
+    const now = Date.now();
+    if (btn.disabled || now - (+btn.dataset.lastClick || 0) < 2500) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      throttledToast('dbl', '上一次还没结束，别连点', 2000);
+      return;
+    }
+    btn.dataset.lastClick = now;
+  }, true);
+
+  // 2) 全局异常兜底
+  window.addEventListener('unhandledrejection', (ev) => {
+    const r = ev && ev.reason;
+    const msg = (r && (r.message || r.msg)) || String(r || '');
+    if (!msg || /已取消|cancelled/i.test(msg)) return;
+    console.error('[guard] 未处理的异步失败', r);
+    throttledToast('rej:' + msg.slice(0, 40), '有个操作没成功：' + msg.slice(0, 120), 4200);
+  });
+  window.addEventListener('error', (ev) => {
+    if (!ev || !ev.message) return;
+    console.error('[guard] 界面异常', ev.error || ev.message);
+    throttledToast('err:' + ev.message.slice(0, 40), '界面出错了：' + ev.message.slice(0, 120), 4200);
+  });
 })();

@@ -22,6 +22,7 @@
 //! - [`codecheck`]    本地代码静态检查（只读，node/python/启发式）
 
 pub mod codecheck;
+pub mod proc_env;
 pub mod context;
 pub mod weather;
 pub mod aec;

@@ -38,6 +38,7 @@ impl McpClient {
     pub fn spawn(cfg: &McpServerConfig, timeout: Duration) -> Result<Self, String> {
         let mut cmd = std::process::Command::new(&cfg.command);
         cmd.args(&cfg.args);
+        crate::proc_env::apply_std(&mut cmd);
         cmd.envs(cfg.env.iter());
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())

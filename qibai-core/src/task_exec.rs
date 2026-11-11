@@ -638,6 +638,18 @@ pub async fn run_loop_async(
         let mut exec: Vec<Step> = ready.into_iter().filter(|s| !blocked.contains(&s.id)).collect();
         exec.truncate(max_parallel);
 
+        // v45.16：并行分支实际派发时通知前端。以前这里只有一句注释「调度线 emit」，
+        // 事件从未真正发出，控制台的 `qibai://task-branches` 监听一直在空等。
+        sink.emit(
+            "qibai://task-branches",
+            serde_json::json!({
+                "task_id": t.id,
+                "parallel": exec.len(),
+                "max_parallel": max_parallel,
+                "step_ids": exec.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
+            }),
+        );
+
         // 5) confirm 步先标 WaitingConfirm（并发分支跑完后再停）
         for s in &confirm_steps {
             if let Some(sm) = t.plan.as_mut().unwrap().steps.iter_mut().find(|x| x.id == s.id) {

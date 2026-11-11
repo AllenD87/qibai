@@ -164,6 +164,7 @@
       </div>
       <div class="chat-input-row">
         <input id="chatInput" type="text" placeholder="和元气小小说点什么…" autocomplete="off" aria-label="对话输入">
+        <button id="stopBtn" class="send stop" type="button" aria-label="停止这一轮" style="display:none;background:#b91c1c;border-color:#b91c1c;">停止</button>
         <button id="sendBtn" class="send" type="button" aria-label="发送">发送</button>
       </div>
     </div>
@@ -543,10 +544,13 @@
           <select id="audioOutputSelect">
             <option value="default">系统默认</option>
           </select>
-          <div style="margin-top:6px;display:flex;gap:8px;align-items:center;">
+          <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;align-items:center;">
             <button type="button" id="btnAudioTest" class="mini-btn">测试输出设备</button>
-            <span id="audioTestResult" class="hint" style="font-size:12px;"></span>
+            <!-- v45.24：audio_diagnose 只探测不发声，排障时不想突然吵到人 -->
+            <button type="button" id="btnAudioDiagnose" class="mini-btn">只看环境（不发声）</button>
           </div>
+          <!-- 结果单独占一行：以前和按钮挤在同一行，两个按钮之后这里就看不见了 -->
+          <div id="audioTestResult" class="hint" style="font-size:12px;margin-top:6px;"></div>
           <div id="audioOutputs" class="hint" style="font-size:12px;line-height:1.5;"></div>
           <div class="hint" style="font-size:11px;margin-top:2px;">选择后建议点「测试输出设备」对账实际落点（pactl list sink-inputs）。</div>
           <details style="margin-top:6px;">
@@ -585,14 +589,20 @@
         <div class="field">
           <label>知识库</label>
           <div id="kbFoldersList" style="margin-bottom:6px;"></div>
-          <div style="display:flex;gap:8px;margin-bottom:8px;">
-            <input type="text" id="kbFolderInput" placeholder="/path/to/docs" style="flex:1;">
+          <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;align-items:center;">
+            <input type="text" id="kbFolderInput" placeholder="/path/to/docs" style="flex:1 1 150px;min-width:150px;">
             <button type="button" id="btnKbAdd" class="mini-btn">添加目录</button>
             <button type="button" id="btnKbReindex" class="mini-btn">重新索引</button>
           </div>
           <div id="kbStatus" class="hint" style="font-size:12px;"></div>
-          <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
-            <div id="kbEmbedStatus" class="hint" style="font-size:12px;flex:1;"></div>
+          <!-- v45.24：知识库能加能建索引，唯独不能试搜——用户没法验证索引到底有没有用 -->
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center;">
+            <input type="text" id="kbSearchInput" placeholder="搜一下知识库里有什么，回车即搜" style="flex:1 1 150px;min-width:150px;">
+            <button type="button" id="btnKbSearch" class="mini-btn">搜索</button>
+          </div>
+          <div id="kbSearchResult" style="margin-top:6px;"></div>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap;">
+            <div id="kbEmbedStatus" class="hint" style="font-size:12px;flex:1 1 160px;min-width:160px;"></div>
             <button type="button" id="btnKbEmbedFetch" class="mini-btn">下载向量模型</button>
           </div>
           <div style="display:flex;gap:8px;margin-top:8px;">
@@ -730,6 +740,19 @@
       <div class="hint" style="margin-top:8px;">
         涉及外部动作的<b>危险操作</b>（如打开应用/文件夹）每次执行前都会弹出确认框，需你手动允许。
       </div>
+    </div>
+
+    <!-- 启动与常驻（v45.23：补 set_autostart/get_autostart 一直没有 UI 入口的缺口） -->
+    <div class="settings-card" id="startupCard">
+      <h2>启动与常驻</h2>
+      <div class="toggle-row">
+        <div class="label-wrap">
+          <div class="title">开机自启</div>
+          <div class="desc">登录系统后自动启动元气小小，桌宠直接出现在桌面</div>
+        </div>
+        <div class="switch" id="swAutostart" data-on="false"></div>
+      </div>
+      <div class="hint" id="autostartHint" style="margin-top:6px;">开关状态由系统读取，与设置文件无关，改完立即生效。</div>
     </div>
 
     <!-- 关于与更新（迭代⑥） -->
@@ -982,7 +1005,12 @@
       <h2>插件技能</h2>
       <div class="plg-toolbar">
         <span class="hint">外部插件安装后默认停用，需逐项授权权限后开启。</span>
-        <button id="btnPluginInstall" class="primary" type="button">安装插件</button>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <!-- v45.24：scan_plugin_library 一直没有入口，只能靠安装包一个个点 -->
+          <input id="skillScanDir" type="text" placeholder="插件目录路径，可先点「打开技能目录」查看" style="width:240px;">
+          <button id="btnSkillScan" class="ghost" type="button">扫描目录</button>
+          <button id="btnPluginInstall" class="primary" type="button">安装插件</button>
+        </div>
       </div>
       <div id="pbPluginList" class="plg-list"></div>
       <input id="pluginFileInput" type="file" hidden>
@@ -1028,6 +1056,13 @@
           </div>
         </div>
         <div id="connHttpFields" class="field" style="display:none;">
+          <!-- v45.24：后端 transport 非 stdio 时强制 enabled=false（engine.rs 的 http 分支是占位），
+               以前这里能填能存、界面上看不出为什么永远不工作 -->
+          <div id="connHttpNotice" class="hint" style="font-size:12px;color:#92400e;background:#fffbeb;
+               border:1px solid #fde68a;border-radius:6px;padding:6px 8px;margin-bottom:8px;">
+            当前版本只支持 stdio MCP。HTTP 传输尚未实现，保存后会被标记为「停用」且不会发起连接——
+            这里仅用于先把配置记下来，等后续版本支持。
+          </div>
           <label for="connUrl">端点 URL</label>
           <input id="connUrl" type="text" placeholder="https://example.com/api/tool">
         </div>
@@ -1212,6 +1247,31 @@
       <button id="btnClearOnly" class="clear-btn primary" type="button">只清聊天记录</button>
       <button id="btnClearAll" class="clear-btn danger" type="button">连角色记忆一起清（不可恢复）</button>
       <button id="btnClearCancel" class="clear-btn ghost" type="button">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= v45.24 技能文档只读弹层（skill_read_doc） ================= -->
+<div id="docModal" class="clear-modal" hidden>
+  <div class="clear-modal-mask" data-close="1"></div>
+  <div class="clear-modal-card" role="dialog" aria-labelledby="docModalTitle" style="width:min(760px,94vw);max-width:94vw;">
+    <h3 id="docModalTitle">技能文档</h3>
+    <pre id="docModalBody" style="max-height:58vh;overflow:auto;font-size:12px;line-height:1.65;white-space:pre-wrap;background:#fffdf8;border:1px solid #e5d9c8;border-radius:8px;padding:10px 12px;margin:0;"></pre>
+    <div class="clear-modal-actions">
+      <button id="btnDocClose" class="clear-btn ghost" type="button">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= v45.24 通用确认弹层（卸载/不可逆操作） ================= -->
+<div id="confirmActionModal" class="clear-modal" hidden>
+  <div class="clear-modal-mask" data-close="1"></div>
+  <div class="clear-modal-card" role="dialog" aria-labelledby="confirmActionTitle">
+    <h3 id="confirmActionTitle">确认操作</h3>
+    <p class="clear-modal-desc" id="confirmActionDesc"></p>
+    <div class="clear-modal-actions">
+      <button id="btnConfirmActionOk" class="clear-btn danger" type="button">确认</button>
+      <button id="btnConfirmActionCancel" class="clear-btn ghost" type="button">取消</button>
     </div>
   </div>
 </div>

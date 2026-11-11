@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>animacode — 程序化动画</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #stage { display: block; }
+  #hud { position: fixed; left: 12px; bottom: 10px; font: 12px monospace; color: #999; opacity: .6; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas><div id="hud"></div>
+
+<script src="./animacore.js"></script>
+<script>
+/* ============================================================
+   ANIMACODE — 10s brand motion piece
+   Pure function of t. Palette: warm paper + coral + ink + teal.
+   Beat sheet
+     0.00 paper wash
+     0.22 dot drops -> splits into three bars (the mark)
+     1.62 headline rises, 2.24 rule wipe, 2.50 subtitle
+     3.50 hero exits
+     3.70 word rhythm (时机 / 缓动 / 节奏)
+     5.62 mosaic cascade -> proof stats
+     7.35 end card
+   ============================================================ */
+
+const W = 1920, H = 1080, FPS = 30, DURATION = 10;
+const C = { paper: '#FFF7F0', ink: '#1B1714', coral: '#FF5A3C', teal: '#0FA694', mute: '#7A6F68' };
+
+const scene = new AC.Scene({ canvas: document.getElementById('stage'), width: W, height: H, fps: FPS, duration: DURATION, background: C.paper });
+
+const cam = fn => (ctx, t) => {
+  const p = AC.tween(t, 0, DURATION, 'inOutSine');
+  const s = 1 + 0.024 * p, dy = -10 * p;
+  ctx.translate(W / 2, H / 2 + dy); ctx.scale(s, s); ctx.translate(-W / 2, -H / 2);
+  fn(ctx, t);
+};
+const fadeOut = (t, end, dur = 0.28) => 1 - AC.tween(t, end - dur, dur, 'inQuad');
+
+/* ---------- background: paper wash that slowly breathes ---------- */
+scene.add((ctx, t) => {
+  const p = AC.tween(t, 0, DURATION, 'inOutSine');
+  const g = ctx.createLinearGradient(0, 0, W * 0.9, H);
+  g.addColorStop(0, '#FFFBF6');
+  g.addColorStop(0.55, `hsl(${24 - p * 4}, 100%, ${97 - p}%)`);
+  g.addColorStop(1, `hsl(${10 + p * 6}, 88%, ${94.5 - p * 1.5}%)`);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const r = ctx.createRadialGradient(W * (0.78 + 0.02 * p), H * 0.18, 40, W * 0.78, H * 0.18, 760);
+  r.addColorStop(0, 'rgba(255,150,120,0.16)'); r.addColorStop(1, 'rgba(255,150,120,0)');
+  ctx.fillStyle = r; ctx.fillRect(0, 0, W, H);
+}, 'bg');
+
+/* ---------- mosaic: 6x4 tiles as the transition into the proof scene ---------- */
+scene.add((ctx, t) => {
+  const COLS = 6, ROWS = 4, tw = W / COLS, th = H / ROWS;
+  const start = 5.42, out = 6.92;
+  if (t < start || t > out + 0.4) return;
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const d = (Math.abs(r - 1.5) + Math.abs(c - 2.5)) * 0.042;
+    const s = Math.min(AC.tween(t, start + d, 0.34, 'outQuart'),
+                       1 - AC.tween(t, out + d, 0.32, 'inQuart'));
+    if (s <= 0) continue;
+    const cw = tw * s, chh = th * s;
+    const k = (r + c) % 3;
+    ctx.fillStyle = k === 0 ? '#FF6A4D' : k === 1 ? '#FFD9CB' : '#FFC0A8';
+    AC.roundRect(ctx, c * tw + (tw - cw) / 2 + 1, r * th + (th - chh) / 2 + 1, cw - 2, chh - 2, 14);
+    ctx.fill();
+  }
+}, 'mosaic');
+
+/* ---------- the mark: three bars that keep breathing ---------- */
+const MARK = {
+  draw(ctx, t, o = {}) {
+    const { cx = W / 2, base = 430, scale = 1, alpha = 1, grow = 0.62, phase = 0 } = o;
+    const bw = 28, gap = 17, hs = [118, 172, 118];
+    const colors = [C.coral, C.ink, C.teal];
+    ctx.globalAlpha = alpha;
+    for (let i = 0; i < 3; i++) {
+      const p = AC.spring(t, grow + i * 0.075, { stiffness: 150, damping: 13 });
+      if (p <= 0.001) continue;
+      const breathe = Math.sin(t * 2.5 + i * 1.15 + phase) * 0.075;
+      const h = hs[i] * scale * p * (1 + breathe);
+      if (h < 8) continue;                    // growing bar: no 4px stub
+      const x = cx - (3 * bw + 2 * gap) / 2 + i * (bw + gap);
+      ctx.fillStyle = colors[i];
+      AC.roundRect(ctx, x, base - h, bw * scale, h, Math.min(bw * scale, 14));
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.22)';
+      AC.roundRect(ctx, x + 4, base - h + 8, Math.max(2, 5 * scale), Math.max(0, h - 20), 3);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  },
+};
+
+/* ---------- hero ---------- */
+scene.add(cam((ctx, t) => {
+  if (t > 3.98) return;
+  const exit = fadeOut(t, 3.56, 0.26);
+
+  const dotIn = AC.spring(t, 0.18, { stiffness: 160, damping: 12 });
+  const dotOut = 1 - AC.tween(t, 0.48, 0.26, 'inQuad');
+  if (dotIn > 0 && dotOut > 0) {
+    const sq = 1 + 0.26 * Math.sin(Math.min(1, Math.max(0, (t - 0.18) * 7)) * Math.PI);
+    ctx.globalAlpha = dotOut;
+    ctx.fillStyle = C.coral;
+    ctx.beginPath();
+    ctx.ellipse(W / 2, 372, 34 * dotIn * (2 - sq), 34 * dotIn * sq, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  MARK.draw(ctx, t, { base: 455, alpha: exit, grow: 0.56 });
+
+  const chars = [...'程序化动画'], size = 132;
+  ctx.font = `700 ${size}px ${AC.FONT_STACK}`;
+  const widths = chars.map(ch => ctx.measureText(ch).width);
+  const total = widths.reduce((a, b) => a + b, 0);
+  let x = (W - total) / 2;
+  chars.forEach((ch, i) => {
+    const d = 1.28 + AC.stagger(i, chars.length, 0.055, 'center');
+    const p = AC.spring(t, d, { stiffness: 135, damping: 13 });
+    if (p <= 0) { x += widths[i]; return; }
+    const y = 620 - 84 * (1 - p);
+    const sq = 1 + 0.14 * Math.max(0, 1 - Math.abs(p - 1) * 5) * Math.sin((t - d) * 15);
+    ctx.save();
+    ctx.translate(x + widths[i] / 2, y); ctx.scale(1 / sq, sq);
+    ctx.globalAlpha = Math.min(1, p * 1.8) * exit;
+    scene.text(ch, 0, 0, { size, weight: 700, align: 'center', baseline: 'middle', color: C.ink, group: 'title' });
+    ctx.restore();
+    x += widths[i];
+  });
+
+  const rp = AC.tween(t, 2.02, 0.62, 'outQuint');
+  const rs = AC.spring(t, 2.33, { stiffness: 120, damping: 11 });
+  const rw = 560 * rp;
+  if (rw > 6) {
+    ctx.globalAlpha = exit;
+    ctx.fillStyle = C.coral;
+    AC.roundRect(ctx, (W - rw) / 2, 688 + (rs - 1) * 14, rw, 10, 5);
+    ctx.fill();
+  }
+
+  const sp = AC.spring(t, 2.28, { stiffness: 110, damping: 14 });
+  ctx.globalAlpha = Math.min(1, sp * 1.6) * exit;
+  scene.text('把节奏写进代码 · 把质量交给验证', W / 2, 772 + 18 * (1 - sp), {
+    size: 40, weight: 400, align: 'center', color: C.mute, letterSpacing: 3 + 9 * (1 - sp), group: 'sub',
+  });
+  ctx.globalAlpha = 1;
+}), 'hero');
+
+/* ---------- word rhythm ---------- */
+scene.add(cam((ctx, t) => {
+  if (t < 3.58 || t > 5.72) return;
+  const words = ['时机', '缓动', '节奏'];
+  const slots = [3.62, 4.16, 4.7], size = 168;
+  ctx.beginPath(); ctx.rect(0, 448, W, 232); ctx.clip();
+  const outs = [4.0, 4.54, 5.5];
+  words.forEach((w, i) => {
+    const inP = AC.tween(t, slots[i], 0.38, 'outExpo');
+    const outP = 1 - AC.tween(t, outs[i], 0.2, 'outExpo');
+    if (inP <= 0 || outP <= 0) return;
+    const y = 612 + 130 * (1 - inP) - 150 * (1 - outP);
+    ctx.globalAlpha = Math.min(1, inP * 2.2, outP);
+    scene.text(w, W / 2, y, { size, weight: 700, align: 'center', letterSpacing: 6, color: C.ink, group: 'words' });
+    const sw = AC.tween(t, slots[i] + 0.18, 0.4, 'outQuint') * 240;
+    if (sw > 30) {
+      ctx.fillStyle = C.coral;
+      AC.roundRect(ctx, W / 2 - sw / 2, 646, sw, 8, 4); ctx.fill();
+    }
+  });
+  ctx.globalAlpha = 1;
+}), 'words');
+
+/* ---------- proof stats over the mosaic ---------- */
+scene.add(cam((ctx, t) => {
+  if (t < 6.05 || t > 7.62) return;
+  const p1 = AC.spring(t, 6.05, { stiffness: 140, damping: 15 });
+  const p2 = AC.spring(t, 6.2, { stiffness: 140, damping: 15 });
+  const out = fadeOut(t, 7.56, 0.28);
+  const frames = Math.round(300 * AC.tween(t, 6.05, 0.8, 'outCubic'));
+  // white panel: guarantees contrast whatever the mosaic underneath is doing
+  const card = AC.spring(t, 6.02, { stiffness: 120, damping: 15 });
+  if (card > 0) {
+    const cw = 860, chh = 330 * Math.max(0.001, card);
+    ctx.globalAlpha = Math.min(1, card * 1.4) * out;
+    ctx.shadowColor = 'rgba(90,45,25,0.20)'; ctx.shadowBlur = 46; ctx.shadowOffsetY = 20;
+    ctx.fillStyle = '#FFFCF8';
+    AC.roundRect(ctx, W / 2 - cw / 2, 372 - (chh - 330) / 2, cw, chh, 30); ctx.fill();
+    AC.noGlow(ctx);
+    ctx.globalAlpha = Math.min(1, p1 * 1.5) * out;
+    scene.text(`${frames} 帧`, W / 2, 500 + 22 * (1 - p1), { size: 128, weight: 800, align: 'center', color: C.ink, group: 's1' });
+    ctx.globalAlpha = Math.min(1, p2 * 1.5) * out;
+    scene.text('逐帧确定 · 一次跑通 · 可复现', W / 2, 600 + 16 * (1 - p2), { size: 42, weight: 400, align: 'center', color: '#6B5F57', letterSpacing: 1.5, group: 's2' });
+  }
+  ctx.globalAlpha = 1;
+}), 'stats');
+
+/* ---------- end card ---------- */
+scene.add(cam((ctx, t) => {
+  if (t < 7.5) return;
+  const p = AC.spring(t, 7.5, { stiffness: 120, damping: 14 });
+  MARK.draw(ctx, t, { base: 470, scale: 0.72, alpha: Math.min(1, p * 1.6), grow: 7.5, phase: 1.7 });
+
+  const word = 'ANIMACODE', size = 92;
+  ctx.font = `800 ${size}px ${AC.FONT_STACK}`;
+  const widths = [...word].map(ch => ctx.measureText(ch).width + 12);
+  const total = widths.reduce((a, b) => a + b, 0);
+  let x = (W - total) / 2;
+  [...word].forEach((ch, i) => {
+    const q = AC.spring(t, 7.9 + i * 0.035, { stiffness: 140, damping: 15 });
+    if (q <= 0) { x += widths[i]; return; }
+    ctx.globalAlpha = Math.min(1, q * 1.7);
+    scene.text(ch, x, 660 - 34 * (1 - q), { size, weight: 800, letterSpacing: 12, color: C.ink, group: 'brand' });
+    x += widths[i];
+  });
+  ctx.globalAlpha = 1;
+
+  const tp = AC.tween(t, 8.2, 0.5, 'outQuad');
+  ctx.globalAlpha = tp;
+  scene.text('程序化动画技能 · 代码即时间轴', W / 2, 742 + 10 * (1 - tp), {
+    size: 34, weight: 400, align: 'center', color: C.mute, letterSpacing: 1.5, group: 'tag',
+  });
+  ctx.globalAlpha = 1;
+
+  // slow sheen across the end card so the hold never reads as a frozen frame
+  const sh = AC.tween(t, 8.2, 1.55, 'inOutSine');
+  if (sh > 0 && sh < 1) {
+    const x = -420 + sh * (W + 840);
+    const g2 = ctx.createLinearGradient(x - 300, 0, x + 300, 0);
+    g2.addColorStop(0, 'rgba(255,255,255,0)');
+    g2.addColorStop(0.5, 'rgba(255,255,255,0.34)');
+    g2.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.save(); ctx.globalCompositeOperation = 'overlay'; ctx.fillStyle = g2;
+    ctx.fillRect(0, 0, W, H); ctx.restore();
+  }
+}), 'endcard');
+
+/* ---------- finish ---------- */
+scene.add((ctx, t) => {
+  AC.grain(ctx, W, H, Math.round(t * FPS), { alpha: 0.045 });
+  AC.vignette(ctx, W, H, 0.1, '120,70,50');
+}, 'finish');
+
+window.__ANIMA = {
+  width: W, height: H, fps: FPS, duration: DURATION,
+  seek(t) { scene.render(t); },
+  audit() { return scene.audit(0.055, 30); },
+  scene,
+};
+
+const isRender = location.search.includes('render=1');
+const hud = document.getElementById('hud');
+if (!isRender) {
+  const stage = document.getElementById('stage');
+  stage.style.width = '100%'; stage.style.height = '100%'; stage.style.objectFit = 'contain';
+  let playing = true, t = 0, last = performance.now();
+  const loop = now => {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (playing) t = (t + dt) % DURATION;
+    scene.render(t);
+    hud.textContent = `${t.toFixed(2)}s / ${DURATION}s   [space] play·pause  [←/→] step`;
+    requestAnimationFrame(loop);
+  };
+  addEventListener('keydown', e => {
+    if (e.code === 'Space') { playing = !playing; e.preventDefault(); }
+    if (e.code === 'ArrowLeft') { playing = false; t = Math.max(0, t - 1 / FPS); }
+    if (e.code === 'ArrowRight') { playing = false; t = Math.min(DURATION, t + 1 / FPS); }
+  });
+  requestAnimationFrame(loop);
+}
+
+(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => {
+  scene.render(0);
+  window.__ready = true;
+});
+</script>
+</body>
+</html>

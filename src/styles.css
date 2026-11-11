@@ -63,6 +63,17 @@ button {
   color: inherit;
 }
 
+/* v45.22 按钮三态基础层：「能点 / 不能点 / 正在处理」必须一眼看得出来。
+   此前整个样式表没有任何 :active 与 :disabled 的通用规则（只有猜拳等零星几处），
+   结果禁用态和正常态长得一模一样——用户点了没动静，只能怀疑是不是卡了。
+   这里只用 filter 给按下反馈，不动 transform，免得和各类 hover 位移打架。 */
+button:not(:disabled) { -webkit-tap-highlight-color: transparent; }
+button:not(:disabled):active { filter: brightness(.9); }
+button:disabled { cursor: not-allowed; opacity: .5; filter: saturate(.55); }
+button:focus-visible { outline: 2px solid var(--rose, #E08098); outline-offset: 2px; }
+/* 忙态：点了之后正在跑，别让用户以为还能再点一次 */
+button[data-busy="1"] { cursor: progress; opacity: .6; pointer-events: none; }
+
 input, select, textarea {
   font-family: inherit;
   font-size: 14px;
@@ -752,6 +763,24 @@ body.browser-mode.settings-page-body { padding: 20px 0 0; }
 .persona-card .p-name { font-size: 12.5px; color: var(--text); font-weight: 500; }
 .persona-card .p-desc { font-size: 10.5px; color: var(--text-soft); }
 .persona-card:hover { border-color: var(--rose); }
+/* v45.23：立绘未安装（仓库不含大图）时的占位块——保持 64×84 尺寸，卡片不塌陷、仍可点选 */
+.persona-card.no-art img { display: none; }
+.persona-card.no-art::before {
+  content: '未安装立绘';
+  width: 64px;
+  height: 84px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #FFE9F1, #EFE7F7);
+  color: var(--text-soft);
+  font-size: 10px;
+  line-height: 1.25;
+  text-align: center;
+  padding: 0 4px;
+  box-sizing: border-box;
+}
 .persona-card.sel {
   border-color: var(--rose);
   background: var(--pink-100);

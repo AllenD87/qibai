@@ -27,8 +27,12 @@ pub enum LlmError {
     Api(String),
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("这一轮我反复试了几次都没成，先停一下（工具循环 5 轮）")]
+    #[error("这一轮我反复试了几次都没成，先停一下（工具循环轮数到顶）")]
     MaxIterations,
+    /// v45.21：用户主动叫停。与「超时」「轮数到顶」区分开——这不是失败，是服从指令，
+    /// 上层应当正常收尾（保留已产出的文件），而不是把它当错误弹「连接失败」。
+    #[error("（已按你的要求停下）")]
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -624,6 +628,15 @@ pub fn outcome_to_tool_text(outcome: &SkillOutcome) -> String {
 #[async_trait]
 pub trait ToolExecutor: Send + Sync {
     async fn invoke(&mut self, name: &str, args: &serde_json::Value) -> SkillOutcome;
+
+    /// v45.21：这一轮是否已被用户要求停止。
+    /// 默认 false —— 测试与一次性执行不参与取消，无需改任何既有调用方。
+    /// 生产实现（EngineToolExecutor）返回 AppState 里的原子标志；
+    /// 工具循环在「每轮请求模型之前」和「每次调用工具之前」各查一次，
+    /// 保证软停：当前这个工具跑完就停，不会留下半截文件。
+    fn cancelled(&self) -> bool {
+        false
+    }
 }
 
 /// 工具执行留痕（给前端显示）。
@@ -719,13 +732,31 @@ pub async fn run_agent_loop(
     let mut last_denied_tool: Option<String> = None;
     let mut denied_streak: u32 = 0;
 
-    // v18.8-fix28e：工具循环整体 120s 硬限——每轮前检查，超时立即返回，
-    // 避免 Qwen 思考型多轮工具循环时 invoke 长时间无返回（前端挂起"没反应"）。
+    // v45.20：按真机实测重定预算。一条 15s 片子出「916 + 169 双格式」的完整链路，
+    // 工具侧实测就要 186.6s（schema 0 + build 0.1 + render 47.4/45.8 + qa 18.5/14.4
+    // + mux 29.7/30.7），而且这条链路是 8 次工具调用 + 最后 1 轮收尾 = 9 轮。
+    // 旧的 8 轮 / 240s 会出现两种截断：轮数到顶（第 9 轮被砍，模型没机会收尾）、
+    // 累计超 240s（mux 还没跑就被判超时）——用户看到的结果就是「渲染文件都在、
+    // studio.html 能预览、但永远没有 MP4」。
+    // 放宽到 12 轮 / 420s（双格式 187s + 10 轮往返 ≈ 260s，余量 160s）；
+    // 单轮仍是流式 + 120s chunk 超时，不会无限挂。
+    const LOOP_MAX_ROUNDS: usize = 12;
+    const LOOP_MAX_SECS: u64 = 420;
     let loop_deadline = std::time::Instant::now();
-    for _ in 0..5 {
-        if loop_deadline.elapsed() > std::time::Duration::from_secs(120) {
-            eprintln!("[qibai] llm 工具循环累计超 120s，终止");
-            return Err(LlmError::Api("LLM 工具循环超时（累计 120s）".into()));
+    for _ in 0..LOOP_MAX_ROUNDS {
+        // v45.21：每轮请求模型之前查一次——用户点了「停止」就立刻收手，
+        // 不再多发一次请求、也不再跑下一步工具。
+        if executor.cancelled() {
+            eprintln!("[qibai] 用户已叫停，在第 {} 步的轮间退出", executions.len());
+            return Err(LlmError::Cancelled);
+        }
+        if loop_deadline.elapsed() > std::time::Duration::from_secs(LOOP_MAX_SECS) {
+            eprintln!(
+                "[qibai] llm 工具循环累计超 {LOOP_MAX_SECS}s，终止（已执行工具见 executions）"
+            );
+            return Err(LlmError::Api(format!(
+                "LLM 工具循环超时（累计 {LOOP_MAX_SECS}s）"
+            )));
         }
         let req = ChatRequest {
             system: system.to_string(),
@@ -794,6 +825,13 @@ pub async fn run_agent_loop(
         // 有 tool_calls：先把 assistant 消息（含 tool_calls）加入对话
         messages.push(ChatMessage::assistant_tool_calls(resp.tool_calls.clone()));
         for call in &resp.tool_calls {
+            // v45.21：软停检查点——模型一口气回了多个工具调用时，
+            // 用户中途叫停也能在下一个工具之前刹车（当前这个工具仍会跑完，
+            // 不留半截文件；代价是最多等一个工具的时长）。
+            if executor.cancelled() {
+                eprintln!("[qibai] 用户已叫停，工具队列在第 {} 步中止", executions.len());
+                return Err(LlmError::Cancelled);
+            }
             let skill = call.function.name.clone();
             let args: serde_json::Value =
                 serde_json::from_str(&call.function.arguments).unwrap_or(serde_json::Value::Null);
@@ -1291,6 +1329,168 @@ mod tests {
         assert!(executions[0].error.as_deref().unwrap().contains("no permission"));
         // 第三轮模型给出最终回复
         assert!(parsed.reply.contains("换个方式"));
+    }
+
+    /// 出片链路回归（v45.20）：animacode 一条 15s 双格式片子要走
+    /// schema → build → render×2 → qa×2 → mux×2 共 8 次工具调用，再加 1 轮收尾 = 9 轮。
+    /// 旧的 8 轮上限会把收尾砍掉并返回 MaxIterations，用户侧表现就是
+    /// 「产物文件都在、studio.html 能播、但没有 MP4、还提示连接失败」。
+    #[tokio::test]
+    async fn agent_loop_allows_nine_rounds_for_long_render_chain() {
+        const CHAIN: [&str; 8] = [
+            "anima_schema", "anima_build",
+            "anima_render", "anima_render",
+            "anima_qa", "anima_qa",
+            "anima_mux", "anima_mux",
+        ];
+        let mut seq = std::collections::VecDeque::new();
+        for (i, name) in CHAIN.iter().enumerate() {
+            seq.push_back(Ok(ChatResponse {
+                content: None,
+                tool_calls: vec![ToolCall {
+                    id: format!("c{i}"),
+                    kind: "function".into(),
+                    function: ToolCallFunction {
+                        name: (*name).into(),
+                        arguments: "{}".into(),
+                    },
+                }],
+                ..std::default::Default::default()
+            }));
+        }
+        // 第 9 轮不再排脚本，交给 MockProvider 的兜底回复（等价于「收尾」）
+        let mock = MockProvider { scripted: Mutex::new(seq), seen_bodies: Mutex::new(vec![]) };
+        struct AlwaysOk;
+        #[async_trait]
+        impl ToolExecutor for AlwaysOk {
+            async fn invoke(&mut self, _n: &str, _a: &serde_json::Value) -> SkillOutcome {
+                SkillOutcome::Ok("{\"ok\":true}".into())
+            }
+        }
+        let mut exec = AlwaysOk;
+        let (parsed, _, executions) = run_agent_loop(
+            &mock, "sys", vec![ChatMessage::user("做个 15 秒动画，16:9 和 9:16 都要")], None,
+            &mut exec, &mut |_: &str| {},
+        )
+        .await
+        .expect("9 轮链路必须能跑完，不能被轮数上限截断成 MaxIterations");
+        assert_eq!(executions.len(), 8, "8 次工具调用都要留痕");
+        assert!(executions.iter().all(|e| e.ok), "整条链路的工具都应成功");
+        assert!(!parsed.reply.is_empty(), "第 9 轮必须真的执行并产出回复");
+    }
+
+    /// v45.21 取消回归：用户在执行完第 1 个工具后按了停止。
+    /// 三个必须同时成立：①不再发第 2 轮请求 ②第 2 个工具不得开跑
+    /// ③返回 Cancelled（不是 MaxIterations、不是超时——否则前端又会误报成失败）。
+    #[tokio::test]
+    async fn agent_loop_stops_at_tool_boundary_when_cancelled() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        let mk = |i: usize| {
+            Ok(ChatResponse {
+                content: None,
+                tool_calls: vec![ToolCall {
+                    id: format!("c{i}"),
+                    kind: "function".into(),
+                    function: ToolCallFunction {
+                        name: "anima_render".into(),
+                        arguments: "{}".into(),
+                    },
+                }],
+                ..std::default::Default::default()
+            })
+        };
+        let mock = MockProvider {
+            scripted: Mutex::new(std::collections::VecDeque::from([mk(0), mk(1)])),
+            seen_bodies: Mutex::new(vec![]),
+        };
+        struct CancelAfterFirst {
+            flag: AtomicBool,
+            calls: AtomicUsize,
+        }
+        #[async_trait]
+        impl ToolExecutor for CancelAfterFirst {
+            fn cancelled(&self) -> bool {
+                self.flag.load(Ordering::SeqCst)
+            }
+            async fn invoke(&mut self, _n: &str, _a: &serde_json::Value) -> SkillOutcome {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                // 第一个工具刚跑完，用户这时点了「停止」
+                self.flag.store(true, Ordering::SeqCst);
+                SkillOutcome::Ok("{\"ok\":true}".into())
+            }
+        }
+        let mut exec = CancelAfterFirst {
+            flag: AtomicBool::new(false),
+            calls: AtomicUsize::new(0),
+        };
+        let r = run_agent_loop(
+            &mock,
+            "sys",
+            vec![ChatMessage::user("做个片子")],
+            None,
+            &mut exec,
+            &mut |_: &str| {},
+        )
+        .await;
+        assert!(
+            matches!(r, Err(LlmError::Cancelled)),
+            "用户叫停必须返回 Cancelled，不能被当成轮数到顶或超时"
+        );
+        assert_eq!(
+            exec.calls.load(Ordering::SeqCst),
+            1,
+            "叫停后第 2 个工具不得开跑（软停停在工具边界）"
+        );
+        assert_eq!(
+            mock.seen_bodies.lock().unwrap().len(),
+            1,
+            "叫停后不得再向模型发请求"
+        );
+    }
+
+    /// 软停的软肋也要钉住：叫停时**正在跑的那个工具**允许跑完（不留半截文件），
+    /// 所以取消标志不能在这之前生效——否则渲染会半途中断，产物直接坏掉。
+    #[tokio::test]
+    async fn cancel_flag_does_not_interrupt_running_tool() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let mock = MockProvider {
+            scripted: Mutex::new(std::collections::VecDeque::from([Ok(ChatResponse {
+                content: None,
+                tool_calls: vec![ToolCall {
+                    id: "c0".into(),
+                    kind: "function".into(),
+                    function: ToolCallFunction {
+                        name: "anima_mux".into(),
+                        arguments: "{}".into(),
+                    },
+                }],
+                ..std::default::Default::default()
+            })])),
+            seen_bodies: Mutex::new(vec![]),
+        };
+        struct Flag(AtomicBool);
+        #[async_trait]
+        impl ToolExecutor for Flag {
+            fn cancelled(&self) -> bool {
+                self.0.load(Ordering::SeqCst)
+            }
+            async fn invoke(&mut self, _n: &str, _a: &serde_json::Value) -> SkillOutcome {
+                // 模拟「工具跑到一半时用户按了停止」——但本工具的 await 不会被撤销
+                self.0.store(true, Ordering::SeqCst);
+                SkillOutcome::Ok("{\"mp4\":\"out.mp4\"}".into())
+            }
+        }
+        let mut exec = Flag(AtomicBool::new(false));
+        let r = run_agent_loop(
+            &mock,
+            "sys",
+            vec![ChatMessage::user("合成")],
+            None,
+            &mut exec,
+            &mut |_: &str| {},
+        )
+        .await;
+        assert!(matches!(r, Err(LlmError::Cancelled)));
     }
 
     /// MaxIterations Display 不含"大模型"。

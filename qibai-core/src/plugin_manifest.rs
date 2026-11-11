@@ -349,7 +349,38 @@ impl ManifestLoader {
         let raw = std::fs::read_to_string(&path).map_err(|e| {
             ManifestError::new("file", format!("读取清单失败 {path:?}: {e}"))
         })?;
-        Self::parse(&raw)
+        let mut m = Self::parse(&raw)?;
+        // `{PLUGIN_DIR}` → 包所在目录的绝对路径。包可能被装到 user/builtin 任一根，
+        // 甚至被 QIBAI_PLUGINS_DIR 改到别处；写死根路径会失配，所以按实际目录解析。
+        #[allow(unused_mut)]
+        let mut pkg_dir = dir
+            .canonicalize()
+            .unwrap_or_else(|_| dir.to_path_buf())
+            .display()
+            .to_string();
+        // Windows 的 canonicalize 会加 `\\?\` 扩展长路径前缀；该前缀只认反斜杠，
+        // 拼上 `/mcp/server.mjs` 后 node 找不到脚本会直接退出，去掉它更稳。
+        #[cfg(windows)]
+        if let Some(stripped) = pkg_dir.strip_prefix(r"\\?\") {
+            pkg_dir = stripped.to_string();
+        }
+        for a in m
+            .entry
+            .as_mut()
+            .and_then(|e| e.mcp.as_mut())
+            .map(|m| m.args.iter_mut())
+            .into_iter()
+            .flatten()
+        {
+            if a.contains("{PLUGIN_DIR}") {
+                *a = a.replace("{PLUGIN_DIR}", &pkg_dir);
+                #[cfg(windows)]
+                {
+                    *a = a.replace('/', "\\");
+                }
+            }
+        }
+        Ok(m)
     }
 
     /// 解析 JSON 文本：归一化 → 反序列化 → 校验。

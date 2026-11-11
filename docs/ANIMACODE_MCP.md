@@ -1,0 +1,141 @@
+# Animacode MCP 接入（技能包 / 连接器）
+
+把 animacode 的动画能力作为**本地 MCP 连接器**接进核心：模型写一份 `scene.json`，就能构建多比例场景、逐帧渲染、跑量化质检、合成带音轨 MP4。全程本地、不联网，零 npm 依赖（复用系统 chromium + ffmpeg）。
+
+装好之后它同时占两个位置：
+
+- **技能库**：`qibai-plugin.json` + `SKILL.md` 进能力包目录，LLM 的系统提示里会出现「[技能] Animacode 动画成片：…」，可用 `skill_read` 取正文步骤；
+- **工具表**：`entry.kind=mcp` 的连接器启用后，五个 `anima_*` 函数直接出现在 LLM 工具表里，模型可以真调。
+
+## 包内容
+
+`examples/plugins/animacode/`
+
+```
+qibai-plugin.json   连接器清单：entry.kind=mcp，command=node，args={PLUGIN_DIR}/mcp/server.mjs
+SKILL.md            模型操作说明（先 schema → 写 spec → build → 抽帧 → 全量 → qa → mux）
+mcp/server.mjs      stdio MCP（JSON-RPC 2.0，一行一个 JSON），协议 2024-11-05
+scripts/            build_scene / render_frames / qa_report / make_video / preview
+assets/             animacore.js、blocks.js、spec_scene.html、studio.html、示例 spec
+references/         spec 字段、块、API、质量门禁、动效、与 Remotion 的差异
+```
+
+版本：**v2.2.0**（在 v2.1 的六块基础上加 `timeline`、`compare` 两块，并修正了渲染/质检若干行为）。
+
+`{PLUGIN_DIR}` 由 `ManifestLoader::load` 按**包实际所在目录**替换成绝对路径，所以包被装到用户根、内置根或被 `QIBAI_PLUGINS_DIR` 指到别处都不会失配——不用手改清单。
+
+## 五个工具
+
+| 工具 | 作用 | 失败语义 |
+| --- | --- | --- |
+| `anima_schema` | 返回 spec 与**八个**镜头块字段（title / stat / bars / process / timeline / compare / quote / endcard） | — |
+| `anima_build` | 校验 + 构建每比例 | spec 非法返回逐条错误 |
+| `anima_render` | 渲帧；`shots`+`reuse` 只渲改动镜头 | 缺帧时报告 missing |
+| `anima_qa` | 安全区/重叠/小字号/对比度/空帧/长静止/突变/视觉回归 | verdict=FAIL 时 `isError=true`，禁止交付 |
+| `anima_mux` | 帧 + 音轨合成 MP4 | 无帧时报错 |
+
+## 安装
+
+**A. 技能包（推荐）**：控制台「技能与专家」tab →「插件技能」区块的 **`导入技能包`**，选 `animacode-v2.2.0.qbpk`（zip，根目录就是 `qibai-plugin.json`，不要再套文件夹）。解压落盘到 `<数据目录>/plugins/animacode/`。
+
+这条按钮走的是 **文件内容通道**（前端把选中的 zip 读成 base64 → 后端落临时文件 → 复用同一套安全校验与安装链），因为 WebView 的 `<input type=file>` 给不出可信路径。早期构建里它传的是 `demo://文件名` 的假路径，点了必然报「安装失败」；该修复在 `skill_pack_install_bytes` 里，需要重新打包后的版本才生效。
+
+**B. 手动放置**：
+
+```bash
+# 数据目录：macOS ~/Library/Application Support/com.Qibai.Qibai
+#           Linux ~/.local/share/qibai
+#           Windows %APPDATA%/com.Qibai.Qibai
+mkdir -p "<数据目录>/plugins"
+cp -r examples/plugins/animacode "<数据目录>/plugins/"
+```
+
+**C. 只登记 MCP（不装插件包）**：设置里 `mcp_servers` 加一项
+
+```json
+{"name":"animacode","transport":"stdio","command":"node","args":["/绝对路径/animacode/mcp/server.mjs"],"enabled":true}
+```
+
+## 启用（导入即生效，v45.14 起）
+
+**A 路径（技能包导入）装完就启用**：`animacode` 落盘后由 `skill_pack_install(_bytes)` 立刻
+`set_enabled(true)` 并授予清单里声明的权限（`system:launch`），同时写进 `settings.plugins`，
+`anima_*` 立刻进工具表。理由：导入是用户主动动作，视作同意该包声明的权限；之后仍可在插件页
+一键关掉。
+
+**B 路径（手动拷目录）** 只有目录、没经过安装器，仍然按外部包默认关——打开插件页开关即可。
+
+技能页与插件页的开关现在是一套状态：任一处关掉，另一处与工具表同步（v45.14 前是两套，
+能出现"技能库里看得见、工具表里没有"）。
+
+## 视频/动画需求的强路由（B 方案）
+
+说「做个 15 秒片头 / 生成一支 MG 动画 / 做条科普动画」这类**要产出一支片子**的话，主模型
+本轮会被强制注入一段 Animacode 路由指令：`anima_schema → 写 scene.json → anima_build →
+anima_render → anima_qa（VERDICT 必须 PASS / PASS_WITH_WARNINGS）→ anima_mux`，并要求回给
+成片路径与质检结论；不许拿文字或一段 JSON 冒充完成。
+
+- 没装：如实说缺件，提示导入 `.qbpk`（不臆造步骤）。
+- 装了但被关：当轮自动启用并补授声明权限。
+- 条目处于 error：提示删掉重装，不假装能出片。
+
+排除项：加字幕、剪辑、截帧、转码、抽封面这类"处理已有素材"的需求不触发路由。
+
+## 前置依赖
+
+- `node`（≥18）在 PATH
+- `chromium` 或 `google-chrome` 在 PATH（渲染用；`CHROME` 环境变量可指定）
+- `ffmpeg`（合成用；没有就只能出帧，不能出 MP4）
+- `python3` + numpy + Pillow（`qa_report.py` 质检用）
+
+缺依赖时先跑 `bash scripts/doctor.sh` 自检——它会直接说缺哪个。
+
+## 验收口径（仓库内已固化为测试）
+
+`qibai-core/tests/animacode_mcp.rs` 走的就是产品链路：
+
+1. 复制包到临时根 → `ManifestLoader::load` 解析清单，断言 `{PLUGIN_DIR}` 已替换成包内 `mcp/server.mjs`；
+2. `PluginRegistry::new` 扫到 `animacode`、默认不进工具表 → `set_enabled` 后五个 `anima_*` 全进；
+3. `SkillAdapter` 真拉 stdio server：`anima_schema` 返回字段说明，`anima_build` 用示例 spec 产出 `169` 比例。
+
+没装 node 的机器上该用例打印 SKIP 跳过，不算失败。
+
+平台边界：**macOS / Linux 验收完整出片链路**；Windows 目前只验收 MCP 握手与 `anima_schema`——构建脚本按 POSIX 规则拼 spec 目录，在 Windows 上会拼出 `D:\C:\...` 这类路径，CI 里因此只跑到 schema 为止（三平台测试均为绿）。
+
+## 注意
+
+- `trust` 默认 `confirm`：首次调用走确认；**本任务内同一插件只问一次**（批准后放行，下一次工具调用不再弹窗），用户发新请求时重新确认。一条 15 秒片子要连跑 schema→build→render→qa→mux 五个工具，逐次弹窗会被当成「卡住不动」。
+  要彻底免确认需把连接器设为 `readonly`。
+- 批准后会自动「继续」往下跑（前端发固定口令 `继续`，单任务上限 8 次），不用手动再敲一遍需求。
+- 写 spec 的文件写操作同样「一次批准、本任务内同一路径不再问」，所以一条片子通常是
+  **2 次点击**（写 spec + 首次调用 animacode）就能跑完五步，而不是五次弹窗。
+- 工具循环上限已从 5 轮 / 120s 放宽到 8 轮 / 240s（渲 450 帧就要 50s，旧上限会在第 5 步前截断）。
+- 同一确认被提交两次不会失败：第二次回放上次结果并注明「未重复执行」。
+- **子进程 PATH 已自动补全（v45.15）**：从桌面图标启动时，应用拿到的 PATH 往往只有
+  `/usr/bin:/bin`，Homebrew（`/opt/homebrew/bin`）、nvm（`~/.nvm/versions/node/<v>/bin`）、
+  Windows 的 `Program Files\nodejs` 都不在里面，于是 `node` 一 spawn 就 `No such file`。
+  现在四类子进程（技能 MCP 会话、MCP 注册表、command 型插件、代码检查）统一注入
+  补全后的 PATH；还不够时用环境变量 `QIBAI_EXTRA_PATH` 追加目录（多个按系统分隔符）。
+- **点「允许」之前先预检启动命令**：命令或脚本在插件目录 / PATH 里找不到时，不再弹确认，
+  直接回复「找不到可执行 `node`……」，避免"点了允许 → 审批失败"的空循环。
+- **点「允许」之后还失败时，先读那句话本身**：v45.16 起错误会带上 server 自己的 stderr
+  （`插件入口脚本不存在：…` / `MCP server 启动后立即退出（exit code 1）；server stderr: node: Cannot find module …`）。
+  前者=插件包没装全（删掉插件重导 `animacode-v2.2.0.qbpk`）；后者=node 版本或脚本自身报错，照 stderr 那行修。
+- **会话自愈**：server 中途崩了不必重启应用，下一次工具调用会自动丢弃死会话、重连一次再重试。
+- **不需要手动启动 MCP server**：它是 stdio 子进程，点「允许」后由应用自己 spawn，
+  跑完留着复用，退出应用即结束；不要在终端另起一个 `node .../server.mjs`。
+- **路径占位符 `{PLUGIN_DIR}` 由程序展开（v45.16 补的兜底）**：插件包里写
+  `"{PLUGIN_DIR}/mcp/server.mjs"` 是正确写法，应用会按插件实际安装目录替换成绝对路径。
+  但清单如果来自没经过落点解析的路径（控制台手配的连接器、旧数据），占位符会原样留下，
+  node 便把它当相对路径去 cwd 下找，只报
+  `Cannot find module '/<当前工作目录>/{PLUGIN_DIR}/mcp/server.mjs'` —— 看着像没装，其实是没展开。
+  现在适配层会先按插件目录自己补上；万一仍残留，会在启动前直接报
+  「插件启动参数里的路径占位符没有展开」而不是让 node 去猜。
+  **自己手配 MCP 服务器时请直接填绝对路径**，别抄占位符。
+- **出片文件落在哪**：写入根 = `QIBAI_WORKSPACE`（设了就用），否则 `$HOME/Documents/qibai`。
+  `anima_mux` 的 `out` 是必填参数，由调用方传绝对路径（建议放工作区内，如
+  `~/Documents/qibai/影片/<名字>.mp4`）；`anima_build` 的 `out` 默认落在 spec 同级的 `build/`；
+  `anima_qa` 的 `out`（`qa_report.json`）必须落在 `build/<id>/` 内，Studio 才读得到。
+  控制台「打开工作区」按钮已与此同根（v45.16 修掉了它指向旧 `~/.qibai_workspace` 的问题）。
+- 渲染会起子进程（chromium）并写帧到项目目录，属重操作；建议由用户在「做一条动画」时显式触发。
+- 技能包落在 `<数据目录>/plugins/<id>/`（平铺），能力包扫描器同时覆盖 `skills/ experts/` 与平铺两层，所以装好的包在技能库里也能看到正文。
