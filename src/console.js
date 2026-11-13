@@ -938,7 +938,42 @@
   function apply(s) {
     loadAudioDevices(); // v18.8 设备枚举
     currentSettings = s;
-    $('setProvider').value = (s.llm && s.llm.provider) || 'doubao';
+    // v45.26：配置里的 provider 可能不在下拉选项里（旧版本的 qwen_local、或者手改的串）。
+    // 直接 .value = 会静默失败，<select> 变成空白，用户以为配置丢了。缺失就动态补一项。
+    const provSel = $('setProvider');
+    const prov = (s.llm && s.llm.provider) || 'doubao';
+    if (provSel && !Array.from(provSel.options).some((o) => o.value === prov)) {
+      provSel.add(new Option(prov + '（当前配置）', prov));
+    }
+    if (provSel) provSel.value = prov;
+    // v45.26：切服务商时把 base_url / model 带成对应默认值，省得用户自己记端点。
+    // 只在「为空」或「仍是某个内置默认」时替换，用户手填的值不会被冲掉。
+    if (provSel && !provSel.dataset.autoFill) {
+      provSel.dataset.autoFill = '1';
+      const HINTS = {
+        doubao: { base: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions', model: 'doubao-pro-32k' },
+        openai: { base: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini' },
+        qwen_local: { base: 'http://127.0.0.1:11434/v1/chat/completions', model: 'qwen3:8b' },
+      };
+      const knownBases = new Set(Object.values(HINTS).map((h) => h.base));
+      const knownModels = new Set(Object.values(HINTS).map((h) => h.model));
+      provSel.addEventListener('change', () => {
+        const v = provSel.value;
+        // 本项目只实现 OpenAI 兼容协议（Bearer + /chat/completions），Anthropic 官方原生 API 不认，
+        // 必须经 one-api 之类的网关转一次，否则接上必然失败——直说，不让人白试。
+        if (v === 'anthropic') {
+          toast('Anthropic 官方原生 API 不支持：请填 OpenAI 兼容网关地址（如 one-api / new-api 中转）');
+          return;
+        }
+        const h = HINTS[v];
+        if (!h) return;
+        const baseEl = $('setBaseUrl');
+        const modelEl = $('setModel');
+        if (!baseEl || !modelEl) return;
+        if (!baseEl.value || knownBases.has(baseEl.value)) baseEl.value = h.base;
+        if (!modelEl.value || knownModels.has(modelEl.value)) modelEl.value = h.model;
+      });
+    }
     $('setBaseUrl').value = (s.llm && s.llm.base_url) || '';
     $('setModel').value = (s.llm && s.llm.model) || '';
     $('setApiKey').value = (s.llm && s.llm.api_key) || '';

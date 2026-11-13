@@ -175,7 +175,7 @@
   const DEFAULT_SETTINGS = {
     llm: {
       provider: 'doubao',
-      base_url: 'https://openai.app.msh.team/v1',
+      base_url: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
       model: 'doubao-pro-32k',
       api_key: '',
     },
