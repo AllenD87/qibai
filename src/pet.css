@@ -725,6 +725,16 @@ body.tauri-mode .chat-bar {
 .hf-btn.hf-on svg { stroke: #2E7D32; }
 .send-btn:enabled:hover { background: #8A6DB0; box-shadow: 0 0 8px rgba(155, 127, 184, .45); }
 .send-btn:disabled { cursor: default; }
+/* v45.21：运行中同一个按钮变「停止」——红底白方块，和紫色发送明显区分开，
+   用户一眼能确认「现在点这里是打断」，不至于以为还是发送。 */
+.send-btn.is-stop {
+  background: #b91c1c;
+  border-color: #b91c1c;
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+}
+.send-btn.is-stop:hover { background: #991b1b; box-shadow: 0 0 8px rgba(185, 28, 28, .45); }
 .chat-bar:hover { border-color: rgba(155, 127, 184, 0.5); }
 .chat-input:focus { background: #fff; box-shadow: 0 0 0 2px rgba(155, 127, 184, .15); }
 

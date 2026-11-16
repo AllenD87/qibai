@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>spec scene</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  body { display: flex; align-items: center; justify-content: center; }
+  #stage { display: block; }
+  #hud { position: fixed; left: 12px; bottom: 10px; font: 12px monospace; color: #9aa; opacity: .7; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="hud"></div>
+
+<script src="./animacore.js"></script>
+<script src="./blocks.js"></script>
+<script>window.__SPEC = __SPEC_JSON__;</script>
+<script>
+/* ------------------------------------------------------------------
+ * SPEC SCENE — data-driven. Do not edit per project; edit scene.json.
+ *   window.__ready = true when fonts are ready
+ *   window.__ANIMA.seek(t) / audit() / fps / duration / shots
+ * Every visual is a pure function of t.
+ * ------------------------------------------------------------------ */
+const S = window.__SPEC;
+const W = S.__width, H = S.__height, FPS = S.fps, DURATION = S.duration;
+const TH = S.theme || {};
+
+const scene = new AC.Scene({
+  canvas: document.getElementById('stage'),
+  width: W, height: H, fps: FPS, duration: DURATION,
+  background: TH.bg || '#0E1116', transparent: !!S.transparent, mount: false,
+});
+const L = AC.makeLayout(S, W, H);
+
+/* ---------- background: never dead ---------- */
+scene.add((ctx, t) => {
+  const bg = TH.bg || '#0E1116';
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+  const drift = AC.tween(t, 0, DURATION, 'inOutSine');
+  const g = ctx.createRadialGradient(
+    W * (0.22 + 0.1 * drift), H * (0.18 + 0.06 * drift), 0,
+    W * 0.3, H * 0.3, Math.max(W, H) * 0.9);
+  g.addColorStop(0, AC.hexA(TH.accent || '#FF5A3C', 0.10));
+  g.addColorStop(0.45, AC.hexA(TH.accent2 || '#2FA38F', 0.045));
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+}, 'bg');
+
+/* ---------- shots ---------- */
+scene.add((ctx, t) => {
+  (S.shots || []).forEach(shot => {
+    if (t < shot.t0 || t > shot.t1) return;
+    const fn = AC.BLOCKS[shot.block];
+    if (!fn) return;
+    const inD = (shot.in && shot.in.dur) || 0.5;
+    const outD = (shot.out && shot.out.dur) || 0.4;
+    const pIn = AC.tween(t, shot.t0, inD, (shot.in && shot.in.ease) || 'outExpo');
+    const pOut = 1 - AC.tween(t, Math.max(shot.t0, shot.t1 - outD), outD, 'inQuad');
+    const alpha = Math.max(0, Math.min(pIn, pOut));
+    if (alpha <= 0.004) return;
+    const type = (shot.in && shot.in.type) || 'fade';
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    if (type === 'rise') {
+      ctx.translate(0, 64 * (1 - pIn));
+    } else if (type === 'scale') {
+      const sc = 0.93 + 0.07 * pIn;
+      ctx.translate(W / 2, H / 2); ctx.scale(sc, sc); ctx.translate(-W / 2, -H / 2);
+    } else if (type === 'maskUp') {
+      const hh = H * pIn;
+      ctx.beginPath(); ctx.rect(0, H - hh, W, hh); ctx.clip();
+    }
+    fn(ctx, t, shot, L, { pIn, pOut }, scene);
+    ctx.restore();
+  });
+}, 'shots');
+
+/* ---------- captions + texture ---------- */
+scene.add((ctx, t) => {
+  AC.renderCaptions(ctx, t, S, L, scene);
+}, 'captions');
+
+scene.add((ctx, t) => {
+  if (TH.vignette) AC.vignette(ctx, W, H, TH.vignette);
+  if (TH.grain) AC.grain(ctx, W, H, Math.round(t * FPS), { alpha: TH.grain });
+}, 'texture');
+
+/* ---------- window bridge ---------- */
+window.__ANIMA = {
+  width: W, height: H, fps: FPS, duration: DURATION,
+  shots: (S.shots || []).map(s => ({ id: s.id, block: s.block, t0: s.t0, t1: s.t1 })),
+  seek(t) { scene.render(t); },
+  audit() { return scene.audit(); },
+  scene, spec: S,
+};
+
+/* ---------- preview player (disabled when ?render=1) ---------- */
+const isRender = location.search.includes('render=1');
+const hud = document.getElementById('hud');
+const audio = S.audio && S.audio.src ? (() => {
+  const a = new Audio(S.audio.src);
+  a.loop = false; a.volume = S.audio.gain == null ? 1 : S.audio.gain;
+  return a;
+})() : null;
+
+if (!isRender) {
+  const stage = document.getElementById('stage');
+  stage.style.width = '100%'; stage.style.height = 'auto'; stage.style.maxHeight = '100vh';
+  let playing = true, t = 0, last = performance.now();
+  const loop = now => {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (playing) {
+      t = (t + dt) % DURATION;
+      if (audio && Math.abs(audio.currentTime - t) > 0.25) audio.currentTime = t;
+    }
+    scene.render(t);
+    hud.textContent = `${t.toFixed(2)}s / ${DURATION}s   [space] play·pause  [←/→] step`;
+    requestAnimationFrame(loop);
+  };
+  addEventListener('keydown', e => {
+    if (e.code === 'Space') {
+      playing = !playing; e.preventDefault();
+      if (audio) { if (playing) audio.play().catch(() => {}); else audio.pause(); }
+    }
+    if (e.code === 'ArrowLeft') { playing = false; t = Math.max(0, t - 1 / FPS); }
+    if (e.code === 'ArrowRight') { playing = false; t = Math.min(DURATION, t + 1 / FPS); }
+  });
+  requestAnimationFrame(loop);
+}
+
+(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => {
+  scene.render(0);
+  window.__ready = true;
+});
+</script>
+</body>
+</html>

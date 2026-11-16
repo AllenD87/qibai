@@ -96,6 +96,13 @@
 前端用户对危险操作（如 `execute_command`）做确认后回调。
 `approve=true` 执行；`false` 取消。返回一段文本说明结果。
 
+语义要点（v45.13 起）：
+
+- **幂等**：同一 `request_id` 被提交两次（弹窗连点 / 语音与手点撞车）不会报 `not found`，而是**回放**上一次结果并注明「这条确认刚才已经执行过，未重复执行」；已取消的再次批准 → 「这条确认已经被取消，不会再执行；需要就重新发起一次」。真正查无此 id 才返回「这条确认已失效：找不到请求 …（可能已经执行过、或应用重启过；需要就重新发起同一操作）」。
+- **任务域放行**：外部插件（command / MCP，如 `node` 拉起的 animacode）批准一次后，**本次任务内**同一插件不再重复弹确认；文件 `write/edit/delete` 按「同一路径 + 同一动作」放行（出片流水线每轮重写同一份 scene.json，反复弹窗等于卡死）；内置高危 `execute_command` / `run_tests` 仍逐次批准。
+- **自动续跑**：前端在批准成功后自动发送固定口令「继续」（`Engine::AUTO_CONTINUE_TOKEN`），单条任务上限 8 次；`send_message` 收到非该口令的文本时清空放行名单（新任务重新确认）。
+- **缺件不产生 pending**：启动命令预检失败时直接返回「找不到可执行 …」+ `QIBAI_EXTRA_PATH` 补救建议，不再弹一个点了必然失败的确认。
+
 ### 8. `set_autostart({ enabled: boolean })` → `boolean`
 开启/关闭开机自启。返回当前是否已启用。
 底层由 `tauri-plugin-autostart` 实现：Windows 注册表 / macOS LaunchAgent / Linux `~/.config/autostart/*.desktop`。
@@ -743,3 +750,53 @@ connect 无 server_url 且无入参 → `missing_server_url`。
 
 - `netsocial.json`（AES-256-GCM 加密信封：anon_id/token/profile/脱敏联系人/脱敏消息）
 - `netsocial.key`（随机 32B 密钥，权限 600；生产建议后续升级为 vault 主口令加密）
+
+## 一·伍补、v45.21 可打断契约（可见 + 可打断，等价豆包的「停止生成」）
+
+目标：用户随时能回答两个问题——**现在跑到哪一步了**、**我能不能打断**。
+以前 `send_message` 是一条同步 await 的黑箱，链一跑起来界面上没有任何出口，
+用户只能重启应用；跑完才知道成功还是失败。
+
+### 36. 新增命令 `stop_message()` → `bool`
+
+```jsonc
+// invoke('stop_message')  →  true = 已置位取消标志
+true
+```
+
+- **只在锁外置位一个 `AtomicBool`**（`AppState.cancel`），不碰 `engine` 锁——
+  `send_message` 整条链持有 engine 锁，若停止命令也去抢锁会被堵到这轮跑完，
+  那就等于停不下来。
+- 幂等：重复调用无副作用；下一轮 `send_message` 开头会把标志清零。
+
+### 37. 新增命令 `stop_state()` → `bool`
+
+只读查询当前是否处于「已叫停但还没停下」状态，供前端按钮显示「正在停…」。
+
+### 38. 取消语义（软停为主，30s 兜底硬停）
+
+| 环节 | 行为 |
+|---|---|
+| 引擎 | `run_agent_loop` 在**每轮请求模型之前**、**每个工具调用之前**各查一次 `executor.cancelled()`，命中即 `Err(LlmError::Cancelled)` 退出 |
+| 正在跑的那个工具 | **允许跑完**（MCP 调用是同步阻塞 await，硬砍会留下半截帧/半截 mp4）；这就是「软停」 |
+| `send_message` 收尾 | `Cancelled` 走**正常收尾**而非报错分支：会话照常落库、`conversation-updated` 与 `llm-status: done` 照常发、`markers.cancelled = true`，气泡文案明确「停在第几步、文件都在」 |
+| 前端（控制台 / 桌宠） | 点停止后起 **30s 计时**；到点仍未收敛则把界面强制交还用户（`hardStop`），并提示「后台这一轮的结果会被丢弃，产物文件仍在」 |
+
+**为什么不误报「连接失败」**：`MaxIterations` / 超时 / `Cancelled` 三条都各有自己的文案分支，
+不允许再落到「（连接失败，请稍后再试）」这条兜底——那会让用户以为网络断了去重连重启。
+
+### 39. 前端入口（两处，都要留）
+
+| 端 | 入口 | 运行中表现 |
+|---|---|---|
+| 控制台 | 输入条右侧 `#stopBtn` | 只有这一轮在跑时才显示；点击发 `stop_message`，按钮转「正在停…」 |
+| 桌宠 | 同一个 `#btnSend` 两副面孔 | 图标由「发送箭头」换成红色方块（`.is-stop`），点击 = 停止；**运行中绝不禁用**（禁用等于断掉唯一打断路径） |
+| 语音/文字 | 运行中输入 `停 / 停一下 / 停止 / 停下 / 别做了 / 取消` | 直接当叫停处理，不排进下一轮队列 |
+
+### 40. 可见性（`qibai://exec-step` 消费口径）
+
+`{ tool, source, args_summary, phase: start|done|pending, elapsed_ms, ok, error? }`
+
+- 控制台：`执行中 · 共 N 步` → 结束转 `已完成 · 共 N 步` / `有 K 步失败` / `已停止 · 停在第 N 步`；
+  工具名按语义化表显示（`anima_render` → 「渲染帧」），原名留在 tooltip。
+- 桌宠气泡：`⟳ 渲染帧 执行中（第 3 步）` / `✓ 第 3 步完成（45s）` / `✗ 第 3 步没成功` / `❓ 等你确认`。

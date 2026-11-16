@@ -273,7 +273,62 @@ pub fn install_pack(
         .map_err(|e| SkillPackError::new("install", format!("安装失败: {e}")))?;
     let _ = std::fs::remove_dir_all(&tmp);
     let _ = written; // 解压产物已复制
-    Ok(manifest)
+    // 按最终落点重载清单：`{PLUGIN_DIR}` 若按暂存目录解析，装完的入口会指向已删除的 /tmp。
+    let installed = ManifestLoader::load(&target)
+        .map_err(|e| SkillPackError::new("manifest", format!("安装后清单重载失败: {e}")))?;
+    Ok(installed)
+}
+
+/// 单个技能包字节上限：前端把文件内容读进内存再传过来，给个与解压预算同量级的闸。
+pub const MAX_PACK_BYTES: u64 = 60 * 1024 * 1024;
+
+/// 导入安装技能包（字节形态）。
+///
+/// WebView 里的 `<input type=file>` 只给得到文件**内容**，拿不到可信路径；
+/// 早先前端传 `demo://文件名` 的假路径，后端去打开 zip 必然失败。
+/// 这里把内容先落成临时 `.qbpk`，再复用 `install_pack` 的同一套安全校验
+/// （路径穿越 / 符号链接 / 体积预算 / manifest / builtin 拒绝），最后删临时文件。
+pub fn install_pack_bytes(
+    file_name: &str,
+    data: &[u8],
+    plugins_dir: &Path,
+) -> Result<crate::plugin_manifest::Manifest, SkillPackError> {
+    if data.is_empty() {
+        return Err(SkillPackError::new("zip", "技能包内容为空"));
+    }
+    if data.len() as u64 > MAX_PACK_BYTES {
+        return Err(SkillPackError::new(
+            "zip",
+            format!("技能包 {} 字节超上限 {MAX_PACK_BYTES}", data.len()),
+        ));
+    }
+    // 只取纯文件名：前端传来的可能是完整路径，不参与拼接。
+    let name = Path::new(file_name)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| SkillPackError::new("zip", "技能包文件名无效"))?
+        .to_string();
+    if !name.to_ascii_lowercase().ends_with(&format!(".{SKILL_PACK_EXT}")) {
+        return Err(SkillPackError::new(
+            "zip",
+            format!("只接受 .{SKILL_PACK_EXT} 技能包，收到 {name}"),
+        ));
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let tmp = std::env::temp_dir().join(format!(
+        "qibai_packbytes_{}_{}_{}",
+        std::process::id(),
+        stamp,
+        name
+    ));
+    std::fs::write(&tmp, data)
+        .map_err(|e| SkillPackError::new("zip", format!("写入临时技能包失败: {e}")))?;
+    let result = install_pack(&tmp, plugins_dir);
+    let _ = std::fs::remove_file(&tmp);
+    result
 }
 
 /// 导出技能包：从 plugins/<id> 打包为 zip。
@@ -399,6 +454,29 @@ mod tests {
         let plugins = root.join("plugins");
         std::fs::create_dir_all(&plugins).unwrap();
         assert!(install_pack(&zip_path, &plugins).is_err());
+    }
+
+    #[test]
+    fn install_pack_bytes_installs_real_pack() {
+        // 用仓库里真实的 animacode 技能包，走「字节传入」这条前端真正会用的路。
+        let qbpk = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../examples/plugins/animacode-v2.2.0.qbpk");
+        if !qbpk.exists() {
+            eprintln!("SKIP: 示例技能包不存在 {}", qbpk.display());
+            return;
+        }
+        let data = std::fs::read(&qbpk).unwrap();
+        let root = tmp_dir("bytes");
+        let plugins = root.join("plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+        let m = install_pack_bytes("animacode-v2.2.0.qbpk", &data, &plugins).unwrap();
+        assert_eq!(m.id, "animacode");
+        assert!(plugins.join("animacode/qibai-plugin.json").exists());
+        assert!(plugins.join("animacode/mcp/server.mjs").exists());
+        // 非 .qbpk 一律拒绝。
+        assert!(install_pack_bytes("animacode.zip", &data, &plugins).is_err());
+        // 空内容拒绝。
+        assert!(install_pack_bytes("a.qbpk", &[], &plugins).is_err());
     }
 
     #[test]

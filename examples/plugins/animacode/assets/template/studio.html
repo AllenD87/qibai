@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>animacode studio</title>
+<style>
+  :root { --bg:#0b0d12; --panel:#141821; --line:#242a36; --ink:#e8ecf4; --dim:#8b94a6; --accent:#ff5a3c; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 "Noto Sans CJK SC",system-ui,sans-serif; }
+  header { display:flex; align-items:center; gap:14px; padding:10px 16px; border-bottom:1px solid var(--line); }
+  header b { font-weight:700; letter-spacing:.5px; }
+  .pill { padding:2px 9px; border-radius:9px; font-size:12px; border:1px solid var(--line); color:var(--dim); }
+  .pill.pass { color:#7fe0b0; border-color:#2b5c46; }
+  .pill.warn { color:#ffce7a; border-color:#6b5220; }
+  .pill.fail { color:#ff8f8f; border-color:#6b2a2a; }
+  main { display:grid; grid-template-columns:1fr 300px; height:calc(100vh - 52px - 54px); overflow:hidden; }
+  .stage { position:relative; display:flex; align-items:center; justify-content:center; padding:18px; background:#07080b; overflow:hidden; min-height:0; }
+  .wrap { position:relative; }
+  #stage, #overlay { display:block; }
+  #overlay { position:absolute; inset:0; pointer-events:none; }
+  aside { border-left:1px solid var(--line); overflow:auto; padding:12px; }
+  .row { display:flex; align-items:center; gap:10px; padding:8px 16px; border-top:1px solid var(--line); }
+  input[type=range] { flex:1; accent-color:var(--accent); }
+  button { background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:7px; padding:5px 11px; cursor:pointer; }
+  button:hover { border-color:#3a4354; }
+  .shot { display:flex; justify-content:space-between; gap:8px; padding:7px 8px; border-radius:6px; cursor:pointer; color:var(--dim); }
+  .shot:hover { background:var(--panel); color:var(--ink); }
+  .shot em { font-style:normal; color:#6f7890; font-variant-numeric:tabular-nums; }
+  .issue { padding:7px 8px; border-radius:6px; color:#ffce7a; cursor:pointer; font-size:13px; }
+  .issue:hover { background:#1d1a14; }
+  h4 { margin:14px 4px 6px; font-size:12px; color:var(--dim); font-weight:600; letter-spacing:1px; text-transform:uppercase; }
+</style>
+</head>
+<body>
+<header>
+  <b id="title">animacode studio</b>
+  <span class="pill" id="spec-pill">—</span>
+  <span class="pill" id="qa-pill">QA —</span>
+  <span style="color:var(--dim)" id="meta"></span>
+</header>
+<main>
+  <section class="stage">
+    <div class="wrap" id="wrap">
+      <canvas id="stage"></canvas>
+      <canvas id="overlay"></canvas>
+    </div>
+  </section>
+  <aside>
+    <h4>时间轴</h4>
+    <div id="shots"></div>
+    <h4>质检</h4>
+    <div id="issues" style="color:var(--dim);padding:0 8px">未找到 qa_report.json</div>
+    <h4>快捷键</h4>
+    <div style="color:var(--dim);padding:0 8px;font-size:13px">空格 播放/暂停 · ←/→ 逐帧 · A 审计框</div>
+  </aside>
+</main>
+<div class="row">
+  <button id="play">▶</button>
+  <input type="range" id="scrub" min="0" step="0.0333" value="0">
+  <span id="clock" style="font-variant-numeric:tabular-nums;color:var(--dim)">0.00 / 0.00</span>
+  <button id="auditBtn">审计框</button>
+</div>
+
+<script src="./animacore.js"></script>
+<script src="./blocks.js"></script>
+<script>window.__SPEC = __SPEC_JSON__;</script>
+<script>
+const S = window.__SPEC, W = S.__width, H = S.__height, FPS = S.fps, DUR = S.duration;
+const stage = document.getElementById('stage');
+const scene = new AC.Scene({ canvas: stage, width: W, height: H, fps: FPS, duration: DUR,
+  background: (S.theme && S.theme.bg) || '#0E1116', transparent: !!S.transparent, mount: false });
+const L = AC.makeLayout(S, W, H);
+scene.add((ctx, t) => {
+  const bg = (S.theme && S.theme.bg) || '#0E1116';
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  const g = ctx.createRadialGradient(W * .25, H * .2, 0, W * .3, H * .3, Math.max(W, H) * .9);
+  g.addColorStop(0, AC.hexA((S.theme && S.theme.accent) || '#FF5A3C', .10));
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}, 'bg');
+scene.add((ctx, t) => {
+  (S.shots || []).forEach(shot => {
+    if (t < shot.t0 || t > shot.t1) return;
+    const fn = AC.BLOCKS[shot.block]; if (!fn) return;
+    const inD = (shot.in && shot.in.dur) || .5, outD = (shot.out && shot.out.dur) || .4;
+    const pIn = AC.tween(t, shot.t0, inD, (shot.in && shot.in.ease) || 'outExpo');
+    const pOut = 1 - AC.tween(t, Math.max(shot.t0, shot.t1 - outD), outD, 'inQuad');
+    const alpha = Math.max(0, Math.min(pIn, pOut));
+    if (alpha <= .004) return;
+    const type = (shot.in && shot.in.type) || 'fade';
+    ctx.save(); ctx.globalAlpha = alpha;
+    if (type === 'rise') ctx.translate(0, 64 * (1 - pIn));
+    else if (type === 'scale') { const sc = .93 + .07 * pIn; ctx.translate(W/2,H/2); ctx.scale(sc,sc); ctx.translate(-W/2,-H/2); }
+    else if (type === 'maskUp') { const hh = H * pIn; ctx.beginPath(); ctx.rect(0, H-hh, W, hh); ctx.clip(); }
+    fn(ctx, t, shot, L, { pIn, pOut }, scene);
+    ctx.restore();
+  });
+}, 'shots');
+scene.add((ctx, t) => AC.renderCaptions(ctx, t, S, L, scene), 'captions');
+
+const overlay = document.getElementById('overlay');
+stage.width = W; stage.height = H;
+let t = (S.shots && S.shots[0] ? S.shots[0].t0 + 0.45 : 0), playing = false, showAudit = false, last = performance.now(), raf = null;
+
+function fit() {
+  const wrap = document.getElementById('wrap');
+  const availW = Math.min(wrap.parentElement.clientWidth, window.innerWidth - 340) - 36;
+  const availH = Math.min(wrap.parentElement.clientHeight, window.innerHeight - 120) - 36;
+  const k = Math.min(availW / W, availH / H);
+  const cw = Math.round(W * k), ch = Math.round(H * k);
+  stage.style.width = cw + 'px'; stage.style.height = ch + 'px';
+  overlay.width = cw; overlay.height = ch;
+  overlay.style.width = cw + 'px'; overlay.style.height = ch + 'px';
+  draw();
+}
+function drawAudit() {
+  const ctx = overlay.getContext('2d'); const k = overlay.width / W;
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  if (!showAudit) return;
+  ctx.strokeStyle = 'rgba(120,200,255,.35)'; ctx.lineWidth = 1;
+  const m = 0.06; ctx.strokeRect(W * m * k, H * m * k, W * (1 - 2*m) * k, H * (1 - 2*m) * k);
+  const a = scene.audit();
+  a.texts.forEach(b => {
+    ctx.strokeStyle = 'rgba(255,90,60,.75)';
+    ctx.strokeRect(b.box[0]*k, b.box[1]*k, b.box[2]*k, b.box[3]*k);
+    ctx.fillStyle = 'rgba(255,90,60,.12)';
+    ctx.fillRect(b.box[0]*k, b.box[1]*k, b.box[2]*k, b.box[3]*k);
+  });
+}
+function draw() {
+  scene.render(t);
+  drawAudit();
+  document.getElementById('clock').textContent = `${t.toFixed(2)} / ${DUR.toFixed(2)}`;
+  document.getElementById('scrub').value = t;
+  document.getElementById('spec-pill').textContent = `${W}×${H} · ${FPS}fps · ${DUR}s`;
+}
+function loop(now) {
+  if (!playing) return;
+  const dt = (now - last) / 1000; last = now;
+  t = Math.min(DUR, t + dt);
+  if (t >= DUR) { t = 0; }
+  draw();
+  raf = requestAnimationFrame(loop);
+}
+document.getElementById('play').onclick = e => {
+  playing = !playing; e.target.textContent = playing ? '❚❚' : '▶';
+  last = performance.now(); if (playing) raf = requestAnimationFrame(loop);
+};
+document.getElementById('scrub').oninput = e => { playing = false; document.getElementById('play').textContent = '▶'; t = +e.target.value; draw(); };
+document.getElementById('auditBtn').onclick = () => { showAudit = !showAudit; drawAudit(); };
+addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); document.getElementById('play').click(); }
+  if (e.code === 'ArrowLeft') { playing = false; t = Math.max(0, t - 1 / FPS); draw(); }
+  if (e.code === 'ArrowRight') { playing = false; t = Math.min(DUR, t + 1 / FPS); draw(); }
+  if (e.key === 'a' || e.key === 'A') { showAudit = !showAudit; drawAudit(); }
+});
+
+const shotsEl = document.getElementById('shots');
+(S.shots || []).forEach(s => {
+  const d = document.createElement('div'); d.className = 'shot';
+  d.innerHTML = `<span>${s.block} · ${s.id}</span><em>${s.t0.toFixed(2)}–${s.t1.toFixed(2)}</em>`;
+  d.onclick = () => { playing = false; t = s.t0 + .05; draw(); };
+  shotsEl.appendChild(d);
+});
+
+fetch('./qa_report.json?t=' + Date.now()).then(r => r.ok ? r.json() : null).then(q => {
+  if (!q) return;
+  const pill = document.getElementById('qa-pill');
+  const v = q.verdict || '—';
+  pill.textContent = 'QA ' + v;
+  pill.className = 'pill ' + (v === 'PASS' ? 'pass' : v === 'FAIL' ? 'fail' : 'warn');
+  const box = document.getElementById('issues');
+  const list = [...(q.issues || []), ...(q.warnings || [])];
+  if (!list.length) { box.textContent = '无问题'; return; }
+  box.innerHTML = '';
+  list.forEach(text => {
+    const d = document.createElement('div'); d.className = 'issue'; d.textContent = text;
+    const m = text.match(/(\d+\.\d+)-\d+\.\d+s/);
+    if (m) d.onclick = () => { playing = false; t = +m[1] + .05; draw(); };
+    box.appendChild(d);
+  });
+}).catch(() => {});
+
+addEventListener('resize', fit);
+(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => { fit(); });
+</script>
+</body>
+</html>

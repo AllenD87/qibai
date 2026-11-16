@@ -39,6 +39,21 @@ pub fn is_dangerous_command(command: &str, args: &serde_json::Value) -> bool {
     args.to_string().contains("-rf")
 }
 
+/// 插件目录的绝对路径字符串（Windows 上去掉 canonicalize 的 `\\?\` 前缀）。
+fn plugin_dir_abs(plugin_dir: &Path) -> String {
+    let s = plugin_dir
+        .canonicalize()
+        .unwrap_or_else(|_| plugin_dir.to_path_buf())
+        .display()
+        .to_string();
+    // `\\?\` 前缀只认反斜杠，拼上 `/mcp/server.mjs` 后 node 会找不到脚本，这里就剥掉。
+    #[cfg(windows)]
+    if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        return stripped.to_string();
+    }
+    s
+}
+
 /// 外部插件执行体；内置包不经过这里。
 pub struct SkillAdapter {
     timeout: Duration,
@@ -102,9 +117,16 @@ impl SkillAdapter {
             },
             EntryKind::Mcp => match entry.mcp {
                 Some(ref spec) => {
+                    // 兜底展开 `{PLUGIN_DIR}`：这只清单可能没走过落点解析
+                    // （控制台手配的连接器、旧数据，或只 parse 未 load 的调用）。
+                    // 残留占位符时 node 会把整段当相对路径去 cwd 下找，报
+                    // `Cannot find module '<工程根>/{PLUGIN_DIR}/mcp/server.mjs'`，
+                    // 路径和原因都是错的，用户看不出问题在哪。
+                    let dir = plugin_dir_abs(plugin_dir);
+                    let expand = |s: &str| s.replace("{PLUGIN_DIR}", &dir);
                     let mcp_spec = crate::mcp_client::McpSpec {
-                        command: spec.command.clone(),
-                        args: spec.args.clone(),
+                        command: expand(&spec.command),
+                        args: spec.args.iter().map(|a| expand(a)).collect(),
                     };
                     self.run_mcp(&manifest.id, &mcp_spec, fn_name, args).await
                 }
@@ -145,26 +167,47 @@ impl SkillAdapter {
         if tool.trim().is_empty() {
             return Err("MCP 调用缺少工具名（functions[].name）".to_string());
         }
+        // 工具调用超时与「工具循环 8 轮 / 240s」对齐：
+        // anima_render 渲 450 帧就要 ≈50s，旧的 10s 常量必然超时；
+        // 取 300s 让长工具能跑完，又不会把整个循环拖死。
+        const MCP_CALL_TIMEOUT: Duration = Duration::from_secs(300);
         let mut sessions = self.mcp_sessions.lock().await;
-        if !sessions.contains_key(plugin_id) {
-            let mut sess = crate::mcp_client::McpSession::connect(spec, self.timeout).await?;
-            let tools = sess.list_tools(self.timeout).await?;
-            if !tools.iter().any(|t| t.name == tool) {
-                return Err(format!(
-                    "MCP server 未暴露工具 {tool:?}（可用：{}）",
-                    tools
-                        .iter()
-                        .map(|t| t.name.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
+        // 最多两趟：会话已死（server 崩了 / 早退）时丢弃重建一次再重试。
+        // 以前死会话会一直留在缓存里，之后每次调用都复读同一句
+        // 「MCP server 已退出（stdout 关闭）」，只能重启应用才好。
+        let mut last: Option<String> = None;
+        for attempt in 0..2u8 {
+            if !sessions.contains_key(plugin_id) {
+                let mut sess = crate::mcp_client::McpSession::connect(spec, self.timeout).await?;
+                let tools = sess.list_tools(self.timeout).await?;
+                if !tools.iter().any(|t| t.name == tool) {
+                    return Err(format!(
+                        "MCP server 未暴露工具 {tool:?}（可用：{}）",
+                        tools
+                            .iter()
+                            .map(|t| t.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+                sessions.insert(plugin_id.to_string(), sess);
             }
-            sessions.insert(plugin_id.to_string(), sess);
+            let sess = sessions
+                .get_mut(plugin_id)
+                .ok_or_else(|| "MCP 会话建立失败".to_string())?;
+            match sess.call_tool(&tool, &call_args, MCP_CALL_TIMEOUT).await {
+                Ok(text) => return Ok(text),
+                Err(e) => {
+                    if attempt == 0 && crate::mcp_client::is_session_dead(&e) {
+                        sessions.remove(plugin_id);
+                        last = Some(e);
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
         }
-        let sess = sessions
-            .get_mut(plugin_id)
-            .ok_or_else(|| "MCP 会话建立失败".to_string())?;
-        sess.call_tool(&tool, &call_args, self.timeout).await
+        Err(last.unwrap_or_else(|| "MCP 会话建立失败".to_string()))
     }
 
     /// 降级路径：回填 LLM 友好告知（契约 §3.3）。
@@ -174,7 +217,9 @@ impl SkillAdapter {
 
     async fn run_command(&self, script: &Path, args: &serde_json::Value) -> Result<String, String> {
         let body = serde_json::to_string(args).map_err(|e| format!("args 序列化失败: {e}"))?;
-        let mut child = tokio::process::Command::new(script)
+        let mut cmd = tokio::process::Command::new(script);
+        crate::proc_env::apply_tokio(&mut cmd);
+        let mut child = cmd
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -255,6 +300,62 @@ pub fn copy_dir_all(from: &Path, to: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+
+    /// 清单里的 `{PLUGIN_DIR}` 没被 load 展开时（parse 出来的清单就是这种），
+    /// adapter 必须按插件实际目录自己补上，否则 node 只会在 cwd 下找不到脚本。
+    #[tokio::test]
+    async fn manifest_with_unexpanded_placeholder_still_runs() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../examples/plugins/animacode");
+        let raw = std::fs::read_to_string(dir.join("qibai-plugin.json")).expect("读清单");
+        let m = crate::plugin_manifest::ManifestLoader::parse(&raw).expect("parse");
+        let arg = m
+            .entry
+            .as_ref()
+            .and_then(|e| e.mcp.as_ref())
+            .map(|s| s.args[0].clone())
+            .expect("mcp 入口");
+        assert!(
+            arg.contains("{PLUGIN_DIR}"),
+            "前提不成立：parse 应当不展开占位符，实际 {arg}"
+        );
+        let out = SkillAdapter::new()
+            .execute(&dir, &m, "anima_schema", &serde_json::json!({}))
+            .await;
+        match out {
+            super::SkillOutcome::Ok(t) => assert!(t.contains("scene.json"), "schema 文本异常：{t}"),
+            o => panic!("应成功执行，实际 {o:?}"),
+        }
+    }
+
+    /// 会话自杀后必须丢弃重连，而不是把「stdout 关闭」原样复读。
+    #[tokio::test]
+    async fn dead_mcp_session_is_dropped_and_reconnected() {
+        let state = std::env::temp_dir().join(format!(
+            "qibai_flaky_mcp_{}.state",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&state);
+        let spec = crate::mcp_client::McpSpec {
+            command: "python3".to_string(),
+            args: vec![
+                "tests/fixtures/mcp_flaky.py".to_string(),
+                state.to_string_lossy().to_string(),
+            ],
+        };
+        let adapter = SkillAdapter::new();
+        let args = serde_json::json!({});
+        let first = adapter.run_mcp("flaky", &spec, "ping", &args).await;
+        assert_eq!(first.as_deref(), Ok("pong-1"), "第一次调用应成功（随后 server 自杀）");
+        let second = adapter.run_mcp("flaky", &spec, "ping", &args).await;
+        assert_eq!(
+            second.as_deref(),
+            Ok("pong-2"),
+            "第二次必须重连到新进程，而不是复读 stdout 关闭：{second:?}"
+        );
+        let _ = std::fs::remove_file(&state);
+    }
+
     use super::*;
     use crate::test_support::unique_temp_dir;
 

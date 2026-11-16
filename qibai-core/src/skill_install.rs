@@ -235,7 +235,12 @@ fn stage_from_zip(path: &Path) -> Result<StagedSkill, InstallError> {
     let mut total: u64 = 0;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).map_err(|e| InstallError::Rejected(e.to_string()))?;
-        let name = entry.name().to_string();
+        // zip 9：name() 返回 Result<Cow<str>, ZipError>（2.x 是 &str）。
+        // 取不到名字说明条目头已损坏，按拒收处理，不放行。
+        let name = entry
+            .name()
+            .map_err(|e| InstallError::Rejected(format!("zip 条目名不可读：{e}")))?
+            .to_string();
         // 拒 .. 与绝对路径
         if name.contains("..") || name.starts_with('/') || name.starts_with('\\') {
             let _ = std::fs::remove_dir_all(&tmp);

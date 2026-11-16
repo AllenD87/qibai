@@ -121,6 +121,7 @@
 **不止这 14 个，还能往外长：**
 
 - **技能包**：`qibai-plugin.json` + 脚本打包成 zip，控制台里导入即装，不用改主程序。
+- **自带一个真样例**：`examples/plugins/animacode`（动画成片连接器，MCP 五工具：schema / build / render / qa / mux），装进技能库后模型能直接调用出片，说明见 [docs/ANIMACODE_MCP.md](docs/ANIMACODE_MCP.md)。
 - **专家插件**：一份人设提示词 + 一份技能白名单 + 音色/形象绑定。装一个「代码审查专家」，它就只会用读代码的工具，说话方式也换一套。
 - **MCP**：标准 stdio JSON-RPC 客户端，外部工具统一命名 `mcp__<server>__<tool>`；**默认配置为空 → 一个子进程都不启动**。
 - **自定义连接器**：控制台里填一条就能接一个新能力——`Mcp`（command + args）或 `Http`（POST url + headers），运行时物化成插件。
@@ -363,6 +364,8 @@ cargo tauri build
 - **联网社交是可选模块**：`server/` 需要 Node ≥ 22.5 与内置 `node:sqlite`，默认不启用；不配置服务端地址时客户端完全本地。
 - **三平台覆盖不均**：Windows / macOS 为主力验证平台，Linux 依赖较新的 webkit2gtk 4.1，部分发行版需自行装运行时。
 - **美术帧不在仓库里**：见 [`docs/ASSETS.md`](docs/ASSETS.md)，从 Release 附件获取。
+- **MCP 连接器目前只支持 stdio**：`HTTP` 运输是占位实现，填了 HTTP 地址会在保存时强制标记为
+  `enabled=false`，界面会给出黄条提示——不会假装连上，也不会静默失败。本地/远程 stdio 服务可正常挂载。
 
 ---
 

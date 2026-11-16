@@ -638,6 +638,18 @@ pub async fn run_loop_async(
         let mut exec: Vec<Step> = ready.into_iter().filter(|s| !blocked.contains(&s.id)).collect();
         exec.truncate(max_parallel);
 
+        // v45.16：并行分支实际派发时通知前端。以前这里只有一句注释「调度线 emit」，
+        // 事件从未真正发出，控制台的 `qibai://task-branches` 监听一直在空等。
+        sink.emit(
+            "qibai://task-branches",
+            serde_json::json!({
+                "task_id": t.id,
+                "parallel": exec.len(),
+                "max_parallel": max_parallel,
+                "step_ids": exec.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
+            }),
+        );
+
         // 5) confirm 步先标 WaitingConfirm（并发分支跑完后再停）
         for s in &confirm_steps {
             if let Some(sm) = t.plan.as_mut().unwrap().steps.iter_mut().find(|x| x.id == s.id) {
@@ -829,13 +841,13 @@ mod tests {
         fn new(items: Vec<Result<crate::llm_client::ChatResponse, crate::llm_client::LlmError>>) -> Self {
             Self { responses: std::sync::Mutex::new(std::collections::VecDeque::from(items)), systems: std::sync::Mutex::new(Vec::new()) }
         }
-        fn systems(&self) -> Vec<String> { self.systems.lock().unwrap().clone() }
+        fn systems(&self) -> Vec<String> { self.systems.lock().unwrap_or_else(|e| e.into_inner()).clone() }
     }
     #[async_trait::async_trait]
     impl crate::llm_client::LlmProvider for ScriptedProvider {
         async fn chat(&self, req: crate::llm_client::ChatRequest) -> Result<crate::llm_client::ChatResponse, crate::llm_client::LlmError> {
-            self.systems.lock().unwrap().push(req.system.clone());
-            let mut g = self.responses.lock().unwrap();
+            self.systems.lock().unwrap_or_else(|e| e.into_inner()).push(req.system.clone());
+            let mut g = self.responses.lock().unwrap_or_else(|e| e.into_inner());
             g.pop_front().unwrap_or(Err(crate::llm_client::LlmError::Api("exhausted".into())))
         }
     }
@@ -1074,7 +1086,7 @@ mod tests {
     #[async_trait::async_trait]
     impl crate::llm_client::LlmProvider for FixedProvider {
         async fn chat(&self, req: crate::llm_client::ChatRequest) -> Result<crate::llm_client::ChatResponse, crate::llm_client::LlmError> {
-            self.systems.lock().unwrap().push(req.system.clone());
+            self.systems.lock().unwrap_or_else(|e| e.into_inner()).push(req.system.clone());
             let c = self.current.fetch_add(1, Ordering::SeqCst) + 1;
             let mut p = self.peak.load(Ordering::SeqCst);
             while c > p {
@@ -1098,7 +1110,7 @@ mod tests {
     /// 必测①：真并行——两个 120ms 分支，串行应 ≥240ms，并行须 <200ms。
     #[test]
     fn parallel_two_branches_actually_concurrent() {
-        let _guard = SETTINGS_LOCK.lock().unwrap();
+        let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("QIBAI_DATA_DIR");
         let tmp = tmp_root("p1");
         let store = TaskStore::from_tasks_root(&tmp);
@@ -1125,7 +1137,7 @@ mod tests {
     /// 必测②：上限——5 个无依赖分支，max_parallel=3，峰值 ≤3。
     #[test]
     fn parallel_max_concurrency_capped() {
-        let _guard = SETTINGS_LOCK.lock().unwrap();
+        let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("QIBAI_DATA_DIR");
         let tmp = tmp_root("p2");
         let store = TaskStore::from_tasks_root(&tmp);
@@ -1307,7 +1319,7 @@ mod tests {
     /// 必测⑧：settings.task_parallel_max=1 时峰值并发=1（所有分支串行）。
     #[test]
     fn settings_parallel_max_1_forces_serial() {
-        let _guard = SETTINGS_LOCK.lock().unwrap();
+        let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tmp_root("cfg1");
         // 把 QIBAI_DATA_DIR 指向临时目录并写 settings.json
         let old = std::env::var("QIBAI_DATA_DIR").ok();
@@ -1343,7 +1355,7 @@ mod tests {
     /// 必测⑨：settings.task_parallel_max=5 时 5 个分支能同时跑（峰值≥4）。
     #[test]
     fn settings_parallel_max_5_allows_concurrency() {
-        let _guard = SETTINGS_LOCK.lock().unwrap();
+        let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tmp_root("cfg5");
         let old = std::env::var("QIBAI_DATA_DIR").ok();
         std::env::set_var("QIBAI_DATA_DIR", &tmp);

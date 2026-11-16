@@ -242,6 +242,7 @@ impl CheckRunner for OsCheckRunner {
         }
         let mut cmd = tokio::process::Command::new(argv[0]);
         cmd.args(&argv[1..]);
+        crate::proc_env::apply_tokio(&mut cmd);
         if let Some(c) = cwd {
             cmd.current_dir(c);
         }
@@ -1303,7 +1304,7 @@ mod tests {
             _cwd: Option<&Path>,
             _env: &[(&str, &str)],
         ) -> Result<CheckOutput, String> {
-            Ok(self.out.lock().unwrap().take().unwrap_or_default())
+            Ok(self.out.lock().unwrap_or_else(|e| e.into_inner()).take().unwrap_or_default())
         }
     }
 

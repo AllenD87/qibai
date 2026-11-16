@@ -4,7 +4,8 @@
 //! - 坏 manifest 拒绝该目录并记录 error，不 panic、不中止整体扫描。
 //! - id 冲突（内置 vs 外部 / 两个外部）→ 拒绝后到者。
 //! - 内置 6 技能以"内置插件包"注册（信任包：grants 默认全授，无需安装确认）。
-//! - 版本管理：记录 version 字符串；同版本重复安装 = no-op，跨版本需先卸载。
+//! - 版本管理：记录 version 字符串；同版本重复安装 = no-op，跨版本 = 就地覆盖升级（保留启停/授权）。
+//! - 重扫用 [`PluginRegistry::rescan`]：先摘旧外部条目再扫，避免"已注册 → 冲突"把好条目覆盖成 error。
 
 use crate::plugin_manifest::{
     EntryKind, EntrySpec, FunctionSpec, Manifest, ManifestLoader, Permission,
@@ -121,6 +122,20 @@ impl PluginRegistry {
         }
         self.plugin_id_for_function(name_or_id)
             .map(|s| s.to_string())
+    }
+
+    /// 插件 id / 函数名 / 对外展示名（manifest.name）→ 插件 id。
+    ///
+    /// 技能页按 `manifest.name` 展示（如「Animacode 动画成片」），插件页按 id
+    /// （`animacode`）；两处开关要落到同一条目，就得能按展示名反查。
+    pub fn resolve_by_display(&self, name_or_id: &str) -> Option<String> {
+        if let Some(id) = self.resolve_toggle_id(name_or_id) {
+            return Some(id);
+        }
+        self.entries
+            .iter()
+            .find(|(_, e)| e.manifest.name == name_or_id)
+            .map(|(id, _)| id.clone())
     }
 
     // ---- 内置插件包（契约 §1） ----
@@ -753,7 +768,50 @@ impl PluginRegistry {
         }
     }
 
+    /// 重扫外部目录：先摘掉旧的外部条目再扫。
+    ///
+    /// 早先 `install()` 落盘后直接调 `scan()`，此时 entries 里已有同 id 条目，
+    /// `scan_one` 走"已注册 → 冲突"分支，把刚装好的条目**覆盖成 error 条目**
+    /// （installed=false / error 有值），结果是装完就调不动，界面显示
+    /// 「id 冲突：animacode 已注册，该目录被忽略」。这里改成重建外部条目，
+    /// 并把旧条目的启停/授权按 id 带回去。
+    pub fn rescan(&mut self) {
+        let mut keep: std::collections::HashMap<String, (bool, HashSet<Permission>)> =
+            std::collections::HashMap::new();
+        for (id, e) in self.entries.iter() {
+            if e.builtin.is_none() && e.installed && e.error.is_none() {
+                keep.insert(id.clone(), (e.enabled, e.grants.clone()));
+            }
+        }
+        let external: Vec<String> = self
+            .entries
+            .iter()
+            .filter(|(_, e)| e.builtin.is_none())
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in external {
+            self.entries.remove(&id);
+        }
+        let alive: std::collections::HashSet<String> = self.entries.keys().cloned().collect();
+        self.by_function.retain(|_, v| alive.contains(v));
+        self.scan();
+        for (id, (on, grants)) in keep {
+            if let Some(e) = self.entries.get_mut(&id) {
+                if e.error.is_none() {
+                    e.enabled = on;
+                    e.grants = grants;
+                }
+            }
+        }
+    }
+
     fn scan_one(&mut self, dir_name: &str, path: &std::path::Path) {
+        // 同一目录重复扫描：保留现值，别误记"已注册"冲突（rescan 之外的重入也要安全）。
+        if let Some(prev) = self.entries.get(dir_name) {
+            if prev.dir.as_deref() == Some(path) {
+                return;
+            }
+        }
         // 已存在同名条目（内置或已安装）→ 冲突，拒绝后到者。
         if self.entries.contains_key(dir_name) {
             self.record_bad(
@@ -852,9 +910,11 @@ impl PluginRegistry {
 
     // ---- 安装 / 卸载 / 启停 / 授权 ----
 
-    /// 安装：复制源目录到 plugins/<id>/。幂等：同 id 同版本 → no-op；跨版本 → 拒绝需先卸载。
+    /// 安装：复制源目录到 plugins/<id>/。
+    /// 幂等：同 id 同版本 → no-op；**同 id 跨版本 → 覆盖升级**（保留启停与已授权限）。
     pub fn install(&mut self, from_dir: &std::path::Path) -> Result<Manifest, String> {
         let m = ManifestLoader::load(from_dir).map_err(|e| e.to_string())?;
+        let mut carry: Option<(bool, HashSet<Permission>)> = None;
         match self.entries.get(&m.id) {
             Some(e) if e.builtin.is_some() => {
                 return Err(format!("{} 为内置插件，不可安装", m.id));
@@ -863,10 +923,8 @@ impl PluginRegistry {
                 if e.manifest.version == m.version {
                     return Ok(m); // 幂等 no-op
                 }
-                return Err(format!(
-                    "{} 已安装 v{}，当前 v{}，需先卸载再安装",
-                    m.id, e.manifest.version, m.version
-                ));
+                // 跨版本：覆盖升级，不再要求"先卸载再安装"。
+                carry = Some((e.enabled, e.grants.clone()));
             }
             _ => {}
         }
@@ -879,7 +937,8 @@ impl PluginRegistry {
         if is_builtin_kind {
             return Err("外部插件声明 kind=builtin 被拒绝（builtin 仅限内置包）".to_string());
         }
-        // 函数名冲突。
+        // 函数名冲突（升级时同名函数属自己，先摘掉自己的旧映射再查，免得自撞）。
+        self.by_function.retain(|_, v| v != &m.id);
         for f in &m.functions {
             if self.by_function.contains_key(&f.name) {
                 return Err(format!("函数名 {} 与已注册插件冲突", f.name));
@@ -889,16 +948,21 @@ impl PluginRegistry {
         let _ = std::fs::remove_dir_all(&target);
         crate::skill_adapter::copy_dir_all(from_dir, &target)
             .map_err(|e| format!("复制插件目录失败: {e}"))?;
+        // 复制后按目标目录重载清单：`{PLUGIN_DIR}` 要按最终落点解析，
+        // 否则 entry 里存的还是源目录/临时目录路径，装完就指向不存在的文件。
+        let m = ManifestLoader::load(&target)
+            .map_err(|e| format!("目标目录清单重载失败: {e}"))?;
         for f in &m.functions {
             self.by_function.insert(f.name.clone(), m.id.clone());
         }
+        let (enabled, grants) = carry.unwrap_or((false, HashSet::new()));
         self.entries.insert(
             m.id.clone(),
             PluginEntry {
                 manifest: m.clone(),
                 installed: true,
-                enabled: false,
-                grants: HashSet::new(),
+                enabled,
+                grants,
                 builtin: None,
                 error: None,
                 dir: Some(target),
@@ -1241,13 +1305,15 @@ mod tests {
         assert!(!reg.entry("com.x.demo").unwrap().enabled); // 外部默认关
         // 幂等 no-op
         reg.install(&from).unwrap();
-        // 改版本 → 拒绝
+        // 改版本 → 覆盖升级（v45.14：不再要求先卸载），版本要更新
         std::fs::remove_dir_all(&from).unwrap();
         write_plugin(&src, "com.x.demo", serde_json::json!({
             "id": "com.x.demo", "type": "skill", "name": "d", "version": "2.0.0",
             "entry": {"kind": "command", "command": "run.sh"}, "functions": [{"name": "fdemo"}]
         }));
-        assert!(reg.install(&from).is_err());
+        let up = reg.install(&src.join("com.x.demo")).unwrap();
+        assert_eq!(up.version, "2.0.0", "同 id 跨版本应就地升级");
+        assert!(reg.entry("com.x.demo").unwrap().installed);
         // 卸载幂等
         reg.uninstall("com.x.demo").unwrap();
         reg.uninstall("com.x.demo").unwrap();
@@ -1274,6 +1340,68 @@ mod tests {
         assert!(reg.entry("com.x.w").unwrap().grants.contains(&Permission::CommandRun));
         // files:write 硬拒
         assert!(reg.grant_permission("com.x.w", Permission::FilesWrite, true).is_err());
+        unsafe { std::env::remove_var("QIBAI_PLUGINS_DIR") };
+    }
+
+    /// 装完后再扫一遍不能把条目毒化成 error（"id 已注册"那条报错的根因）。
+    #[test]
+    fn rescan_after_install_keeps_entry_usable() {
+        let _g = env_lock();
+        let tmp = unique_temp_dir("reg-rescan");
+        unsafe { std::env::set_var("QIBAI_PLUGINS_DIR", &tmp) };
+        let src = unique_temp_dir("reg-rescan-src");
+        write_plugin(&src, "animacode", serde_json::json!({
+            "id": "animacode", "type": "connector", "name": "Animacode 动画成片", "version": "2.2.0",
+            "entry": {"kind": "mcp", "command": "node", "args": ["{PLUGIN_DIR}/mcp/server.mjs"]},
+            "permissions": ["system:launch"],
+            "functions": [{"name": "anima_build"}, {"name": "anima_render"}]
+        }));
+        let mut reg = PluginRegistry::new(&PluginSettings::default(), &SkillsSettings::default());
+        reg.install(&src.join("animacode")).unwrap();
+        reg.rescan();
+        let e = reg.entry("animacode").expect("重扫后条目不能消失");
+        assert!(e.error.is_none(), "重扫不能记冲突：{:?}", e.error);
+        assert!(e.installed, "重扫后应仍是已安装状态");
+        // 启用后工具必须进表（否则"导入成功但调不动"）
+        reg.set_enabled("animacode", true).unwrap();
+        let names: Vec<String> = reg
+            .tool_schemas()
+            .iter()
+            .map(|s| s["function"]["name"].as_str().unwrap_or("").to_string())
+            .collect();
+        assert!(names.contains(&"anima_build".to_string()));
+        unsafe { std::env::remove_var("QIBAI_PLUGINS_DIR") };
+    }
+
+    /// 同 id 跨版本重装：保留启停与授权，不要求先卸载。
+    #[test]
+    fn upgrade_keeps_enabled_and_grants() {
+        let _g = env_lock();
+        let tmp = unique_temp_dir("reg-upgrade");
+        unsafe { std::env::set_var("QIBAI_PLUGINS_DIR", &tmp) };
+        let src = unique_temp_dir("reg-upgrade-src");
+        let mut reg = PluginRegistry::new(&PluginSettings::default(), &SkillsSettings::default());
+        let write = |v: &str| {
+            let _ = std::fs::remove_dir_all(src.join("animacode"));
+            write_plugin(&src, "animacode", serde_json::json!({
+                "id": "animacode", "type": "connector", "name": "Animacode 动画成片", "version": v,
+                "entry": {"kind": "mcp", "command": "node", "args": ["{PLUGIN_DIR}/mcp/server.mjs"]},
+                "permissions": ["system:launch"],
+                "functions": [{"name": "anima_build"}]
+            }));
+        };
+        write("2.1.0");
+        let m = reg.install(&src.join("animacode")).unwrap();
+        assert_eq!(m.version, "2.1.0");
+        reg.set_enabled("animacode", true).unwrap();
+        reg.grant_permission("animacode", Permission::SystemLaunch, true).unwrap();
+        write("2.2.0");
+        let m = reg.install(&src.join("animacode")).unwrap();
+        assert_eq!(m.version, "2.2.0", "同 id 跨版本应就地升级");
+        let e = reg.entry("animacode").unwrap();
+        assert!(e.enabled, "升级应保留启用状态");
+        assert!(e.grants.contains(&Permission::SystemLaunch), "升级应保留已授权限");
+        assert!(e.error.is_none());
         unsafe { std::env::remove_var("QIBAI_PLUGINS_DIR") };
     }
 }

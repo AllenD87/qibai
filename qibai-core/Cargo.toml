@@ -36,7 +36,10 @@ rodio = "0.19"
 sonora = "0.2"
 # 参考信号（云端 24k / espeak-piper ≈22.05k / 未知 48k）统一重采样到 16k。
 rubato = "0.15"
-zip = "2"
+# v45.24：2.x 命中 GHSA-m665-v7pm-7grj（critical）/ GHSA-q7v9 / GHSA-8hxf，
+# 三条的修复版都要求 >= 9.0.0（critical 的具体补丁版 9.0.5）。
+# 技能包 .qbpk 解包正是用它，外部技能包是不可信输入，必须跟上。
+zip = "9.0.5"
 
 # P2 知识库向量化：纯 Rust ONNX 推理（不依赖 onnxruntime 动态库，三平台免系统依赖）。
 tract-onnx = "0.21"

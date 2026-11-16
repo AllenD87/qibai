@@ -35,11 +35,16 @@ fn default_audio_output() -> String {
 }
 
 fn default_provider() -> String {
-    "qwen_local".to_string()
+    // v45.26：与 README「首次启动填 Key、默认对接豆包 Ark」对齐。
+    // 之前这里是 qwen_local，但前端下拉没有该选项，设置页会显示空白；且默认 base_url 为空时
+    // 连本地服务都连不上，用户会误以为「没配模型」。要本地模型的用户在下拉里显式选 qwen_local。
+    "doubao".to_string()
 }
 
 fn default_model() -> String {
-    "deepseek-chat".to_string()
+    // 与 `Default::default()` 保持一致——以前这里回退 deepseek-chat，而 Default 给的是 Qwen，
+    // 同一个 provider 配两个不同模型名，缺字段的老配置会莫名其妙指向云端 deepseek。
+    "doubao-pro-32k".to_string()
 }
 
 /// LLM 提供商配置。api_key 为空字符串时，运行时优先读环境变量 `DOUBAO_API_KEY`。
@@ -81,12 +86,12 @@ pub struct BackupLlmConfig {
 impl Default for LlmSettings {
     fn default() -> Self {
         Self {
-            provider: "qwen_local".to_string(),
-            // 隐私路由：不再硬编码内网明文 HTTP IP 端点（100.92.x.x 为开发机临时地址）。
-            // 默认空——全新用户/损坏回退时必须显式在设置页填 base_url，否则 LLM 调用报错提示配置。
-            // 已有 settings.json 的用户不受影响（文件里的值原样加载）。
-            base_url: String::new(),
-            model: "Qwen/Qwen3.6-35B-A3B".to_string(),
+            provider: "doubao".to_string(),
+            // 隐私路由：不硬编码任何内网/开发机地址（旧版本的 100.92.x.x 已移除）。
+            // 这里给豆包 Ark 的公开端点，让「首次启动只填 Key」能用；要用本地模型就把 provider
+            // 切到 qwen_local 并填自己的 http://127.0.0.1:xxxx/v1。
+            base_url: "https://ark.cn-beijing.volces.com/api/v3/chat/completions".to_string(),
+            model: "doubao-pro-32k".to_string(),
             api_key: String::new(),
             // v30：连续对话记忆默认开启（用户明确诉求）；老配置文件已序列化的 false 值
             // 由 Engine 侧强制记忆逻辑兜底（见 engine.rs send_message 注释）。
@@ -721,10 +726,10 @@ mod tests {
     #[test]
     fn defaults_are_sane() {
         let s = Settings::default();
-        // 隐私路由：默认 base_url/api_key 为空（不再硬编码内网 IP/测试 key），需用户显式配置。
-        assert_eq!(s.llm.provider, "qwen_local");
-        assert_eq!(s.llm.base_url, "");
-        assert_eq!(s.llm.model, "Qwen/Qwen3.6-35B-A3B");
+        // 默认对接豆包 Ark（与 README 口径一致）；要本地模型由用户在设置页显式选 qwen_local。
+        assert_eq!(s.llm.provider, "doubao");
+        assert_eq!(s.llm.base_url, "https://ark.cn-beijing.volces.com/api/v3/chat/completions");
+        assert_eq!(s.llm.model, "doubao-pro-32k");
         assert_eq!(s.llm.api_key, "");
         assert!(s.skills.total_enabled);
         assert_eq!(s.intimacy_level, 1);
