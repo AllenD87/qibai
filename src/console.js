@@ -2363,16 +2363,16 @@
     { gate: 'assistant_skills', label: '助理技能（打开应用/文件夹、设提醒）', kind: 'active', level: 4 },
     { gate: 'vault', label: '本地密码保险箱', kind: 'active', level: 4 },
     { gate: 'mood_empathy', label: '心情识别增强', kind: 'active', level: 5 },
-    { gate: 'screen_guard', label: '全屏守护', kind: 'placeholder', level: 5 },
+    { gate: 'screen_guard', label: '全屏守护', kind: 'active', level: 5 },
     { gate: 'performance', label: '表演系统（节日彩蛋接口）', kind: 'active', level: 6 },
     { gate: 'dressup', label: '形象换装', kind: 'placeholder', level: 6 },
     { gate: 'storyline_1', label: '专属剧情线一（对话彩蛋模板）', kind: 'active', level: 7 },
     { gate: 'anniversary', label: '纪念日自动庆祝（纪念日设置）', kind: 'active', level: 7 },
-    { gate: 'sleep_guard', label: '息屏守护', kind: 'placeholder', level: 8 },
-    { gate: 'voice_mode', label: '语音陪伴模式', kind: 'placeholder', level: 8 },
+    { gate: 'sleep_guard', label: '息屏守护', kind: 'active', level: 8 },
+    { gate: 'voice_mode', label: '语音陪伴模式', kind: 'active', level: 8 },
     { gate: 'storyline_2', label: '专属剧情线二（双人彩蛋）', kind: 'active', level: 9 },
     { gate: 'ceremony', label: '缔结仪式结局演出（文字+CSS 动效）', kind: 'active', level: 10 },
-    { gate: 'batch_skills', label: '高级助理批量技能', kind: 'placeholder', level: 10 },
+    { gate: 'batch_skills', label: '高级助理批量技能', kind: 'active', level: 10 },
   ];
 
   // 展示元数据：9 个成就（镜像 §5）
@@ -2508,7 +2508,7 @@
         const tag = document.createElement('span');
         tag.className = 'ig-tag' + (item.kind === 'placeholder' ? ' ph' : '');
         tag.textContent = item.open
-          ? (item.kind === 'placeholder' ? '已解锁·占位' : '可用')
+          ? (item.kind === 'placeholder' ? '已解锁·规划中' : '可用')
           : 'L' + lv + ' 解锁';
         row.appendChild(mark); row.appendChild(label); row.appendChild(tag);
         box.appendChild(row);

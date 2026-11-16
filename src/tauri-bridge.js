@@ -1023,16 +1023,16 @@
     { gate: 'assistant_skills', required_level: 4, label: '助理技能（打开应用/文件夹、设提醒）', kind: 'active' },
     { gate: 'vault', required_level: 4, label: '本地密码保险箱', kind: 'active' },
     { gate: 'mood_empathy', required_level: 5, label: '心情识别增强', kind: 'active' },
-    { gate: 'screen_guard', required_level: 5, label: '全屏守护', kind: 'placeholder' },
+    { gate: 'screen_guard', required_level: 5, label: '全屏守护', kind: 'active' },
     { gate: 'performance', required_level: 6, label: '表演系统（节日彩蛋接口）', kind: 'active' },
     { gate: 'dressup', required_level: 6, label: '形象换装', kind: 'placeholder' },
     { gate: 'storyline_1', required_level: 7, label: '专属剧情线一（对话彩蛋模板）', kind: 'active' },
     { gate: 'anniversary', required_level: 7, label: '纪念日自动庆祝（纪念日设置）', kind: 'active' },
-    { gate: 'sleep_guard', required_level: 8, label: '息屏守护', kind: 'placeholder' },
-    { gate: 'voice_mode', required_level: 8, label: '语音陪伴模式', kind: 'placeholder' },
+    { gate: 'sleep_guard', required_level: 8, label: '息屏守护', kind: 'active' },
+    { gate: 'voice_mode', required_level: 8, label: '语音陪伴模式', kind: 'active' },
     { gate: 'storyline_2', required_level: 9, label: '专属剧情线二（双人彩蛋）', kind: 'active' },
     { gate: 'ceremony', required_level: 10, label: '缔结仪式结局演出（文字+CSS 动效）', kind: 'active' },
-    { gate: 'batch_skills', required_level: 10, label: '高级助理批量技能', kind: 'placeholder' },
+    { gate: 'batch_skills', required_level: 10, label: '高级助理批量技能', kind: 'active' },
   ];
 
   // 成就（冻结 §5：判定时机=每次 intimacy_event 后重算）

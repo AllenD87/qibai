@@ -104,16 +104,21 @@ pub const GATES: [GateInfo; 21] = [
     GateInfo { gate: "assistant_skills", required_level: 4, label: "助理技能（打开应用/文件夹、设提醒）", kind: "active" },
     GateInfo { gate: "vault", required_level: 4, label: "本地密码保险箱", kind: "active" },
     GateInfo { gate: "mood_empathy", required_level: 5, label: "心情识别增强", kind: "active" },
-    GateInfo { gate: "screen_guard", required_level: 5, label: "全屏守护", kind: "placeholder" },
+    // v45.30：全屏守护已实装（`guard.rs` + `start_guard_performance` + 宠物右键「守护我」/语音指令），
+    // 旧标注「placeholder」是过时的，会让已解锁的用户以为功能不存在。
+    GateInfo { gate: "screen_guard", required_level: 5, label: "全屏守护", kind: "active" },
     GateInfo { gate: "performance", required_level: 6, label: "表演系统（节日彩蛋接口）", kind: "active" },
     GateInfo { gate: "dressup", required_level: 6, label: "形象换装", kind: "placeholder" },
     GateInfo { gate: "storyline_1", required_level: 7, label: "专属剧情线一（对话彩蛋模板）", kind: "active" },
     GateInfo { gate: "anniversary", required_level: 7, label: "纪念日自动庆祝（纪念日设置）", kind: "active" },
-    GateInfo { gate: "sleep_guard", required_level: 8, label: "息屏守护", kind: "placeholder" },
-    GateInfo { gate: "voice_mode", required_level: 8, label: "语音陪伴模式", kind: "placeholder" },
+    // v45.30：息屏是守护演出的可选收尾动作（设置页「收尾动作 = 息屏」→ guard_system_action sleep），已可用。
+    GateInfo { gate: "sleep_guard", required_level: 8, label: "息屏守护", kind: "active" },
+    // v45.30：语音陪伴已实装（语音输入 / 朗读 / 双工打断 / 音色选择都在设置页有开关）。
+    GateInfo { gate: "voice_mode", required_level: 8, label: "语音陪伴模式", kind: "active" },
     GateInfo { gate: "storyline_2", required_level: 9, label: "专属剧情线二（双人彩蛋）", kind: "active" },
     GateInfo { gate: "ceremony", required_level: 10, label: "缔结仪式结局演出（文字+CSS 动效）", kind: "active" },
-    GateInfo { gate: "batch_skills", required_level: 10, label: "高级助理批量技能", kind: "placeholder" },
+    // v45.30：批量技能已实装（任务面板的子任务并行编排，`task_orchestrator`）。
+    GateInfo { gate: "batch_skills", required_level: 10, label: "高级助理批量技能", kind: "active" },
 ];
 
 pub fn gate_info(gate: &str) -> Option<&'static GateInfo> {

@@ -100,24 +100,26 @@ companion 上报按**累计陪伴分钟**结算，加成频率随连续时长递
 | `preference_memory` | 3 | 记住偏好（作息/常用软件） | active |
 | `boot_greeting` | 3 | 开机问候 | active |
 | `assistant_skills` | 4 | 助理技能（打开应用/文件夹、设提醒） | active |
-| `vault` | 4 | 本地密码保险箱 | **placeholder**（仅解锁入口+占位，本体下一迭代） |
+| `vault` | 4 | 本地密码保险箱 | active（`vault.rs` 已实装） |
 | `mood_empathy` | 5 | 心情识别增强 | active |
-| `screen_guard` | 5 | 全屏守护 | **placeholder**（仅入口+占位提示） |
+| `screen_guard` | 5 | 全屏守护 | active（`guard.rs` + 宠物右键「守护我」/语音指令，已实装） |
 | `performance` | 6 | 表演系统（节日彩蛋接口） | active |
 | `dressup` | 6 | 形象换装 | **placeholder**（皮肤切换占位） |
 | `storyline_1` | 7 | 专属剧情线一（对话彩蛋模板） | active |
 | `anniversary` | 7 | 纪念日自动庆祝（纪念日设置） | active |
-| `sleep_guard` | 8 | 息屏守护 | **placeholder**（仅入口） |
-| `voice_mode` | 8 | 语音陪伴模式 | **placeholder**（语音本体后续） |
+| `sleep_guard` | 8 | 息屏守护 | active（守护收尾动作可选「息屏」→ `guard_system_action sleep`） |
+| `voice_mode` | 8 | 语音陪伴模式 | active（语音输入 / 朗读 / 双工打断 / 音色选择均已实装） |
 | `storyline_2` | 9 | 专属剧情线二（双人彩蛋） | active |
 | `ceremony` | 10 | 缔结仪式结局演出（文字+CSS 动效） | active |
-| `batch_skills` | 10 | 高级助理批量技能 | **placeholder**（入口占位） |
+| `batch_skills` | 10 | 高级助理批量技能 | active（任务面板子任务并行编排，`task_orchestrator`） |
 
 - `gate_required(gate) -> u8`（上表）；`is_gate_open(level, gate) = level >= gate_required(gate)`。
 - **真实门控示例（验收断言）**：`assistant_skills` 需 L4。L1 时 `check_gate` 返回 `open=false`；
   积分到 480（L4）后 `open=true`。引擎层技能执行路径（approve_skill / 技能执行）对 active persona
   校验 `assistant_skills` 门控，未开则拒绝并返回明确错误。
-- placeholder 类型仅影响 UI 展示（"即将解锁"样式），不影响门控判定。
+- placeholder 类型只用于「功能确实还没做」的门控，仅影响 UI 展示（"已解锁·规划中"样式），不影响门控判定。
+  v45.30 复核后只剩 `dressup`（形象换装）一个真占位：`screen_guard` / `sleep_guard` / `voice_mode` /
+  `batch_skills` / `vault` 都已实装，旧标注会把能用的功能说成"占位"。
 
 ---
 
@@ -238,7 +240,7 @@ companion 上报按**累计陪伴分钟**结算，加成频率随连续时长递
 - Tab 名 `亲密度`，位置放在「角色」之后。
 - 顶部：当前角色选择 chips（5 角色，默认 active persona，切换即重新拉取）。
 - 等级区：等级徽章（L1-L10 数字+名称）、一句话描述、进度条（当前档内 points/min..max，带百分比）、积分数字、今日已得/上限。
-- 解锁列表：按等级分组展示 21 个门控，已解锁 ✓（active 绿色 / placeholder 黄色"已解锁·占位"），未解锁 🔒（显示所需等级）。
+- 解锁列表：按等级分组展示 21 个门控，已解锁 ✓（active 绿色 / placeholder 橙色"已解锁·规划中"），未解锁 🔒（显示所需等级）。
 - 成就区：9 个成就徽章网格（已达成彩色 / 未达成灰）。
 - 每日任务面板：3 任务卡片（done 勾选状态），可点「补领」？**不**——任务自动完成，面板只读展示；greeting 任务另提供「说早安」快捷按钮（点了即上报 task greeting，等同发送含早安消息）。
 - 纪念日设置行：月/日 输入 + 保存/清除（L7 门控未开时显示"L7 解锁"禁用）。
