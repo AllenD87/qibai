@@ -330,6 +330,62 @@ body.console-body .toast-box { top: 70px; }
   font-size: 13px; color: var(--text);
 }
 
+/* v45.31 形象换装：当前服装 + 一键切换 */
+.inti-outfit {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, .08);
+}
+.io-head {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px;
+}
+.io-label { color: var(--muted, #9aa3b2); }
+.io-cur {
+  flex: 1;
+  font-weight: 600;
+  color: var(--text);
+}
+.io-btn {
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, .16);
+  background: rgba(255, 255, 255, .06);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  min-height: 28px;
+}
+.io-btn:disabled { opacity: .45; cursor: not-allowed; }
+.io-list {
+  margin-top: 8px;
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.io-list.hidden { display: none; }
+.io-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, .10);
+  background: rgba(255, 255, 255, .04);
+  font-size: 12px;
+  cursor: pointer;
+  min-height: 28px;
+}
+.io-item.is-current {
+  border-color: rgba(120, 200, 255, .65);
+  background: rgba(120, 200, 255, .14);
+}
+.io-item .io-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  flex: 0 0 auto;
+}
+.io-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted, #9aa3b2);
+}
+
 /* 解锁树：按等级分组 */
 .inti-group-head {
   font-size: 12px; font-weight: 600;

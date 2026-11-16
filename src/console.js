@@ -1996,6 +1996,15 @@
   }
   // 语音控制（listener try_hf_command）/唤醒切换/设置页开关 → 实时同步顶栏状态
   listen('qibai://listen-state', () => { refreshHfQuick().catch(() => {}); });
+
+  // v45.31 形象换装：桌宠右键/语音改了服装 → 这里同步（反过来控制台改也发同名事件，桌宠窗收）
+  listen('persona-outfit', (event) => {
+    const p = (event && event.payload) || {};
+    if (!p.outfit) return;
+    if (p.persona_id && intiPersona && p.persona_id !== intiPersona) return;
+    intiOutfitCur = p.outfit;
+    renderIntiOutfit();
+  });
   refreshHfQuick().catch(() => {}); // 启动即对齐
 
   // v21 语音调度：Rust voice_ui_dispatch 命中导航意图后广播 → 切到目标 tab（全部 tab 语音可达）
@@ -2393,6 +2402,120 @@
   let intiState = null;    // get_intimacy_state 结果
   let intiAnnivOpen = null;
 
+  /* v45.31 形象换装：控制台侧的「当前服装 + 一键换」
+   * - 数据源头只有后端一处（get_personas 的 outfit 字段 / get_outfits 的衣柜列表），
+   *   前端不另存一份，避免桌宠右键改完这里还显示旧的。
+   * - 与桌宠同一条写入命令 set_persona_outfit，同一条 L6 门控。 */
+  const INTI_OUTFIT_DOT = {
+    default: '#8a93a6',
+    dawn: '#e6a860',
+    night: '#5b7fc7',
+    mint: '#5fc2a0',
+    sakura: '#e88fa8',
+  };
+  let intiOutfits = null;      // get_outfits 缓存
+  let intiOutfitCur = 'default'; // 当前查看角色的套装 id
+
+  async function loadIntiOutfit() {
+    try {
+      if (!intiOutfits) intiOutfits = await invoke('get_outfits');
+    } catch (e) {
+      intiOutfits = null; // 桥接未就绪：按钮置灰，不假装能换
+    }
+    try {
+      const data = await invoke('get_personas');
+      const list = (data && data.personas) || [];
+      const hit = list.find((p) => (p.id || p.persona_id) === intiPersona);
+      intiOutfitCur = (hit && hit.outfit) || 'default';
+    } catch (e) {
+      intiOutfitCur = 'default';
+    }
+    renderIntiOutfit();
+  }
+
+  function outfitNameOf(id) {
+    const arr = Array.isArray(intiOutfits) ? intiOutfits : [];
+    const hit = arr.find((o) => o.id === id);
+    return (hit && hit.display_name) || (id === 'default' ? '原装' : id);
+  }
+
+  function renderIntiOutfit() {
+    const curEl = $('intiOutfitCur');
+    const btn = $('intiOutfitBtn');
+    const box = $('intiOutfitList');
+    if (!curEl || !btn || !box) return;
+    curEl.textContent = outfitNameOf(intiOutfitCur);
+    const arr = Array.isArray(intiOutfits) ? intiOutfits : [];
+    if (!arr.length) {
+      btn.disabled = true;
+      btn.textContent = '暂不可用';
+      box.innerHTML = '';
+      box.classList.add('hidden');
+      return;
+    }
+    btn.disabled = false;
+    btn.textContent = box.classList.contains('hidden') ? '换一套' : '收起';
+    box.innerHTML = '';
+    arr.forEach((o) => {
+      const item = document.createElement('div');
+      item.className = 'io-item' + (o.id === intiOutfitCur ? ' is-current' : '');
+      item.setAttribute('data-outfit', o.id);
+      item.setAttribute('role', 'button');
+      item.setAttribute('tabindex', '0');
+      const dot = document.createElement('span');
+      dot.className = 'io-dot';
+      dot.style.background = INTI_OUTFIT_DOT[o.id] || '#8a93a6';
+      const nm = document.createElement('span');
+      nm.textContent = o.display_name;
+      if (o.description) item.title = o.description;
+      item.appendChild(dot);
+      item.appendChild(nm);
+      if (o.id === intiOutfitCur) {
+        const tick = document.createElement('span');
+        tick.textContent = '✓';
+        item.appendChild(tick);
+      }
+      const pick = async () => {
+        if (o.id === intiOutfitCur) return;
+        const lv = Number((intiState && intiState.level) || 0);
+        if (lv < 6) {
+          toast(`形象换装要亲密度 L6 才解锁（当前 L${lv || 1}）`);
+          return;
+        }
+        try {
+          await invoke('set_persona_outfit', {
+            persona_id: intiPersona,
+            outfit: o.id,
+          });
+          intiOutfitCur = o.id;
+          renderIntiOutfit();
+          toast(`换成「${o.display_name}」啦`);
+        } catch (e) {
+          toast('换装失败：' + (((e && e.message) || e) + '').slice(0, 36));
+        }
+      };
+      item.addEventListener('click', pick);
+      item.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); pick(); }
+      });
+      box.appendChild(item);
+    });
+  }
+
+  function bindIntiOutfit() {
+    const btn = $('intiOutfitBtn');
+    const box = $('intiOutfitList');
+    if (!btn || !box || btn.dataset.bound === '1') return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      const willOpen = box.classList.contains('hidden');
+      if (willOpen) box.classList.remove('hidden');
+      else box.classList.add('hidden');
+      btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+      renderIntiOutfit();
+    });
+  }
+
   async function loadIntimacyTab() {
     if (!intiPersona) {
       try {
@@ -2448,6 +2571,9 @@
     renderIntiAch();
     renderIntiTasks();
     renderIntiAnniv();
+    // v45.31：服装面板跟着亲密度一起刷新（门控要用最新的 level）
+    bindIntiOutfit();
+    loadIntiOutfit().catch(() => {});
   }
 
   function renderIntiLevel() {

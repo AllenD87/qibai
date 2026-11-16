@@ -1031,6 +1031,17 @@
         setLocked(false);
         return '好，解锁啦，可以继续拖着我玩～';
       } },
+    /* ---- v45.31 形象换装（与 Rust voice_ui_cmd::SetOutfit / OutfitList 对齐）---- */
+    // 两种说法：①点名套装（「换成夜色」「穿薄荷」）②只问衣柜（「换装」「有什么衣服」）。
+    // 「换成」不单独成条：否则「换成静音」这类会被换装抢走。
+    { re: /(换装|换套衣服|换衣服|换身衣服|换套装|有什么衣服|衣柜)|(换成|换上|换回|穿)[^，。？]{0,6}(原装|出厂|默认|晨光|暖调|暖色|夜色|冷调|冷色|薄荷|清新|青绿|樱粉|樱花|粉色)/,
+      fn: async (text) => {
+        const id = voiceOutfitIdOf(text);
+        if (id) return await chooseOutfit(id);
+        // 只说「换装」没指哪套 → 念一遍衣柜，不乱切
+        const names = OUTFIT_ORDER.map((k) => OUTFIT_STYLE[k].name).join('、');
+        return `现在有这几套：${names}。想换哪套跟我说就行～`;
+      } },
     // 静音 / 取消静音（与按钮 toggleQuietMode 同一路径）
     { re: /(静音|别说话|不要朗读|关闭朗读|关掉声音|把声音关了)/,
       fn: () => { if (!state.quietMode) toggleQuietMode(); return '好，已静音，我不朗读了'; } },
@@ -2941,6 +2952,8 @@
   }
 
   /// 用户点了某套装：查门控 → 本地应用 → 落盘。
+  /// 换装：右键点选与语音说出来共用这一条路径。
+  /// 返回一句回话（语音链路要用），右键调用方忽略返回值即可。
   async function chooseOutfit(outfitId) {
     let level = 0;
     try {
@@ -2950,8 +2963,9 @@
       level = 0; // 读不到就当未解锁
     }
     if (level < OUTFIT_UNLOCK_LEVEL) {
-      toast(`形象换装要亲密度 L${OUTFIT_UNLOCK_LEVEL} 才解锁（当前 L${level || 1}）`, 2400);
-      return;
+      const msg = `形象换装要亲密度 L${OUTFIT_UNLOCK_LEVEL} 才解锁（当前 L${level || 1}）`;
+      toast(msg, 2400);
+      return `形象换装要亲密度 L${OUTFIT_UNLOCK_LEVEL} 才解锁，现在才 L${level || 1}，再聊聊嘛～`;
     }
     setOutfitLocal(outfitId);
     ctxOutfitList.classList.add('hidden');
@@ -2960,9 +2974,33 @@
     try {
       await invoke('set_persona_outfit', { persona_id: state.persona, outfit: outfitId });
       toast(`换成「${OUTFIT_STYLE[outfitId].name}」啦`, 1600);
+      return `换成「${OUTFIT_STYLE[outfitId].name}」啦～`;
     } catch (e) {
       toast('换装保存失败：' + (((e && e.message) || e) + '').slice(0, 40), 2400);
+      return '换装没存上，这套我没记住，要不再试一次？';
     }
+  }
+
+  /// 从一句话里认出想换哪套（与 Rust voice_ui_cmd::outfit_id_of 同一套别名表）。
+  /// 先判有没有换装动词，避免「今晚夜色不错」被误伤。
+  function voiceOutfitIdOf(text) {
+    const s = String(text || '');
+    if (!/换|穿|衣柜/.test(s)) return null;
+    // 官方名优先
+    for (const k of OUTFIT_ORDER) {
+      if (s.includes(OUTFIT_STYLE[k].name)) return k;
+    }
+    const ALIASES = [
+      ['原装', 'default'], ['出厂', 'default'], ['原来那套', 'default'], ['默认', 'default'],
+      ['晨光', 'dawn'], ['暖调', 'dawn'], ['暖色', 'dawn'],
+      ['夜色', 'night'], ['冷调', 'night'], ['冷色', 'night'],
+      ['薄荷', 'mint'], ['清新', 'mint'], ['青绿', 'mint'],
+      ['樱粉', 'sakura'], ['樱花', 'sakura'], ['粉色', 'sakura'],
+    ];
+    for (const [alias, id] of ALIASES) {
+      if (s.includes(alias) && OUTFIT_STYLE[id]) return id;
+    }
+    return null;
   }
 
   /// 展开/收起服装列表。

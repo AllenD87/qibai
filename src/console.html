@@ -245,6 +245,15 @@
         <span id="intiPoints">总积分 0</span>
         <span id="intiDaily">今日已得 0/60</span>
       </div>
+      <!-- v45.31 形象换装：和桌宠右键「换装」共用同一条后端命令，改哪边另一边都会同步 -->
+      <div class="inti-outfit">
+        <div class="io-head">
+          <span class="io-label">当前服装</span>
+          <span class="io-cur" id="intiOutfitCur">原装</span>
+          <button class="io-btn" id="intiOutfitBtn" data-role="inti-outfit-toggle" aria-expanded="false">换一套</button>
+        </div>
+        <div class="io-list hidden" id="intiOutfitList"></div>
+      </div>
     </div>
 
     <div class="settings-card">

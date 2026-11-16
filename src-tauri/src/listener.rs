@@ -1451,6 +1451,22 @@ pub(crate) async fn run_voice_ui_cmd(
             Ok(()) => m.reply,
             Err(e) => format!("切换形象失败：{e}"),
         },
+        // v45.31 换装：语音说的和右键点的是同一条路径（同一个 engine 方法 + 同一个广播事件），
+        // 不另开一套写入逻辑，避免两边状态漂。
+        UiCmd::SetOutfit(id) => {
+            let pid = engine.lock().await.personas.active_persona().to_string();
+            match engine.lock().await.set_persona_outfit(&pid, &id) {
+                Ok(()) => {
+                    let _ = app.emit(
+                        "persona-outfit",
+                        serde_json::json!({ "persona_id": pid, "outfit": id }),
+                    );
+                    m.reply
+                }
+                Err(e) => format!("换装没成功：{e}"),
+            }
+        }
+        UiCmd::OutfitList => m.reply,
         UiCmd::Lock => {
             let pid = engine.lock().await.personas.active_persona().to_string();
             let ok = engine

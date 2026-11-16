@@ -28,6 +28,10 @@ pub enum UiCmd {
     Lock,
     /// 解除桌宠锁定。
     Unlock,
+    /// 形象换装（v45.31）：参数 = 服装 id（default/dawn/night/mint/sakura），作用于 active persona。
+    SetOutfit(String),
+    /// 询问当前衣柜：无副作用，只把可用套装念一遍（用户只说「换装」时用，不乱切）。
+    OutfitList,
     /// 全局静音（关闭 TTS 出声）。
     MuteOn,
     /// 取消静音。
@@ -144,6 +148,48 @@ const NAV_MAP: &[(&str, &[&str])] = &[
     ("pk", &["猜拳"]),
     ("codecheck", &["代码检查", "代码审查", "代码体检"]),
 ];
+
+/// 从一句话里认出想换哪套服装（v45.31）。
+///
+/// 两步：先要求句子里有换装动词（「换 / 穿 / 衣柜」等），再用官方 display_name
+/// 与口语别名匹配。**先判动词**是关键——否则「今晚夜色不错」会被当成换夜色冷调。
+fn outfit_id_of(text: &str) -> Option<&'static str> {
+    const VERBS: &[&str] = &["换", "穿", "衣柜", "换装"];
+    if !VERBS.iter().any(|v| text.contains(v)) {
+        return None;
+    }
+    // 官方名优先（含「晨光暖调」这类全称）
+    for o in crate::personas::OUTFITS {
+        if text.contains(o.display_name) {
+            return Some(o.id);
+        }
+    }
+    // 口语别名 → 服装 id。顺序即优先级：越具体的越靠前。
+    const ALIASES: &[(&str, &str)] = &[
+        ("原装", "default"),
+        ("出厂", "default"),
+        ("原来那套", "default"),
+        ("默认", "default"),
+        ("晨光", "dawn"),
+        ("暖调", "dawn"),
+        ("暖色", "dawn"),
+        ("夜色", "night"),
+        ("冷调", "night"),
+        ("冷色", "night"),
+        ("薄荷", "mint"),
+        ("清新", "mint"),
+        ("青绿", "mint"),
+        ("樱粉", "sakura"),
+        ("樱花", "sakura"),
+        ("粉色", "sakura"),
+    ];
+    for (alias, id) in ALIASES {
+        if text.contains(alias) {
+            return Some(id);
+        }
+    }
+    None
+}
 
 /// 语音指令主匹配入口：先精确后宽泛；未命中返回 None（交给 LLM 闲聊）。
 pub fn match_ui_command(raw: &str) -> Option<UiCmdMatch> {
@@ -305,7 +351,34 @@ pub fn match_ui_command(raw: &str) -> Option<UiCmdMatch> {
         });
     }
 
-    // 4.5) 桌宠窗口形态切换（先于极简/完整匹配：形态词更具体，防「小窗」落极简）。
+    // 4.5) 形象换装（v45.31）。夹在锁定与窗口形态之间：
+    //      - 有明确套装词 → SetOutfit（真切）
+    //      - 只说「换装 / 换衣服」→ OutfitList（念一遍衣柜，不乱切）
+    //      必须先有换装动词才算命中，否则「今天夜色不错」这种闲聊会被误伤。
+    if let Some(oid) = outfit_id_of(text) {
+        let name = crate::personas::OUTFITS
+            .iter()
+            .find(|o| o.id == oid)
+            .map(|o| o.display_name)
+            .unwrap_or(oid);
+        return Some(UiCmdMatch {
+            cmd: UiCmd::SetOutfit(oid.to_string()),
+            reply: format!("换成「{name}」啦～"),
+            args: json!({ "outfit": oid }),
+        });
+    }
+    if contains_any(text, &["换装", "换套衣服", "换衣服", "换身衣服", "换套装", "有什么衣服", "衣柜"])
+        && !text.contains("换回")
+    {
+        let names: Vec<&str> = crate::personas::OUTFITS.iter().map(|o| o.display_name).collect();
+        return Some(UiCmdMatch {
+            cmd: UiCmd::OutfitList,
+            reply: format!("现在有这几套：{}。想换哪套跟我说就行～", names.join("、")),
+            args: json!({}),
+        });
+    }
+
+    // 4.6) 桌宠窗口形态切换（先于极简/完整匹配：形态词更具体，防「小窗」落极简）。
     //      compact=贴边小窗 / large=居中大窗 / min=最小化 / restore=恢复贴边小窗。
     //      含「吸附」的文本走 4.9 吸附开关（贴边吸附/靠边吸附），这里排除，避免形态/开关歧义。
     if contains_any(text, &["贴边", "靠边", "小窗", "小窗口", "缩小点", "变小点", "缩到角落", "靠边站"])
@@ -1014,6 +1087,23 @@ mod tests {
         assert_eq!(cmd_of("帮我调出控制台"), Some(UiCmd::ConsoleOpen));
         assert_eq!(cmd_of("收起控制台"), Some(UiCmd::ConsoleClose));
         assert_eq!(cmd_of("把控制台关了"), Some(UiCmd::ConsoleClose));
+    }
+
+    #[test]
+    fn outfit_switch_and_list() {
+        // v45.31：明确套装词 → 真换
+        assert_eq!(cmd_of("换成夜色冷调"), Some(UiCmd::SetOutfit("night".into())));
+        assert_eq!(cmd_of("穿夜色"), Some(UiCmd::SetOutfit("night".into())));
+        assert_eq!(cmd_of("换晨光暖调"), Some(UiCmd::SetOutfit("dawn".into())));
+        assert_eq!(cmd_of("换薄荷清新"), Some(UiCmd::SetOutfit("mint".into())));
+        assert_eq!(cmd_of("换樱粉柔和"), Some(UiCmd::SetOutfit("sakura".into())));
+        assert_eq!(cmd_of("换回原装"), Some(UiCmd::SetOutfit("default".into())));
+        // 只说「换装」→ 念衣柜，不乱切
+        assert_eq!(cmd_of("换装"), Some(UiCmd::OutfitList));
+        assert_eq!(cmd_of("有什么衣服"), Some(UiCmd::OutfitList));
+        // 无换装动词的闲聊不许误伤
+        assert_eq!(cmd_of("今晚夜色不错"), None);
+        assert_eq!(cmd_of("这件衣服挺好看"), None);
     }
 
     #[test]
