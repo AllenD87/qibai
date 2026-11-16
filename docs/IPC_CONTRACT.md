@@ -76,6 +76,22 @@
 ]
 ```
 
+### 4.1 `get_conversation_since(since)` → `{ total, items }`（v45.29 新增）
+
+控制台 1s 轮询专用。`since` 是前端已渲染的条数，只返回该游标之后的消息：
+
+```jsonc
+{
+  "total": 1387,
+  "items": [ { "role": "user", "content": "在吗", "ts": 1730000002 } ]
+}
+```
+
+- 没有新消息时 `items` 为空、`total === since`，前端直接跳过、不碰 DOM。
+- `total < since`（会话被清空或删除）时，前端自动回退一次全量重建。
+- 老后端没有这个命令时，前端 catch 到错误后退回 `get_conversation` 全量路径（兼容旧版本与 mock 缺失）。
+- 数据源与 `get_conversation` 同一个只读快照（`read_cache`），只克隆尾部切片，不再每秒把整段会话序列化传一遍。
+
 ### 5. `get_skills_status()` → `SkillsStatus`
 ```jsonc
 {

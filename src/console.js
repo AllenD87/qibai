@@ -516,38 +516,95 @@
     }, 150);
   }
 
-  // v20-fix35：变更检测签名（条数+末条ts）——无变化跳过重建，支撑 1s 轮询兜底且不闪烁
+  // v20-fix35：变更检测签名（条数+末条ts）——回退路径用，无变化跳过重建
   let lastConvSig = '';
-  let lastRenderedCount = 0; // v11：增量渲染游标（1386 条全量重建会卡 UI）
-  async function loadConversation() {
+  let lastRenderedCount = 0; // 增量游标：已渲染条数（1386 条全量重建会卡 UI）
+  // v45.29：发送/回复时的乐观气泡是「先画出来」，此刻还不知道落库落到第几条。
+  // 若只往 DOM 追加不同步游标，下一次轮询会把同一条再 append 一次（尾部重复气泡）。
+  // 所以乐观画完打脏标记，让下一次刷新按全量对齐落库结果。
+  let convDirty = false;
+
+  // v45.28：全量重建（首次加载 / 会话被清空时用）
+  async function loadConversationFull() {
+    const my = ++convSeq;
     let list = [];
     try {
       list = await invoke('get_conversation') || [];
     } catch (e) { console.warn(e); return; }
-    const tail = list.length ? (list[list.length - 1].ts || '') : '';
-    const sig = list.length + ':' + tail;
-    if (sig === lastConvSig) return;   // 数据无变化：不重建 DOM（轮询安静、不闪烁）
+    if (my !== convSeq) return;
+    lastRenderedCount = list.length;
+    lastConvSig = list.length + ':' + (list.length ? (list[list.length - 1].ts || '') : '');
+    console.log('[qibai] loadConversation(full):', list.length, '条');
+    $('chatScroll').innerHTML = '';
+    // v18.8-fix28h：单条渲染异常不中断整屏（try/catch 逐条防护）；
+    // v20：doScroll=false 批量渲染后统一滚底一次
+    list.forEach((m) => {
+      try { appendBubble(m.role, m.content, false); }
+      catch (e) { console.warn('[qibai] 渲染单条失败', e, m); }
+    });
+    $('chatScroll').scrollTop = $('chatScroll').scrollHeight;
+  }
+
+  // v45.28：老后端没有 get_conversation_since 时的回退（保留原来的签名去抖）
+  async function loadConversationFallback() {
+    let list = [];
+    try {
+      list = await invoke('get_conversation') || [];
+    } catch (e) { console.warn(e); return; }
+    const sig = list.length + ':' + (list.length ? (list[list.length - 1].ts || '') : '');
+    if (sig === lastConvSig) return;
     lastConvSig = sig;
-    // v11：尾部增量——条数变多且已渲染过 → 只 append 新增消息，不全量重建。
-    // 根治长对话（千条级）每次变更全量 innerHTML 重建导致的卡顿与「不实时」观感。
-    if (lastRenderedCount > 0 && list.length > lastRenderedCount) {
-      const added = list.slice(lastRenderedCount);
-      lastRenderedCount = list.length;
-      added.forEach((m) => {
+    lastRenderedCount = list.length;
+    $('chatScroll').innerHTML = '';
+    list.forEach((m) => {
+      try { appendBubble(m.role, m.content, false); }
+      catch (e) { console.warn('[qibai] 渲染单条失败', e, m); }
+    });
+    $('chatScroll').scrollTop = $('chatScroll').scrollHeight;
+  }
+
+  // v45.28：1s 轮询改增量——只拉「自游标之后的新消息」，不再每秒把整段会话
+  // 序列化传一遍（长对话 1300+ 条时这块是纯开销）。游标 = 已渲染条数。
+  async function loadConversation() {
+    if (convDirty) {
+      convDirty = false;
+      return loadConversationFull();   // 本地乐观气泡 → 按落库结果重建一次，避免重复
+    }
+    const since = lastRenderedCount;
+    let total;
+    let items;
+    try {
+      const r = await invoke('get_conversation_since', { since });
+      total = +((r && r.total) || 0);
+      items = (r && r.items) || [];
+    } catch (e) {
+      return loadConversationFallback();   // 命令不存在（旧后端）→ 回退全量
+    }
+    // 期间已有别的刷新推进了游标 → 本次结果作废，避免重复 append
+    if (lastRenderedCount !== since) return;
+    if (total === since && !items.length) return;   // 没有新消息：不碰 DOM
+    if (total < since) {
+      // 会话变短（清空 / 删除）→ 重新全量
+      lastRenderedCount = 0;
+      return loadConversationFull();
+    }
+    const my = ++convSeq;
+    if (my !== convSeq) return;
+    if (since > 0 && items.length) {
+      // 尾部增量：只 append 新消息，不重建 DOM
+      lastRenderedCount = total;
+      items.forEach((m) => {
         try { appendBubble(m.role, m.content, false); }
         catch (e) { console.warn('[qibai] 增量渲染单条失败', e, m); }
       });
       $('chatScroll').scrollTop = $('chatScroll').scrollHeight;
       return;
     }
-    const my = ++convSeq;            // epoch：在途旧请求返回时丢弃，防旧快照 innerHTML='' 覆盖新渲染
-    if (my !== convSeq) return;
-    console.log('[qibai] loadConversation:', list.length, '条');
-    lastRenderedCount = list.length;
+    // 游标为 0（首次）→ 全量重建
+    lastRenderedCount = total;
+    console.log('[qibai] loadConversation:', total, '条');
     $('chatScroll').innerHTML = '';
-    // v18.8-fix28h：单条渲染异常不中断整屏（try/catch 逐条防护）；
-    // v20：doScroll=false 批量渲染后统一滚底一次
-    list.forEach((m) => {
+    items.forEach((m) => {
       try { appendBubble(m.role, m.content, false); }
       catch (e) { console.warn('[qibai] 渲染单条失败', e, m); }
     });
@@ -657,6 +714,7 @@
     setRunning(true);
     $('chatInput').disabled = true;
     appendBubble('user', text);
+    convDirty = true;   // 这条只是先画出来，落库条数未知 → 下次刷新按全量对齐
     // v45.14：新一轮开始，清掉上轮残留的执行留痕缓存与气泡指针，
     // 防止 core 抢先 emit 的 executions 被挂到上一轮气泡上。
     pendingExec = [];
@@ -683,6 +741,7 @@
       const replyText = (res && res.reply) || '（…）';
       // v45.15：把 core 的假完成标记透传给气泡——护栏命中时挂「⚠ 未执行 · 声称已完成」小标
       appendBubble('assistant', replyText, true, (res && res.markers) ? { markers: res.markers } : null);
+      convDirty = true;
       // v20：乐观追加后请求一次合并刷新（150ms debounce）——全量渲染以落库为准，
       // 消除「事件先到、乐观回复后补」造成的尾部重复气泡
       requestConversationReload();
@@ -5613,21 +5672,57 @@
     guardToast(text, ms);
   }
 
-  // 1) 连点拦截
-  // v45.24：原来只有 1.2s 时间窗——「第一次请求 3 秒才失败，第 2 秒再点一下」
-  // 仍会发出去两条。现在同时看按钮是否已被业务置为 disabled，窗口也放宽到 2.5s，
-  // 覆盖绝大多数后端往返。仍不是事务级锁（真正的事务锁得由业务在 Promise 里持）。
+  // 1) 连点拦截（v45.29 事务级锁）
+  // 旧版是固定 2.5s 时间窗，两头都不对：慢操作（下模型、重建索引）3 秒没跑完，
+  // 第 3 秒的点击会被放过去，白拆一次；快操作又白锁 2.5 秒，用户以为没反应。
+  // 现在锁的寿命跟着「在途事务」走：
+  //   点击 → 立刻上锁
+  //   还有 invoke 在途 → 继续锁（不受 2.5s 限制）
+  //   在途归零且已过最小锁（400ms）→ 立即释放，可以再点
+  //   最长兜底 8s（防 handler 抛异常导致锁永远不释放）
+  // 计数由 tauri-bridge 的 invoke 统一入口维护（本文件拿到的是解构后的本地引用，
+  // 在 window.invoke 上包装是包不到的）。
+  const inflight = () => window.__qibaiInflight || 0;
+
+  const GUARD_MIN_MS = 400;    // 最小锁：挡手抖双击
+  const GUARD_MAX_MS = 8000;   // 兜底：事务异常时也不永久锁死
+  const guardHeld = new Map(); // key -> 上锁时间
+  setInterval(() => {
+    const now = Date.now();
+    const done = [];
+    guardHeld.forEach((at, key) => {
+      const held = now - at;
+      if (held > GUARD_MAX_MS || (inflight() === 0 && held > GUARD_MIN_MS)) done.push(key);
+    });
+    done.forEach((k) => guardHeld.delete(k));
+  }, 200);
+
   document.addEventListener('click', (e) => {
     const btn = e.target && e.target.closest ? e.target.closest('button') : null;
     if (!btn || btn.dataset.async !== '1') return;
-    const now = Date.now();
-    if (btn.disabled || now - (+btn.dataset.lastClick || 0) < 2500) {
+    // 同名按钮共用一个锁位：同一事务的重复点击无论落在哪个副本上都算连点
+    const key = btn.id || btn.dataset.role || String(btn.textContent || '').trim().slice(0, 24);
+    const heldAt = guardHeld.get(key);
+    if (heldAt !== undefined) {
+      const held = Date.now() - heldAt;
+      // 事务没跑完（有 invoke 在途），或还没过最小锁 → 拦
+      if (held < GUARD_MAX_MS && (inflight() > 0 || held < GUARD_MIN_MS)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        throttledToast('dbl', '上一次还没结束，别连点', 2000);
+        return;
+      }
+      guardHeld.delete(key);   // 事务已结束且过了最小锁 → 放行这一次
+    }
+    if (btn.disabled) {
+      // 业务自己置灰的仍然拦（它比时间窗更权威）
       e.preventDefault();
       e.stopImmediatePropagation();
-      throttledToast('dbl', '上一次还没结束，别连点', 2000);
       return;
     }
+    const now = Date.now();
     btn.dataset.lastClick = now;
+    guardHeld.set(key, now);
   }, true);
 
   // 2) 全局异常兜底

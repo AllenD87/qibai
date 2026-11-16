@@ -7,14 +7,14 @@
 
 | 项 | 实测 | 取数方式 |
 |---|---|---|
-| 后端注册命令 | **178** | `src-tauri/src/main.rs` 的 `generate_handler![` 列表逐行数 |
-| 前端调用点 | **270 处** | `scripts/audit_ui_links.py` |
-| 字面命令数 | **147** | 同上（同名命令多次调用只计一次） |
+| 后端注册命令 | **179** | `src-tauri/src/main.rs` 的 `generate_handler![` 列表逐行数 |
+| 前端调用点 | **272 处** | `scripts/audit_ui_links.py` |
+| 字面命令数 | **148** | 同上（同名命令多次调用只计一次） |
 | 按钮总数 | **112** | `console.html` 88 + `pet.html` 24 |
 | 无 `id` 按钮 | **24** | 11 `.ctab` + 5 `.persona-card` + 3 `.set-subtab` + 2 `.ns-subtab` + 3 `pkMoves[data-move]`，全部靠事件委托 |
 | 契约/绑定/事件名问题 | **0** | `python3 scripts/audit_ui_links.py` → EXIT=0 |
 
-**结论**：v45.24 起，178 个命令里没有「前端调用但后端不存在」的，也没有「后端注册但前端零入口」的
+**结论**：v45.24 起，179 个命令里没有「前端调用但后端不存在」的，也没有「后端注册但前端零入口」的
 （`plugin_install` 已被 `skill_pack_install_bytes` 取代、`task_create` 由对话+计划审批创建，
 二者属预期内的零调用）。
 

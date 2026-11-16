@@ -53,25 +53,33 @@
   }
 
   // ---- invoke 统一入口 ----
+  // v45.29：在途事务计数——供控制台「事务级按钮锁」判断操作是否真的跑完。
+  // 前端所有后端调用都从这个入口过，所以这里计数最准（console.js 拿到的是本地解构引用，
+  // 在 window.invoke 上再包一层是包不到的）。
   async function invoke(cmd, args) {
-    if (isTauri) {
-      try {
-        if (global.__TAURI__ && global.__TAURI__.invoke) {
-          return await global.__TAURI__.invoke(cmd, args);
-        }
-        return await global.__TAURI_INTERNALS__.invoke(cmd, args);
-      } catch (err) {
-        console.error('[qibai] invoke failed:', cmd, err);
-        // 诊断：转发前端错误到后端日志（失败静默，不影响主流程）
+    global.__qibaiInflight = (global.__qibaiInflight || 0) + 1;
+    try {
+      if (isTauri) {
         try {
-          if (global.__TAURI_INTERNALS__) {
-            global.__TAURI_INTERNALS__.invoke('debug_log', { msg: 'invoke failed: ' + cmd + ' ' + String(err && err.message ? err.message : err) });
+          if (global.__TAURI__ && global.__TAURI__.invoke) {
+            return await global.__TAURI__.invoke(cmd, args);
           }
-        } catch (e2) { /* ignore */ }
-        throw err;
+          return await global.__TAURI_INTERNALS__.invoke(cmd, args);
+        } catch (err) {
+          console.error('[qibai] invoke failed:', cmd, err);
+          // 诊断：转发前端错误到后端日志（失败静默，不影响主流程）
+          try {
+            if (global.__TAURI_INTERNALS__) {
+              global.__TAURI_INTERNALS__.invoke('debug_log', { msg: 'invoke failed: ' + cmd + ' ' + String(err && err.message ? err.message : err) });
+            }
+          } catch (e2) { /* ignore */ }
+          throw err;
+        }
       }
+      return mockInvoke(cmd, args || {});
+    } finally {
+      global.__qibaiInflight = Math.max(0, (global.__qibaiInflight || 1) - 1);
     }
-    return mockInvoke(cmd, args || {});
   }
 
   // ---- listen 统一入口 ----
@@ -3099,6 +3107,12 @@
         return mockSendMessage(args.text || '');
       case 'get_conversation':
         return Promise.resolve(loadMockConversation());
+      case 'get_conversation_since': {
+        // v45.28：增量拉取，与后端命令同构（total + 尾部 items）
+        const list = loadMockConversation();
+        const since = Math.max(0, Math.min(+((args && args.since) || 0), list.length));
+        return Promise.resolve({ total: list.length, items: list.slice(since) });
+      }
       case 'get_skills_status': {
         const s = loadMockSettings().skills;
         return Promise.resolve({

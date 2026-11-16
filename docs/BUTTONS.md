@@ -59,7 +59,16 @@ button:focus-visible { outline: 2px solid var(--rose); }   /* 键盘可达 */
 
 被拦住时明确说一句「别连点，上一次还在处理」，而不是静默吞掉。
 
-实测证据（playwright 跑真实页面）：`btnSave` 在 200ms 内点两次，**后端只收到 1 次 `save_settings_partial`**。
+**v45.29 起是事务级锁**。旧版固定 2.5 秒时间窗两头都不对：慢操作（下向量模型、重建索引）3 秒没跑完，第 3 秒的点击就被放过去，白拆一次；快操作又白锁 2.5 秒，用户以为点了没反应。现在锁的寿命跟着在途事务走：
+
+- 点击立刻上锁
+- 还有 `invoke` 在途 → 继续锁，不受时间限制
+- 在途归零且过了 400ms 最小锁 → 立即释放，可以再点
+- 最长 8 秒兜底，防 handler 抛异常导致永久锁死
+
+计数点在 `tauri-bridge.js` 的 `invoke` 统一入口（`window.__qibaiInflight`），不是 `window.invoke`——`console.js` 第 13 行从 `QibaiBridge` 解构了本地引用，在全局上包一层是包不到的（这个坑实测踩过一次）。
+
+实测证据（playwright 跑真实页面）：`btnSave` 在 200ms 内点两次，**后端只收到 1 次 `save_settings_partial`**；`btnTasksRefresh` 连点第二次被拦、400ms 后放行；模拟「有请求在途」时，锁稳定持有超过 900ms 仍不放行，在途清零后自动释放。
 
 ### 3. 错误不再只进 devtools
 
@@ -140,7 +149,7 @@ button:focus-visible { outline: 2px solid var(--rose); }   /* 键盘可达 */
 
 1. **没有在真机里逐个点过 112 个按钮。** 本机缺 webkit2gtk 编不了 Tauri 壳，UI 层只能靠 chromium 加载 `file://` 页面 + mock 后端来验。上面所有「实测证据」都是这个方式拿到的，真机行为可能有差别（尤其是需要系统权限的：麦克风、屏幕读取、透明窗口）。
 2. **112 个按钮的完整语义没逐条重写。** 只对 36 个有副作用／易误用的做了说明和防护，其余保持原样——它们本来就有可见文字，加了反而噪音。
-3. **防连点现在是「2.5 秒窗口 + disabled 双保险」，仍不是事务级锁。** 真正的事务锁得由业务在 Promise 里持（点了就把按钮置 disabled 直到结束），目前只有部分按钮这么做了。
+3. **防连点已升级为事务级锁（v45.29）**：锁的生命周期跟「在途 `invoke`」走，不再是固定 2.5 秒时间窗；业务侧置 `disabled` 仍然有效，两者叠加。代价是锁的判定依赖一个全局在途计数——若某个 handler 直接调 `__TAURI_INTERNALS__.invoke` 绕过桥层，那次请求不会被计入。
 4. **HTTP 连接器没有实现，只是把话说明白了。** 要真做需要改 MCP 传输层（stdio → streamable HTTP），属于独立一轮的活。
 5. **停止不杀 MCP 子进程**，与 v45.21 一致：界面收回了，后台那轮会跑完，产物保留。
 6. **`.qbpk` 解包依赖的 `zip` 已从 2.6.1 升到 9.5.1**（GHSA-m665-v7pm-7grj critical 的补丁线是 9.0.5）。升级带来一处 API 变更（`entry.name()` 改为返回 `Result`），已修并补了"条目名不可读即拒收"的分支；但 `src-tauri` 在本机编不了，它的包仍需在具备 webkit2gtk 的机器上跑一次 `cargo build` 才算真验过。

@@ -941,6 +941,21 @@ async fn get_conversation(state: tauri::State<'_, AppState>) -> Result<Vec<serde
     Ok(list)
 }
 
+/// v45.28：会话增量拉取。前端 1s 轮询只需要「自 since 之后的新消息」，
+/// 不必每秒把整段会话再序列化传输一遍（长对话 1300+ 条时这部分是纯开销）。
+/// 快照是预映射好的 Value 列表，这里只 clone 尾部切片。
+#[tauri::command]
+async fn get_conversation_since(
+    state: tauri::State<'_, AppState>,
+    since: usize,
+) -> Result<serde_json::Value, String> {
+    let snap = state.read_cache.read().await;
+    let total = snap.conversation.len();
+    let start = since.min(total);
+    let items: Vec<serde_json::Value> = snap.conversation[start..].to_vec();
+    Ok(serde_json::json!({ "total": total, "items": items }))
+}
+
 #[tauri::command]
 async fn get_skills_status(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
     // v45.3：快照优先，未就绪再退回实时读。
@@ -4497,6 +4512,7 @@ fn main() {
             stop_message,
             stop_state,
             get_conversation,
+            get_conversation_since,
             get_skills_status,
             set_skill_enabled,
             skill_install_stage,
