@@ -104,7 +104,7 @@ companion 上报按**累计陪伴分钟**结算，加成频率随连续时长递
 | `mood_empathy` | 5 | 心情识别增强 | active |
 | `screen_guard` | 5 | 全屏守护 | active（`guard.rs` + 宠物右键「守护我」/语音指令，已实装） |
 | `performance` | 6 | 表演系统（节日彩蛋接口） | active |
-| `dressup` | 6 | 形象换装 | **placeholder**（皮肤切换占位） |
+| `dressup` | 6 | 形象换装 | active（`personas.json` 的 `outfit` 字段 + `set_persona_outfit` + 桌宠右键「换装」列表） |
 | `storyline_1` | 7 | 专属剧情线一（对话彩蛋模板） | active |
 | `anniversary` | 7 | 纪念日自动庆祝（纪念日设置） | active |
 | `sleep_guard` | 8 | 息屏守护 | active（守护收尾动作可选「息屏」→ `guard_system_action sleep`） |
@@ -118,8 +118,12 @@ companion 上报按**累计陪伴分钟**结算，加成频率随连续时长递
   积分到 480（L4）后 `open=true`。引擎层技能执行路径（approve_skill / 技能执行）对 active persona
   校验 `assistant_skills` 门控，未开则拒绝并返回明确错误。
 - placeholder 类型只用于「功能确实还没做」的门控，仅影响 UI 展示（"已解锁·规划中"样式），不影响门控判定。
-  v45.30 复核后只剩 `dressup`（形象换装）一个真占位：`screen_guard` / `sleep_guard` / `voice_mode` /
-  `batch_skills` / `vault` 都已实装，旧标注会把能用的功能说成"占位"。
+  **v45.31 起 21 个门控全部为 active，已无真占位**：`dressup`（形象换装）最后一个占位已实装——
+  每个角色有 5 套服装（原装 / 晨光暖调 / 夜色冷调 / 薄荷清新 / 樱粉柔和），
+  选择结果写在 `personas.json` 的 `outfit` 字段（旧文件缺字段时 serde default 补 `default`）。
+  渲染分两段：`assets/personas/<key>/outfits/<outfit>/` 放了自备立绘就直接用那套图，
+  没放就对同一张立绘套 canvas 滤镜做配色变体（动作帧/表情帧同步变色）。
+  入口：桌宠右键菜单「换装」→ 展开服装列表（亲密度 L6 解锁，未达 L6 点选会明确提示等级）。
 
 ---
 

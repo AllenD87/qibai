@@ -108,7 +108,9 @@ pub const GATES: [GateInfo; 21] = [
     // 旧标注「placeholder」是过时的，会让已解锁的用户以为功能不存在。
     GateInfo { gate: "screen_guard", required_level: 5, label: "全屏守护", kind: "active" },
     GateInfo { gate: "performance", required_level: 6, label: "表演系统（节日彩蛋接口）", kind: "active" },
-    GateInfo { gate: "dressup", required_level: 6, label: "形象换装", kind: "placeholder" },
+    // v45.31：形象换装已实装（personas.json 的 outfit 字段 + set_persona_outfit 命令 +
+    // 桌宠右键「换装」列表；衣柜见 personas::OUTFITS，缺自备立绘时用配色变体渲染）。
+    GateInfo { gate: "dressup", required_level: 6, label: "形象换装", kind: "active" },
     GateInfo { gate: "storyline_1", required_level: 7, label: "专属剧情线一（对话彩蛋模板）", kind: "active" },
     GateInfo { gate: "anniversary", required_level: 7, label: "纪念日自动庆祝（纪念日设置）", kind: "active" },
     // v45.30：息屏是守护演出的可选收尾动作（设置页「收尾动作 = 息屏」→ guard_system_action sleep），已可用。

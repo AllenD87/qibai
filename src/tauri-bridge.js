@@ -464,6 +464,8 @@
           // 迭代⑤：旧存储缺 voice_profile 时按角色补默认表（幂等迁移）
           obj.personas.forEach((p) => {
             if (!p.voice_profile) p.voice_profile = defaultVoiceProfileFor(p.persona_id);
+            // v45.31 L6：旧存储缺 outfit 时补原装（与后端 serde default 一致）
+            if (!p.outfit) p.outfit = 'default';
           });
           return obj;
         }
@@ -482,6 +484,7 @@
         memory: [],
         sync: { server_id: null, dirty: false, version: 0 },
         voice_profile: defaultVoiceProfileFor(id), // 迭代⑤：每角色音色档案
+        outfit: 'default', // v45.31 L6：形象换装默认原装
       })),
     };
     localStorage.setItem(LS_KEYS.personas, JSON.stringify(obj));
@@ -764,8 +767,40 @@
         memory: (p.memory || []).slice(-10),
         sync: p.sync,
         voice_profile: p.voice_profile || defaultVoiceProfileFor(p.persona_id), // 迭代⑤
+        outfit: p.outfit || 'default', // v45.31 L6：当前服装
       })),
     });
+  }
+
+  // v45.31 L6：衣柜清单（与 qibai-core personas.rs OUTFITS 逐字段一致）
+  const MOCK_OUTFITS = [
+    { id: 'default', display_name: '原装', description: '角色出厂设定' },
+    { id: 'dawn', display_name: '晨光暖调', description: '偏暖偏亮，像清晨日照' },
+    { id: 'night', display_name: '夜色冷调', description: '偏冷偏暗，像夜晚灯下' },
+    { id: 'mint', display_name: '薄荷清新', description: '青绿低饱和，清爽通透' },
+    { id: 'sakura', display_name: '樱粉柔和', description: '粉调柔光，甜而不腻' },
+  ];
+
+  function mockGetOutfits() {
+    return Promise.resolve(MOCK_OUTFITS.map((o) => ({ ...o })));
+  }
+
+  /// 切换某角色服装；未知 id / 未知服装一律 reject（和后端语义一致）。
+  function mockSetPersonaOutfit(args) {
+    args = args || {};
+    const obj = loadMockPersonas();
+    const p = obj.personas.find((x) => x.persona_id === args.persona_id);
+    if (!p) return Promise.reject(new Error('[mock] unknown persona_id: ' + args.persona_id));
+    if (!MOCK_OUTFITS.some((o) => o.id === args.outfit)) {
+      return Promise.reject(new Error('[mock] unknown outfit: ' + args.outfit));
+    }
+    p.outfit = args.outfit;
+    saveMockPersonas(obj);
+    // 让别处订阅者也能看到（pet 窗按 persona_id 过滤）
+    if (typeof broadcast === 'function') {
+      broadcast('qibai://persona-outfit', { persona_id: args.persona_id, outfit: args.outfit });
+    }
+    return Promise.resolve('ok');
   }
 
   // 迭代⑤：写入某角色 voice_profile（控制台卡片「保存」按钮 → invoke set_persona_voice）。
@@ -3167,6 +3202,10 @@
         return mockGetPersonas();
       case 'set_active_persona':
         return mockSetActivePersona(args);
+      case 'get_outfits': // v45.31 L6
+        return mockGetOutfits();
+      case 'set_persona_outfit': // v45.31 L6
+        return mockSetPersonaOutfit(args);
       case 'set_persona_voice':
         return mockSetPersonaVoice(args); // 迭代⑤：每角色专属音色
       case 'rename_persona':
@@ -3424,6 +3463,10 @@
         return mockKbFetch();
       case 'kb_search':
         return Promise.resolve([]);
+      case 'debug_log':
+        // 浏览器 mock：debug_log 是纯诊断命令（真机写 app.log），
+        // 缺实现会让前端 .catch 缺失的调用抛 PAGEERROR 并顶掉正常 toast。
+        return Promise.resolve();
       default:
         return Promise.reject(new Error('[mock] unknown command: ' + cmd));
     }

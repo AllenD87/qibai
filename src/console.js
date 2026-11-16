@@ -2365,7 +2365,7 @@
     { gate: 'mood_empathy', label: '心情识别增强', kind: 'active', level: 5 },
     { gate: 'screen_guard', label: '全屏守护', kind: 'active', level: 5 },
     { gate: 'performance', label: '表演系统（节日彩蛋接口）', kind: 'active', level: 6 },
-    { gate: 'dressup', label: '形象换装', kind: 'placeholder', level: 6 },
+    { gate: 'dressup', label: '形象换装', kind: 'active', level: 6 }, // v45.31 已实装（桌宠右键「换装」）
     { gate: 'storyline_1', label: '专属剧情线一（对话彩蛋模板）', kind: 'active', level: 7 },
     { gate: 'anniversary', label: '纪念日自动庆祝（纪念日设置）', kind: 'active', level: 7 },
     { gate: 'sleep_guard', label: '息屏守护', kind: 'active', level: 8 },

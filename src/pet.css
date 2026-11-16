@@ -520,6 +520,51 @@ body.tauri-mode .ctx-group-label {
 .ctx-item.danger svg { stroke: var(--danger); }
 .ctx-item.danger:hover { background: var(--pink-50); }
 
+/* v45.31 L6 形象换装：展开在「换装」下方的服装列表（缩进 + 当前套装打勾） */
+.ctx-sublist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 8px 6px 34px;
+}
+.ctx-sublist.hidden { display: none; }
+.ctx-outfit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: var(--radius-s);
+  font-size: 12.5px;
+  color: var(--text);
+  text-align: left;
+  touch-action: manipulation;
+}
+.ctx-outfit-row:hover { background: var(--pink-100); }
+.ctx-outfit-row .of-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+.ctx-outfit-row.is-current {
+  color: var(--rose-deep);
+  font-weight: 600;
+}
+.ctx-outfit-row.is-current::after {
+  content: '✓';
+  margin-left: auto;
+  color: var(--rose-deep);
+}
+/* 服装色点：与 pet.js 的 OUTFIT_STYLE 一一对应 */
+.of-dot[data-outfit="default"] { background: linear-gradient(135deg, #F6EEF6, #B79BB8); }
+.of-dot[data-outfit="dawn"] { background: linear-gradient(135deg, #FFF0DC, #E8A96B); }
+.of-dot[data-outfit="night"] { background: linear-gradient(135deg, #C9D3F0, #4A5C8F); }
+.of-dot[data-outfit="mint"] { background: linear-gradient(135deg, #DFF6EA, #6FB79C); }
+.of-dot[data-outfit="sakura"] { background: linear-gradient(135deg, #FFE6F0, #E58AA8); }
+
 /* ---------- 浏览器 mock：桌宠窗在演示页面里的呼吸感 ---------- */
 body.browser-mode .pet-window {
   padding-bottom: 16px;

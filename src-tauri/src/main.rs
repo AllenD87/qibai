@@ -1627,6 +1627,41 @@ async fn rename_persona(state: tauri::State<'_, AppState>, persona_id: String, n
         .map_err(|e| e.to_string())
 }
 
+/// v45.31 L6 形象换装：切换某角色的服装。
+///
+/// 写盘后刷读快照并广播 `persona-outfit`——桌宠窗收到即换外观，
+/// 控制台/亲密度面板重新拉 get_personas 也能看到新值。
+#[tauri::command(rename_all = "snake_case")]
+async fn set_persona_outfit(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    persona_id: String,
+    outfit: String,
+) -> Result<(), String> {
+    // 花括号收窄锁作用域：force_refresh 内部还要拿 engine 锁。
+    let r = {
+        state
+            .engine
+            .lock().await
+            .set_persona_outfit(&persona_id, &outfit)
+            .map_err(|e| e.to_string())
+    };
+    if r.is_ok() {
+        force_refresh(&state.engine, &state.read_cache).await;
+        let _ = app.emit(
+            "persona-outfit",
+            serde_json::json!({ "persona_id": persona_id, "outfit": outfit }),
+        );
+    }
+    r
+}
+
+/// 全部可选服装（前端换装面板按这个列表渲染，避免前后端各写一份衣柜）。
+#[tauri::command]
+async fn get_outfits(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
+    Ok(state.engine.lock().await.outfits())
+}
+
 #[tauri::command]
 async fn get_social_state(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
     if let Some(v) = &state.read_cache.read().await.social_state {
@@ -4562,6 +4597,8 @@ fn main() {
             set_active_persona,
             set_persona_voice, // 迭代⑤：每角色专属音色
             rename_persona,
+            set_persona_outfit, // v45.31 L6 形象换装
+            get_outfits,       // v45.31 衣柜列表
             get_social_state,
             get_social_events,
             // 契约 §2.3 窗口管理

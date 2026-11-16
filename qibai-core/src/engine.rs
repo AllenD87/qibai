@@ -4075,6 +4075,24 @@ PASS_WITH_WARNINGS，FAIL 就改 spec 重渲）→ `anima_mux` 合成 MP4；\n\
         })
     }
 
+    /// v45.31 L6 形象换装：切换某角色的服装并落盘。
+    ///
+    /// 只改 personas.json 的 outfit 字段，不动 active_persona / desk 簿记——
+    /// 换装是「同一个角色换外观」，不是「换角色」。
+    pub fn set_persona_outfit(&mut self, id: &str, outfit: &str) -> Result<(), EngineError> {
+        self.personas.set_outfit(id, outfit).map_err(|e| match e {
+            crate::personas::PersonaStoreError::UnknownPersona(_) => {
+                EngineError::UnknownPersona(id.to_string())
+            }
+            other => EngineError::Social(other.to_string()),
+        })
+    }
+
+    /// 全部可选服装（供 UI 与语音指令列举）。
+    pub fn outfits(&self) -> serde_json::Value {
+        serde_json::to_value(crate::personas::OUTFITS).unwrap_or(serde_json::Value::Null)
+    }
+
     // ---- P1 IPC: get_social_state / social_greet / social_pk / get_social_events ----
 
     /// `{ relations: [...], levels: [ {level,name,title,min,max} x4 ] }`。

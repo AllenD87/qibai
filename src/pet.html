@@ -189,6 +189,12 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8-7 10-4-2-7-5.4-7-10V6l7-3z" fill="none" stroke-width="2" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     <span>守护我</span>
   </button>
+  <!-- v45.31 L6 形象换装：点开后在下方展开服装列表（列表由 get_outfits 动态填充） -->
+  <button type="button" class="ctx-item" id="ctxOutfit" role="menuitem" aria-expanded="false">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4l3 2 3-2 3 3-2.4 1.8L16 20H8l.4-11.2L6 7z" fill="none" stroke-width="1.8" stroke-linejoin="round"/></svg>
+    <span id="ctxOutfitText">换装</span>
+  </button>
+  <div class="ctx-sublist hidden" id="ctxOutfitList" role="group" aria-label="服装列表"></div>
   <div class="ctx-group-label">全局</div>
   <button type="button" class="ctx-item" id="ctxConsole" role="menuitem">
     <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M9 21h6M12 17v4"/></svg>

@@ -49,6 +49,8 @@
   const ctxLock = $('ctxLock');
   const ctxLockText = $('ctxLockText');
   const ctxGuard = $('ctxGuard');
+  const ctxOutfit = $('ctxOutfit');           // v45.31 L6：换装入口
+  const ctxOutfitList = $('ctxOutfitList');   // v45.31：服装列表容器
   const ctxExit = $('ctxExit');
   const ctxMinimal = $('ctxMinimal');
   const ctxMinimalText = $('ctxMinimalText');
@@ -184,6 +186,45 @@
   };
   const DEFAULT_PERSONA = 'gudian';
 
+  // ============================================================
+  // v45.31 L6 形象换装
+  // ------------------------------------------------------------
+  // 两段式：① 若 <assets>/personas/<key>/outfits/<outfit>/ 有自备立绘 → 直接用该套图；
+  //        ② 没有 → 对同一张立绘套 CSS 滤镜（canvas ctx.filter），色调确实变化。
+  // 后端只存 outfit id 与衣柜清单（personas.rs OUTFITS），渲染参数留在前端，
+  // 这样换装能跟着动作帧/表情帧一起变色，而不是另开一套图片。
+  // ============================================================
+  const OUTFIT_STYLE = {
+    default: { name: '原装',     filter: 'none' },
+    dawn:    { name: '晨光暖调', filter: 'sepia(0.30) saturate(1.28) brightness(1.07) hue-rotate(-6deg)' },
+    night:   { name: '夜色冷调', filter: 'brightness(0.86) saturate(0.88) hue-rotate(198deg)' },
+    mint:    { name: '薄荷清新', filter: 'saturate(0.86) hue-rotate(112deg) brightness(1.05)' },
+    sakura:  { name: '樱粉柔和', filter: 'saturate(1.18) hue-rotate(-16deg) brightness(1.06)' },
+  };
+  const OUTFIT_ORDER = ['default', 'dawn', 'night', 'mint', 'sakura'];
+  const outfitAssetProbe = new Map(); // `${persona}:${outfit}` → true(有自备立绘)
+
+  /// 某角色某套装的自备立绘目录（约定路径，末尾带 /）。
+  function outfitDirOf(personaKey, outfitId) {
+    if (!personaKey || !outfitId || outfitId === 'default') return null;
+    return `assets/personas/${personaKey}/outfits/${outfitId}/`;
+  }
+
+  /// 把 `<base>` 形式的原图路径换成某套装的同构路径（用于自备立绘覆盖）。
+  function outfitSrcOf(baseSrc, outfitId) {
+    const dir = outfitDirOf(state.persona, outfitId);
+    if (!dir || !baseSrc) return baseSrc;
+    const prefix = `assets/personas/${state.persona}/`;
+    if (!baseSrc.startsWith(prefix)) return baseSrc;
+    return dir + baseSrc.slice(prefix.length);
+  }
+
+  /// 当前生效的滤镜串（canvas ctx.filter 与 CSS filter 同源语法）。
+  function currentOutfitFilter() {
+    const st = OUTFIT_STYLE[state.outfit];
+    return (st && st.filter) || 'none';
+  }
+
   // 撒娇语（单击摸头互动）
   const PET_LINES = ['诶嘿嘿，好舒服～', '再摸一下也可以哦。', '唔……有点害羞啦。', '你的手暖暖的呢。'];
 
@@ -197,6 +238,7 @@
   /* ---------- 运行时状态 ---------- */
   const state = {
     persona: DEFAULT_PERSONA, // 当前形象 key（由窗口身份 pet-<id> 决定）
+    outfit: 'default',        // v45.31 L6：当前服装 id（personas.json 的 outfit，默认原装）
     emotion: null,
     assetReady: false,
     locked: false,           // 位置锁定（get_desk_state 的 desk.locked[本窗 persona]）
@@ -332,7 +374,24 @@
   }
 
   function personaAssets() {
-    return PERSONAS[state.persona] || PERSONAS[DEFAULT_PERSONA];
+    const base = PERSONAS[state.persona] || PERSONAS[DEFAULT_PERSONA];
+    // v45.31 L6：当前套装没有自备立绘（或就是原装）→ 原样返回，靠滤镜换色。
+    if (state.outfit === 'default') return base;
+    if (!outfitAssetProbe.get(`${state.persona}:${state.outfit}`)) return base;
+    // 有自备立绘 → 返回同构改写后的副本，调用方拿到的 base/expr/poses 全部指向 outfits/<id>/
+    base.__outfitCache = base.__outfitCache || {};
+    if (!base.__outfitCache[state.outfit]) {
+      base.__outfitCache[state.outfit] = {
+        ...base,
+        base: outfitSrcOf(base.base, state.outfit),
+        closed: outfitSrcOf(base.closed, state.outfit),
+        expr: (e) => outfitSrcOf(base.expr(e), state.outfit),
+        poses: Object.fromEntries(
+          Object.entries(base.poses).map(([k, v]) => [k, outfitSrcOf(v, state.outfit)]),
+        ),
+      };
+    }
+    return base.__outfitCache[state.outfit];
   }
 
   // ============================================================
@@ -453,7 +512,11 @@
         const dw = art.naturalWidth * scale;
         const dh = art.naturalHeight * scale;
         const top = r.top + BUBBLE_RESERVE + (availH - dh) / 2;
+        // v45.31 L6：换装滤镜在绘制这一帧时生效（动作帧/表情帧同步变色）
+        const flt = currentOutfitFilter();
+        if (flt !== 'none') bgCtx.filter = flt;
         bgCtx.drawImage(art, r.left + (r.width - dw) / 2, top, dw, dh);
+        if (flt !== 'none') bgCtx.filter = 'none'; // 复位，别把滤镜漏给后续绘制
       }
     }
     // v41：整帧重绘只管 canvas 像素；切动作/切表情后旧帧仍留在窗口表面（重影），
@@ -623,6 +686,7 @@
     }
     console.log('[qibai] pet window persona →', key, '（' + PERSONAS[key].name + '）');
     refreshVoiceTag(); // 迭代⑤：角色切换后刷新本窗音色标签
+    refreshOutfitFromStore(); // v45.31 L6：回填该角色当前服装
     // v20.6：切角色后真正清窗口表面（hide/show）。首次启动（init 早期窗口未
     // 稳定）跳过——只在立绘加载完成且非首次时执行，避免 v20.2 启动闪退回归。
     setTimeout(() => {
@@ -650,6 +714,19 @@
     const pd = voicePitchDesc(Number(prof.pitch) || 0);
     if (prof.mode === 'custom') return '自定义 · ' + rd + ' · ' + pd;
     return (VOICE_TONES[id] || '元气小小') + ' · ' + rd + ' · ' + pd;
+  }
+
+  /* ============================================================
+   * v45.31 L6 · 本窗角色当前服装（personas.json 的 outfit 字段）
+   *   换装是角色状态不是窗口状态，所以启动/切角色时从后端回填；
+   *   读不到（mock 未就绪 / 首次启动）就保持原装，不阻塞渲染。
+   * ============================================================ */
+  function refreshOutfitFromStore() {
+    invoke('get_personas').then((pf) => {
+      const list = (pf && pf.personas) || [];
+      const me = list.find((p) => p && p.persona_id === state.persona);
+      if (me && me.outfit) setOutfitLocal(me.outfit);
+    }).catch(() => { /* 保持原装 */ });
   }
 
   async function refreshVoiceTag() {
@@ -2791,6 +2868,131 @@
   ctxMinimal.addEventListener('click', doMinimalAction);
   ctxExit.addEventListener('click', doExitAction);
   ctxGuard.addEventListener('click', doGuardAction);
+
+  // ============================================================
+  // v45.31 L6 形象换装：菜单入口 + 服装列表 + 应用
+  // ------------------------------------------------------------
+  // 门控：亲密度 L6。读不到当前等级时按「未解锁」处理，宁可挡错也不放行。
+  // 持久化：invoke('set_persona_outfit') → personas.json 的 outfit 字段。
+  // ============================================================
+  const OUTFIT_UNLOCK_LEVEL = 6;
+
+  /// 把当前套装画到屏幕上：Tauri 走整帧重绘（含滤镜），浏览器直接改 img 滤镜。
+  function applyOutfitVisual() {
+    if (isTauri) {
+      repaintFrame();
+    } else {
+      const flt = currentOutfitFilter();
+      img.style.filter = (flt === 'none') ? '' : flt;
+    }
+  }
+
+  /// 只在本地切套装（不做门控与落盘），供事件广播/初始化复用。
+  function setOutfitLocal(outfitId) {
+    state.outfit = OUTFIT_STYLE[outfitId] ? outfitId : 'default';
+    probeOutfitArt(state.outfit);
+    applyOutfitVisual();
+    renderOutfitList();
+  }
+
+  /// 探测自备立绘（`outfits/<id>/character.png`），结果缓存；没有就走滤镜。
+  function probeOutfitArt(outfitId) {
+    if (outfitId === 'default') return;
+    const key = `${state.persona}:${outfitId}`;
+    if (outfitAssetProbe.has(key)) return;
+    const dir = outfitDirOf(state.persona, outfitId);
+    if (!dir) return;
+    const probe = new Image();
+    probe.onload = () => {
+      outfitAssetProbe.set(key, true);
+      if (state.outfit === outfitId) {
+        // 有自备立绘：重载当前帧，走 outfits/<id>/ 路径
+        const assets = personaAssets();
+        if (assets && assets.base) showCharacterFrame(assets.base, 'outfit-asset');
+      }
+    };
+    probe.onerror = () => { outfitAssetProbe.set(key, false); };
+    probe.src = dir + 'character.png';
+  }
+
+  /// 重绘服装列表（当前套装打勾）。
+  function renderOutfitList() {
+    if (!ctxOutfitList) return;
+    ctxOutfitList.textContent = '';
+    OUTFIT_ORDER.forEach((id) => {
+      const st = OUTFIT_STYLE[id];
+      if (!st) return;
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'ctx-outfit-row' + (state.outfit === id ? ' is-current' : '');
+      row.dataset.outfit = id;
+      const dot = document.createElement('span');
+      dot.className = 'of-dot';
+      dot.dataset.outfit = id;
+      const label = document.createElement('span');
+      label.textContent = st.name;
+      row.append(dot, label);
+      row.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        chooseOutfit(id);
+      });
+      ctxOutfitList.appendChild(row);
+    });
+  }
+
+  /// 用户点了某套装：查门控 → 本地应用 → 落盘。
+  async function chooseOutfit(outfitId) {
+    let level = 0;
+    try {
+      const st = await invoke('get_intimacy_state', { persona_id: state.persona });
+      level = Number((st && st.level) || 0);
+    } catch (e) {
+      level = 0; // 读不到就当未解锁
+    }
+    if (level < OUTFIT_UNLOCK_LEVEL) {
+      toast(`形象换装要亲密度 L${OUTFIT_UNLOCK_LEVEL} 才解锁（当前 L${level || 1}）`, 2400);
+      return;
+    }
+    setOutfitLocal(outfitId);
+    ctxOutfitList.classList.add('hidden');
+    if (ctxOutfit) ctxOutfit.setAttribute('aria-expanded', 'false');
+    closeCtxMenu();
+    try {
+      await invoke('set_persona_outfit', { persona_id: state.persona, outfit: outfitId });
+      toast(`换成「${OUTFIT_STYLE[outfitId].name}」啦`, 1600);
+    } catch (e) {
+      toast('换装保存失败：' + (((e && e.message) || e) + '').slice(0, 40), 2400);
+    }
+  }
+
+  /// 展开/收起服装列表。
+  function toggleOutfitList() {
+    if (!ctxOutfitList) return;
+    const willOpen = ctxOutfitList.classList.contains('hidden');
+    renderOutfitList();
+    if (willOpen) {
+      ctxOutfitList.classList.remove('hidden');
+    } else {
+      ctxOutfitList.classList.add('hidden');
+    }
+    if (ctxOutfit) ctxOutfit.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+  }
+
+  if (ctxOutfit) {
+    ctxOutfit.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      toggleOutfitList();
+    });
+  }
+  // 别的角色窗换了装 → 本窗同步（只认自己的 persona_id）
+  if (listen) {
+    listen('qibai://persona-outfit', (event) => {
+      let payload = event && event.payload;
+      if (typeof payload === 'string') { try { payload = JSON.parse(payload); } catch (e) { return; } }
+      if (!payload || payload.persona_id !== state.persona) return;
+      setOutfitLocal(payload.outfit || 'default');
+    });
+  }
 
   // v21.11：独立菜单窗动作分发（后端 emit「qibai://ctx-action」→ 本窗执行）
   if (listen) {
