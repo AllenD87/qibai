@@ -14,6 +14,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tract_onnx::prelude::*;
+// v45.30：tract 0.23 的输出值是 Arc<Tensor> 包装，取 array view 需要显式 deref。
+use std::ops::Deref as _;
 
 /// 模型标识（写进向量索引，模型换了就整体重建）。
 pub const MODEL_NAME: &str = "bge-small-zh-v1.5";
@@ -161,7 +163,9 @@ fn basic_tokens(text: &str) -> Vec<String> {
     out
 }
 
-type Plan = TypedSimplePlan<TypedModel>;
+// v45.30：tract 0.23 起 TypedSimplePlan 不再带泛型参数（0.21 是 TypedSimplePlan<TypedModel>），
+// 且 into_runnable() 返回 Arc<SimplePlan<..>>，run() 只在 Arc 上可用。
+type Plan = std::sync::Arc<TypedSimplePlan>;
 
 /// tract 上的 bge-small-zh-v1.5 推理器。
 pub struct BertEmbedder {
@@ -223,7 +227,10 @@ impl BertEmbedder {
         let hs = out
             .first()
             .ok_or_else(|| KbError::Embed("推理无输出".into()))?
-            .to_array_view::<f32>()
+            // v45.30：0.23 的 TValue 是 Arc<Tensor> 包装（Deref 到 Tensor），
+            // 且安全取值入口改名为 to_plain_array_view（0.21 是 to_array_view）。
+            .deref()
+            .to_plain_array_view::<f32>()
             .map_err(|e| KbError::Embed(format!("读取输出失败: {e}")))?;
         if hs.shape().len() != 3 || hs.shape()[2] != self.dim {
             return Err(KbError::Embed(format!(

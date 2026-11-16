@@ -7606,14 +7606,14 @@ mod v459_task_wiring_tests {
 mod save_settings_partial_tests {
     use super::*;
     use crate::settings::Settings;
-    use std::sync::Mutex;
 
     /// 全局串行化：env QIBAI_DATA_DIR 是进程级，并行测试会互相覆盖。
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    // v45.30：TEST_LOCK 已并入 crate::test_support::env_lock()。
+    // 原来这里是一把模块私有锁，与 task_exec / vault 的锁不互斥，并发改 QIBAI_DATA_DIR 会互相踩。
 
     /// 隔离 HOME 避免碰真配置。
     fn isolated_engine() -> Engine {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::test_support::env_lock();
         let tmp = std::env::temp_dir().join(format!("qibai_settings_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         std::fs::create_dir_all(&tmp).unwrap();
         // 用 QIBAI_DATA_DIR 直接重定向 settings.json 目录

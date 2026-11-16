@@ -1110,7 +1110,10 @@ mod tests {
     /// 必测①：真并行——两个 120ms 分支，串行应 ≥240ms，并行须 <200ms。
     #[test]
     fn parallel_two_branches_actually_concurrent() {
-        let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // v45.30：统一走 test_support 的全局 env 锁。此前用模块内 SETTINGS_LOCK，
+        // 与 engine / vault 等模块各自的锁互不互斥，并发时同时改 QIBAI_DATA_DIR 会互相踩
+        // （表现为别的用例偶发 PermissionDenied）。
+        let _guard = crate::test_support::env_lock();
         std::env::remove_var("QIBAI_DATA_DIR");
         let tmp = tmp_root("p1");
         let store = TaskStore::from_tasks_root(&tmp);
@@ -1137,7 +1140,10 @@ mod tests {
     /// 必测②：上限——5 个无依赖分支，max_parallel=3，峰值 ≤3。
     #[test]
     fn parallel_max_concurrency_capped() {
-        let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // v45.30：统一走 test_support 的全局 env 锁。此前用模块内 SETTINGS_LOCK，
+        // 与 engine / vault 等模块各自的锁互不互斥，并发时同时改 QIBAI_DATA_DIR 会互相踩
+        // （表现为别的用例偶发 PermissionDenied）。
+        let _guard = crate::test_support::env_lock();
         std::env::remove_var("QIBAI_DATA_DIR");
         let tmp = tmp_root("p2");
         let store = TaskStore::from_tasks_root(&tmp);
@@ -1306,7 +1312,9 @@ mod tests {
     }
 
     /// settings 相关测试串行锁（env 是进程级，多线程跑会互相污染）。
-    static SETTINGS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // v45.30：SETTINGS_LOCK 已并入 crate::test_support::env_lock()，
+    // 避免与其它模块的锁各自为政、同时改全局 env。
+    // （保留注释说明，不保留未使用的 static，免得 dead_code 警告。）
 
     fn write_settings_file(dir: &std::path::Path, parallel_max: u32) {
         // 用 Default 生成完整 settings，再覆盖 task_parallel_max，避免缺字段导致反序列化失败
@@ -1319,7 +1327,10 @@ mod tests {
     /// 必测⑧：settings.task_parallel_max=1 时峰值并发=1（所有分支串行）。
     #[test]
     fn settings_parallel_max_1_forces_serial() {
-        let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // v45.30：统一走 test_support 的全局 env 锁。此前用模块内 SETTINGS_LOCK，
+        // 与 engine / vault 等模块各自的锁互不互斥，并发时同时改 QIBAI_DATA_DIR 会互相踩
+        // （表现为别的用例偶发 PermissionDenied）。
+        let _guard = crate::test_support::env_lock();
         let tmp = tmp_root("cfg1");
         // 把 QIBAI_DATA_DIR 指向临时目录并写 settings.json
         let old = std::env::var("QIBAI_DATA_DIR").ok();
@@ -1355,7 +1366,10 @@ mod tests {
     /// 必测⑨：settings.task_parallel_max=5 时 5 个分支能同时跑（峰值≥4）。
     #[test]
     fn settings_parallel_max_5_allows_concurrency() {
-        let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // v45.30：统一走 test_support 的全局 env 锁。此前用模块内 SETTINGS_LOCK，
+        // 与 engine / vault 等模块各自的锁互不互斥，并发时同时改 QIBAI_DATA_DIR 会互相踩
+        // （表现为别的用例偶发 PermissionDenied）。
+        let _guard = crate::test_support::env_lock();
         let tmp = tmp_root("cfg5");
         let old = std::env::var("QIBAI_DATA_DIR").ok();
         std::env::set_var("QIBAI_DATA_DIR", &tmp);

@@ -1,0 +1,15 @@
+# v45.30：测试串行化。
+#
+# 原因：qibai-core 有一批测试通过改 `QIBAI_DATA_DIR` / `QIBAI_PLUGINS_DIR`
+# 这类**进程级环境变量**来隔离临时目录。多个 #[test] 在同一进程的多线程里并行时，
+# 一个测试改 env、另一个正在读，会互相踩——表现为偶发 `PermissionDenied`
+# （例如 `approval_path_broadcasts_execution_record` 的 plugin_install 拿到别人的目录）。
+#
+# 这些测试各自已经加了锁，但按模块分散（engine 的 TEST_LOCK、task_exec 的 SETTINGS_LOCK、
+# test_support 的 ENV_LOCK），跨模块仍不互斥；而读 env 的代码路径（Engine::new / Settings::load）
+# 本身无法加锁，所以靠锁修不彻底。
+#
+# 串行执行是当前最确定的解法：实测 687 项 lib 测试 117s，全量 2m22s 稳定全绿。
+# 代价是比并行多约 30% 时间，换来的是"cargo test 不再偶发失败"。
+[env]
+RUST_TEST_THREADS = "1"

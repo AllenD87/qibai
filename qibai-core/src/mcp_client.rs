@@ -202,17 +202,12 @@ impl McpSession {
             }
         }
         if let Some(st) = exited {
-            // server 退得比 stderr 读完还快时，给收集任务几十毫秒把最后几行落进缓冲。
-            for _ in 0..6 {
-                let has = session
-                    .stderr_tail
-                    .lock()
-                    .map(|g| !g.trim().is_empty())
-                    .unwrap_or(false);
-                if has {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(30)).await;
+            // server 已退出 → stderr 管道必然关闭，收集任务会自然收尾。
+            // 早期版本在这里固定轮询等 180ms 猜"落进缓冲没有"，并发跑测试时调度一慢就猜空，
+            // 得到「server 没有任何 stderr 输出」的假错误（instant_exit 用例因此偶发失败）。
+            // 改为直接等收集任务结束：结果确定，超时只作兜底。
+            if let Some(handle) = session.stderr_task.take() {
+                let _ = tokio::time::timeout(Duration::from_millis(500), handle).await;
             }
             let detail = session.stderr_suffix();
             let hint = if detail.is_empty() {
