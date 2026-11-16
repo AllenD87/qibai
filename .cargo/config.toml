@@ -1,15 +1,22 @@
-# v45.30：测试串行化。
+# v45.31-d：撤销 v45.30 的测试串行化，恢复并行。
 #
-# 原因：qibai-core 有一批测试通过改 `QIBAI_DATA_DIR` / `QIBAI_PLUGINS_DIR`
-# 这类**进程级环境变量**来隔离临时目录。多个 #[test] 在同一进程的多线程里并行时，
-# 一个测试改 env、另一个正在读，会互相踩——表现为偶发 `PermissionDenied`
-# （例如 `approval_path_broadcasts_execution_record` 的 plugin_install 拿到别人的目录）。
+# v45.30 曾设 RUST_TEST_THREADS=1，因为多个 #[test] 并行时偶发 `PermissionDenied`
+# 与「找不到能力包」。当时判断是 `QIBAI_DATA_DIR` / `QIBAI_PLUGINS_DIR` 这类
+# 进程级环境变量互相踩，实际排查下来真因不在 env，而在 skill 根注入：
 #
-# 这些测试各自已经加了锁，但按模块分散（engine 的 TEST_LOCK、task_exec 的 SETTINGS_LOCK、
-# test_support 的 ENV_LOCK），跨模块仍不互斥；而读 env 的代码路径（Engine::new / Settings::load）
-# 本身无法加锁，所以靠锁修不彻底。
+#   `skill_docs::set_plugin_roots` 用的是 OnceLock 语义——**只有第一次生效**，
+#   后续调用被静默忽略；而若干测试的临时根目录又按 `process::id()` 固定命名，
+#   于是多个测试共用「最先设置的那一对目录」，收尾时又各自 `remove_dir_all`，
+#   并行时就会把别人正在用的包删掉（表现为 PermissionDenied / 找不到能力包）。
 #
-# 串行执行是当前最确定的解法：实测 687 项 lib 测试 117s，全量 2m22s 稳定全绿。
-# 代价是比并行多约 30% 时间，换来的是"cargo test 不再偶发失败"。
-[env]
-RUST_TEST_THREADS = "1"
+# v45.31-d 的修法：
+#   1. `skill_docs::roots()` 改为「线程内覆盖 → 进程级 RwLock 默认值」；
+#   2. 新增 `skill_docs::with_plugin_roots(builtin, user, f)`，作用域结束（含 panic）自动恢复；
+#   3. `set_plugin_roots` 改为可重设（生产仍由 main.rs 启动时调用一次）；
+#   4. `skill_install::with_temp_user_plugins` 与 `skill_docs` 相关测试改用
+#      `test_support::unique_temp_dir` 的唯一目录，不再按 pid 共享。
+#
+# 验证：`RUST_TEST_THREADS=8 cargo test --locked -p qibai-core` 连续 3 轮
+# 706 passed / 0 failed（串行基线为 705 项 + 1 项旧 ignore 已解除）。
+# 因此不再需要全局串行；如需临时回到串行，用 `RUST_TEST_THREADS=1 cargo test ...`
+# 覆盖即可（shell 环境变量优先于本文件）。

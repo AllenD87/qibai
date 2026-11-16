@@ -125,6 +125,14 @@ cargo test
 根目录 `cargo test` 只会编译 `qibai-core`（workspace members = ["qibai-core"]）；
 `src-tauri` 自带独立 `[workspace]`，不会被拖入根构建。
 
+测试默认**并行**执行（706 项约 97s）。早期曾因测试间共享临时目录而设
+`RUST_TEST_THREADS=1` 串行规避，v45.31-d 已修掉根因（技能根注入改线程内覆盖 +
+每测试独立临时目录），串行设置移除。需要复现旧行为时：
+
+```bash
+RUST_TEST_THREADS=1 cargo test --locked -p qibai-core
+```
+
 ---
 
 ## 5. 常见问题

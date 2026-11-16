@@ -483,17 +483,15 @@ mod tests {
 
     /// 造临时 user plugins 根并通过 set_plugin_roots 注入。
     fn with_temp_user_plugins<T>(f: impl FnOnce(&Path) -> T) -> T {
-        let user = std::env::temp_dir().join(format!("qibai_install_user_{}", std::process::id()));
-        let builtin = std::env::temp_dir().join(format!("qibai_install_builtin_{}", std::process::id()));
+        // v45.31-d：每个测试各用各的唯一目录 + 线程内 roots 覆盖。
+        // 此前按 pid 固定命名，多个测试共用同一目录、又各自 remove_dir_all，
+        // 并行时会互相把对方的包删掉（表现为「找不到能力包：演示技能」）。
+        let user = crate::test_support::unique_temp_dir("install-user");
+        let builtin = crate::test_support::unique_temp_dir("install-builtin");
+        let out = crate::skill_docs::with_plugin_roots(builtin.clone(), user.clone(), || f(&user));
         let _ = std::fs::remove_dir_all(&user);
         let _ = std::fs::remove_dir_all(&builtin);
-        std::fs::create_dir_all(&user).unwrap();
-        std::fs::create_dir_all(&builtin).unwrap();
-        crate::skill_docs::set_plugin_roots(builtin.clone(), user.clone());
-        let r = f(&user);
-        let _ = std::fs::remove_dir_all(&user);
-        let _ = std::fs::remove_dir_all(&builtin);
-        r
+        out
     }
 
     #[test]

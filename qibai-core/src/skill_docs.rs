@@ -11,7 +11,7 @@
 //! read_doc 仍可读）。
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
 /// 一条能力包目录项。
 #[derive(Debug, Clone, serde::Serialize)]
@@ -32,22 +32,55 @@ pub struct SkillDocEntry {
     pub load_error: Option<String>,
 }
 
+thread_local! {
+    /// 线程内的 roots 覆盖（v45.31-d）。
+    ///
+    /// 仓库里有一批测试要换 builtin / user 两段根；此前只能走进程级 `set_plugin_roots`，
+    /// 而那是 OnceLock 语义——**只有第一次生效**，后续调用被静默忽略，多个测试并行时
+    /// 会共用最先设置的目录、再被彼此 `remove_dir_all` 掉（表现为「找不到能力包」）。
+    /// 线程内覆盖让每个测试各用各的目录，互不干扰。
+    static L_ROOT: std::cell::RefCell<Option<(PathBuf, PathBuf)>> =
+        std::cell::RefCell::new(None);
+}
+
+fn default_roots() -> (PathBuf, PathBuf) {
+    let tmp = std::env::temp_dir().join("qibai_plugins_unset");
+    (tmp.clone(), tmp)
+}
+
 pub fn roots() -> (PathBuf, PathBuf) {
+    if let Some(r) = L_ROOT.with(|c| c.borrow().clone()) {
+        return r;
+    }
     R_SET_ONCE
-        .get()
-        .cloned()
-        .unwrap_or_else(|| {
-            let tmp = std::env::temp_dir().join("qibai_plugins_unset");
-            (tmp.clone(), tmp)
-        })
+        .get_or_init(|| RwLock::new(default_roots()))
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
 }
 
-/// 由 main.rs 启动时调用一次，注入 builtin / user 两段 plugins 根。
+/// 注入 builtin / user 两段 plugins 根。生产由 main.rs 启动时调用一次；
+/// 测试请改用 `with_plugin_roots`，避免进程级状态互相踩。
 pub fn set_plugin_roots(builtin: PathBuf, user: PathBuf) {
-    let _ = R_SET_ONCE.set((builtin, user));
+    let lock = R_SET_ONCE.get_or_init(|| RwLock::new(default_roots()));
+    *lock.write().unwrap_or_else(|e| e.into_inner()) = (builtin, user);
 }
 
-static R_SET_ONCE: OnceLock<(PathBuf, PathBuf)> = OnceLock::new();
+static R_SET_ONCE: OnceLock<RwLock<(PathBuf, PathBuf)>> = OnceLock::new();
+
+/// 在当前线程内把 roots 临时指向给定目录，作用域结束后自动恢复（panic 也恢复）。
+pub fn with_plugin_roots<T>(builtin: PathBuf, user: PathBuf, f: impl FnOnce() -> T) -> T {
+    struct Restore(Option<(PathBuf, PathBuf)>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let prev = self.0.take();
+            L_ROOT.with(|c| *c.borrow_mut() = prev);
+        }
+    }
+    let prev = L_ROOT.with(|c| c.replace(Some((builtin, user))));
+    let _restore = Restore(prev);
+    f()
+}
 
 /// 读 qibai-plugin.json，取 name / description / type。
 fn read_manifest(pkg_dir: &Path) -> Result<(String, String, String), String> {
@@ -301,23 +334,23 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "OnceLock 全局状态，单测间共享；由集成测试覆盖"]
     fn disable_marker_filters_prompt() {
-        let b = std::env::temp_dir().join(format!("qibai_pkg_d_{}", std::process::id()));
-        let u = std::env::temp_dir().join(format!("qibai_pkg_d_u_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&b);
-        let _ = std::fs::remove_dir_all(&u);
+        // v45.31-d：线程内 roots 覆盖 + 唯一目录，不再依赖进程级 OnceLock，故解除 ignore。
+        // 禁用标记写在 `<user_root>/.disabled/<name>`，跟着线程覆盖走，不污染真实目录。
+        let b = crate::test_support::unique_temp_dir("pkg-d");
+        let u = crate::test_support::unique_temp_dir("pkg-d-user");
         make_pkg(&b, "skills", "websearch", "网络搜索", "搜", true);
-        set_plugin_roots(b.clone(), u.clone());
-        let p1 = render_catalog_prompt();
-        assert!(p1.contains("网络搜索"));
-        set_enabled("网络搜索", false).unwrap();
-        assert!(is_disabled("网络搜索"));
-        let p2 = render_catalog_prompt();
-        assert!(!p2.contains("网络搜索"));
-        // 禁用后 read_doc 仍可读
-        assert!(read_doc("网络搜索").is_ok());
-        set_enabled("网络搜索", true).unwrap();
+        with_plugin_roots(b.clone(), u.clone(), || {
+            let p1 = render_catalog_prompt();
+            assert!(p1.contains("网络搜索"));
+            set_enabled("网络搜索", false).unwrap();
+            assert!(is_disabled("网络搜索"));
+            let p2 = render_catalog_prompt();
+            assert!(!p2.contains("网络搜索"));
+            // 禁用后 read_doc 仍可读
+            assert!(read_doc("网络搜索").is_ok());
+            set_enabled("网络搜索", true).unwrap();
+        });
         let _ = std::fs::remove_dir_all(&b);
         let _ = std::fs::remove_dir_all(&u);
     }
