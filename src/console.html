@@ -309,16 +309,25 @@
         <select id="setProvider">
           <option value="doubao">豆包 Doubao（默认，Ark）</option>
           <option value="openai">OpenAI</option>
-          <option value="anthropic">Anthropic Claude（需 OpenAI 兼容网关中转）</option>
+          <option value="anthropic">Anthropic Claude（原生 /v1/messages）</option>
           <option value="qwen_local">本地模型（OpenAI 兼容 / Qwen）</option>
           <option value="custom">自定义兼容接口</option>
         </select>
+      </div>
+      <div class="field">
+        <label for="setProtocol">接口协议</label>
+        <select id="setProtocol">
+          <option value="auto">自动（按服务商推断，推荐）</option>
+          <option value="openai">强制 OpenAI 兼容 /chat/completions</option>
+          <option value="anthropic">强制 Anthropic 原生 /v1/messages</option>
+        </select>
+        <div class="hint">选 <b>Anthropic</b> 且协议为「自动」时走官方原生接口：Base URL 填 <b>https://api.anthropic.com</b>（留空也行），鉴权用 <b>x-api-key</b>，不需要中转网关；若你用的是 one-api 这类 OpenAI 兼容中转，把协议改成「强制 OpenAI 兼容」。</div>
       </div>
       <div class="row-2">
         <div class="field">
           <label for="setModel">模型名称</label>
           <input id="setModel" type="text" placeholder="doubao-pro-32k">
-          <div class="hint">豆包系（<b>doubao-pro-*</b> / <b>doubao-seed-*</b>）需先在方舟控制台「开通管理」开通，未开通会返回 <b>404</b>；不想开通可改填已开放的模型，如 <b>deepseek-v4-pro-ga-260813</b>。</div>
+          <div class="hint">豆包系（<b>doubao-pro-*</b> / <b>doubao-seed-*</b>）需先在方舟控制台「开通管理」开通，未开通会返回 <b>404</b>；不想开通可改填已开放的模型，如 <b>deepseek-v4-pro-ga-260813</b>。选 <b>Anthropic</b> 时填 <b>claude-sonnet-4-5</b> 这类模型 id。</div>
         </div>
         <div class="field">
           <label for="setBaseUrl">Base URL</label>

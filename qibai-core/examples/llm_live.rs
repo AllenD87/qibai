@@ -23,6 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let settings = LlmSettings {
         provider: "doubao".into(),
+        protocol: "auto".into(),
         base_url,
         model,
         api_key,

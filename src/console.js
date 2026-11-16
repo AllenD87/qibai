@@ -940,6 +940,7 @@
     out.llm.provider = $('setProvider').value;
     out.llm.base_url = $('setBaseUrl').value.trim();
     out.llm.model = $('setModel').value.trim();
+    out.llm.protocol = $('setProtocol') ? $('setProtocol').value : (out.llm.protocol || 'auto');
     out.llm.api_key = $('setApiKey').value;
     out.reminders.sit_min = num('setSitMin', 60);
     out.reminders.water_min = num('setWaterMin', 40);
@@ -1012,6 +1013,8 @@
       const HINTS = {
         doubao: { base: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions', model: 'doubao-pro-32k' },
         openai: { base: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini' },
+        // v45.31-e：Anthropic 已接原生协议，这里给官方根地址（后端会自动补 /v1/messages）
+        anthropic: { base: 'https://api.anthropic.com', model: 'claude-sonnet-4-5' },
         qwen_local: { base: 'http://127.0.0.1:11434/v1/chat/completions', model: 'qwen3:8b' },
       };
       const knownBases = new Set(Object.values(HINTS).map((h) => h.base));
@@ -1021,8 +1024,11 @@
         // 本项目只实现 OpenAI 兼容协议（Bearer + /chat/completions），Anthropic 官方原生 API 不认，
         // 必须经 one-api 之类的网关转一次，否则接上必然失败——直说，不让人白试。
         if (v === 'anthropic') {
-          toast('Anthropic 官方原生 API 不支持：请填 OpenAI 兼容网关地址（如 one-api / new-api 中转）');
-          return;
+          // v45.31-e：原生 /v1/messages 已支持，直接填官方端点即可（留空也会用官方地址）；
+          // 只有走第三方 OpenAI 兼容中转时，才需要把「接口协议」改成强制兼容。
+          const protoEl = $('setProtocol');
+          if (protoEl && protoEl.value !== 'anthropic') protoEl.value = 'auto';
+          toast('已用 Anthropic 原生协议：Base URL 填 https://api.anthropic.com 或留空');
         }
         const h = HINTS[v];
         if (!h) return;
@@ -1035,6 +1041,7 @@
     }
     $('setBaseUrl').value = (s.llm && s.llm.base_url) || '';
     $('setModel').value = (s.llm && s.llm.model) || '';
+    if ($('setProtocol')) $('setProtocol').value = (s.llm && s.llm.protocol) || 'auto';
     $('setApiKey').value = (s.llm && s.llm.api_key) || '';
     // v45.11/P2：知识库参数回填
     if ($('kbTopK')) $('kbTopK').value = s.kb_top_k || 6;

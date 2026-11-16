@@ -338,7 +338,7 @@ cargo tauri build
 
 ### 5. 配置 API Key
 
-首次启动进控制台 → 设置页填写 LLM API Key（默认对接豆包 Ark，也可换成任意 OpenAI 兼容接口）。**Key 只落本地，不进仓库、不进日志。**
+首次启动进控制台 → 设置页填写 LLM API Key（默认对接豆包 Ark；也可换成任意 OpenAI 兼容接口，或选 Anthropic 走原生 `/v1/messages`）。**Key 只落本地，不进仓库、不进日志。**
 
 ---
 

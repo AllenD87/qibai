@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const ENV_API_KEY: &str = "DOUBAO_API_KEY";
+/// Anthropic 原生协议要求的版本头（缺失会被服务端 400）。
+pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 #[derive(Debug, Error)]
 pub enum LlmError {
@@ -900,6 +902,402 @@ pub async fn run_agent_loop(
     Err(LlmError::MaxIterations)
 }
 
+// ============ Anthropic 原生协议（v45.31-e） ============
+
+/// Claude 系列走 Anthropic 原生 `/v1/messages`——它不提供 OpenAI 兼容端点。
+///
+/// 与 OpenAI 兼容层的差异（都在本模块内消化，调用方不用感知）：
+/// - `system` 不能放在 messages 里，要提到顶层字段；
+/// - `max_tokens` 必填；
+/// - tools 用 `{name, description, input_schema}`，不是 `{type:"function", function:{...}}`；
+/// - 工具结果回传是 user 角色的 `tool_result` 块，不是 `role:"tool"`；
+/// - 流式事件是 `content_block_delta` / `input_json_delta`，不是 `choices[].delta`。
+pub struct AnthropicProvider {
+    endpoint: String,
+    model: String,
+    api_key: String,
+    client: reqwest::Client,
+}
+
+impl AnthropicProvider {
+    pub fn from_settings(s: &LlmSettings) -> Result<Self, LlmError> {
+        let key = if !s.api_key.trim().is_empty() {
+            Some(s.api_key.clone())
+        } else {
+            std::env::var(ENV_API_KEY).ok().filter(|k| !k.trim().is_empty())
+        };
+        let Some(api_key) = key else {
+            return Err(LlmError::MissingApiKey);
+        };
+        let base = s.base_url.trim().trim_end_matches('/');
+        // base_url 留空时用官方端点；填根地址时补 /v1/messages；已填完整端点则原样。
+        let base = if base.is_empty() { "https://api.anthropic.com" } else { base };
+        let endpoint = if base.ends_with("/v1/messages") {
+            base.to_string()
+        } else {
+            format!("{base}/v1/messages")
+        };
+        let model = normalize_model_id(&s.model);
+        eprintln!(
+            "[qibai] llm 配置: protocol=anthropic 端点={} 模型={} key={}",
+            endpoint,
+            model,
+            if s.api_key.trim().is_empty() { "未配置(将用env)" } else { "已配置" }
+        );
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .map_err(|e| LlmError::Api(format!("HTTP 客户端构建失败: {e}")))?;
+        Ok(Self { endpoint, model, api_key, client })
+    }
+
+    fn body(&self, req: &ChatRequest, stream: bool) -> serde_json::Value {
+        let mut system = req.system.clone();
+        if req.json_object {
+            // Anthropic 没有 response_format，用系统提示做等价约束。
+            system.push_str("\n\n只输出一个 JSON 对象，不要包含解释、前言或 markdown 围栏。");
+        }
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "max_tokens": 1000,
+            "messages": anthropic_messages(&req.messages),
+        });
+        if !system.trim().is_empty() {
+            body["system"] = serde_json::json!(system);
+        }
+        if let Some(tools) = &req.tools {
+            let converted = anthropic_tools(tools);
+            if !converted.is_empty() {
+                body["tools"] = serde_json::json!(converted);
+            }
+        }
+        if stream {
+            body["stream"] = serde_json::json!(true);
+        }
+        body
+    }
+}
+
+/// OpenAI 风格消息 → Anthropic messages。
+///
+/// Anthropic 要求 user/assistant 交替，所以把相邻同角色消息合并到同一 content 数组。
+fn anthropic_messages(msgs: &[ChatMessage]) -> Vec<serde_json::Value> {
+    let mut out: Vec<serde_json::Value> = Vec::new();
+
+    fn push(out: &mut Vec<serde_json::Value>, role: &str, block: serde_json::Value) {
+        let merge = matches!(out.last(), Some(last) if last.get("role").and_then(|r| r.as_str()) == Some(role));
+        if merge {
+            let last = out.last_mut().expect("刚判过非空");
+            if let Some(arr) = last.get_mut("content").and_then(|c| c.as_array_mut()) {
+                arr.push(block);
+            }
+        } else {
+            out.push(serde_json::json!({ "role": role, "content": [block] }));
+        }
+    }
+
+    for m in msgs {
+        match m.role.as_str() {
+            // system 已提升到顶层字段，这里丢弃。
+            "system" => {}
+            "tool" => {
+                push(
+                    &mut out,
+                    "user",
+                    serde_json::json!({
+                        "type": "tool_result",
+                        "tool_use_id": m.tool_call_id.clone().unwrap_or_default(),
+                        "content": m.content.clone().unwrap_or_default(),
+                    }),
+                );
+            }
+            "assistant" => {
+                if let Some(t) = &m.content {
+                    if !t.trim().is_empty() {
+                        push(&mut out, "assistant", serde_json::json!({"type":"text","text":t}));
+                    }
+                }
+                if let Some(calls) = &m.tool_calls {
+                    for c in calls {
+                        let input: serde_json::Value =
+                            serde_json::from_str(&c.function.arguments).unwrap_or_else(|_| serde_json::json!({}));
+                        push(
+                            &mut out,
+                            "assistant",
+                            serde_json::json!({
+                                "type": "tool_use",
+                                "id": c.id,
+                                "name": c.function.name,
+                                "input": input,
+                            }),
+                        );
+                    }
+                }
+            }
+            _ => push(
+                &mut out,
+                "user",
+                serde_json::json!({"type":"text","text": m.content.clone().unwrap_or_default()}),
+            ),
+        }
+    }
+    out
+}
+
+/// OpenAI 风格 tools（`{type:"function", function:{name, description, parameters}}`）
+/// → Anthropic tools（`{name, description, input_schema}`）。
+fn anthropic_tools(tools: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    tools
+        .iter()
+        .filter_map(|t| {
+            let f = t.get("function").unwrap_or(t);
+            let name = f.get("name")?.as_str()?;
+            Some(serde_json::json!({
+                "name": name,
+                "description": f.get("description").and_then(|d| d.as_str()).unwrap_or(""),
+                "input_schema": f
+                    .get("parameters")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({"type":"object","properties":{}})),
+            }))
+        })
+        .collect()
+}
+
+/// Anthropic 非流式响应 → 统一 ChatResponse。
+fn parse_anthropic_response(v: &serde_json::Value) -> ChatResponse {
+    let mut text = String::new();
+    let mut calls: Vec<ToolCall> = Vec::new();
+    if let Some(arr) = v.get("content").and_then(|c| c.as_array()) {
+        for b in arr {
+            match b.get("type").and_then(|t| t.as_str()) {
+                Some("text") => {
+                    if let Some(t) = b.get("text").and_then(|x| x.as_str()) {
+                        text.push_str(t);
+                    }
+                }
+                Some("tool_use") => calls.push(ToolCall {
+                    id: b.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    kind: "function".into(),
+                    function: ToolCallFunction {
+                        name: b.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                        arguments: b
+                            .get("input")
+                            .map(|i| i.to_string())
+                            .unwrap_or_else(|| "{}".into()),
+                    },
+                }),
+                _ => {}
+            }
+        }
+    }
+    let tokens_used = v
+        .get("usage")
+        .map(|u| {
+            u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0)
+                + u.get("output_tokens").and_then(|x| x.as_u64()).unwrap_or(0)
+        })
+        .map(|n| n as u32);
+    ChatResponse {
+        content: if text.is_empty() { None } else { Some(text) },
+        tool_calls: calls,
+        tokens_used,
+    }
+}
+
+/// 流式工具调用累加器（`content_block_start` → 若干 `input_json_delta` → `content_block_stop`）。
+#[derive(Default)]
+struct ToolAcc {
+    id: String,
+    name: String,
+    json: String,
+}
+
+#[async_trait]
+impl LlmProvider for AnthropicProvider {
+    async fn chat(&self, req: ChatRequest) -> Result<ChatResponse, LlmError> {
+        let body = self.body(&req, false);
+        let resp = self
+            .client
+            .post(&self.endpoint)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| LlmError::Api(format!("请求失败: {e}")))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let t = resp.text().await.unwrap_or_default();
+            return Err(LlmError::Api(format!(
+                "HTTP {status}: {}",
+                t.chars().take(300).collect::<String>()
+            )));
+        }
+        let v: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| LlmError::Api(format!("响应解析失败: {e}")))?;
+        Ok(parse_anthropic_response(&v))
+    }
+
+    async fn chat_stream(
+        &self,
+        req: ChatRequest,
+        on_text: &mut (dyn for<'a> FnMut(&'a str) + Send),
+    ) -> Result<ChatResponse, LlmError> {
+        let body = self.body(&req, true);
+        let resp = self
+            .client
+            .post(&self.endpoint)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| LlmError::Api(format!("流式请求失败: {e}")))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let t = resp.text().await.unwrap_or_default();
+            return Err(LlmError::Api(format!(
+                "流式 HTTP {status}: {}",
+                t.chars().take(300).collect::<String>()
+            )));
+        }
+        let stream = resp.bytes_stream();
+        futures_util::pin_mut!(stream);
+
+        let mut text = String::new();
+        let mut calls: Vec<ToolCall> = Vec::new();
+        let mut acc: Option<ToolAcc> = None;
+        let mut line_buf: Vec<u8> = Vec::new();
+        let mut input_tokens: u32 = 0;
+        let mut output_tokens: u32 = 0;
+        let started = std::time::Instant::now();
+
+        loop {
+            let next = tokio::time::timeout(std::time::Duration::from_secs(60), stream.next()).await;
+            let chunk = match next {
+                Ok(Some(c)) => c,
+                Ok(None) => break,
+                Err(_) => {
+                    eprintln!("[qibai] llm(anthropic) 流式 60s 无数据，中断");
+                    return Err(LlmError::Api("流式响应 60s 无数据".into()));
+                }
+            };
+            if started.elapsed() > std::time::Duration::from_secs(120) {
+                return Err(LlmError::Api("流式响应超 120s".into()));
+            }
+            let chunk = chunk.map_err(|e| LlmError::Api(format!("流式读取失败: {e}")))?;
+            for &b in chunk.iter() {
+                line_buf.push(b);
+                if b != b'\n' {
+                    continue;
+                }
+                let line = String::from_utf8_lossy(&line_buf).trim().to_string();
+                line_buf.clear();
+                // 事件类型行（`event: xxx`）不解析，只看 data 行的 type 字段。
+                let Some(data) = line.strip_prefix("data:") else { continue };
+                let data = data.trim();
+                if data.is_empty() || data == "[DONE]" {
+                    continue;
+                }
+                let Ok(v) = serde_json::from_str::<serde_json::Value>(data) else { continue };
+                match v.get("type").and_then(|t| t.as_str()) {
+                    Some("message_start") => {
+                        input_tokens = v
+                            .pointer("/message/usage/input_tokens")
+                            .and_then(|x| x.as_u64())
+                            .unwrap_or(0) as u32;
+                    }
+                    Some("content_block_start") => {
+                        if v.pointer("/content_block/type").and_then(|t| t.as_str()) == Some("tool_use") {
+                            acc = Some(ToolAcc {
+                                id: v
+                                    .pointer("/content_block/id")
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                name: v
+                                    .pointer("/content_block/name")
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                json: String::new(),
+                            });
+                        }
+                    }
+                    Some("content_block_delta") => match v.pointer("/delta/type").and_then(|t| t.as_str()) {
+                        Some("text_delta") => {
+                            if let Some(t) = v.pointer("/delta/text").and_then(|x| x.as_str()) {
+                                text.push_str(t);
+                                on_text(t);
+                            }
+                        }
+                        Some("input_json_delta") => {
+                            if let (Some(a), Some(p)) = (
+                                acc.as_mut(),
+                                v.pointer("/delta/partial_json").and_then(|x| x.as_str()),
+                            ) {
+                                a.json.push_str(p);
+                            }
+                        }
+                        _ => {}
+                    },
+                    Some("content_block_stop") => {
+                        if let Some(a) = acc.take() {
+                            calls.push(ToolCall {
+                                id: a.id,
+                                kind: "function".into(),
+                                function: ToolCallFunction {
+                                    name: a.name,
+                                    arguments: if a.json.trim().is_empty() { "{}".into() } else { a.json },
+                                },
+                            });
+                        }
+                    }
+                    Some("message_delta") => {
+                        if let Some(n) = v.pointer("/usage/output_tokens").and_then(|x| x.as_u64()) {
+                            output_tokens = n as u32;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let tokens_used = if input_tokens == 0 && output_tokens == 0 {
+            None
+        } else {
+            Some(input_tokens + output_tokens)
+        };
+        Ok(ChatResponse {
+            content: if text.is_empty() { None } else { Some(text) },
+            tool_calls: calls,
+            tokens_used,
+        })
+    }
+}
+
+/// 按 `settings.llm.protocol` 选择实现。调用方只拿 trait 对象，不关心底层协议。
+pub fn build_provider(s: &LlmSettings) -> Result<Box<dyn LlmProvider>, LlmError> {
+    // `auto`（默认）按 provider 推断：选 anthropic 就走原生 /v1/messages，
+    // 其余走 OpenAI 兼容；显式 `openai` 可强制走兼容网关（第三方 Claude 中转）。
+    let protocol = s.protocol.trim().to_lowercase();
+    let use_anthropic = match protocol.as_str() {
+        "anthropic" => true,
+        "openai" => false,
+        _ => s.provider.trim().eq_ignore_ascii_case("anthropic"),
+    };
+    if use_anthropic {
+        Ok(Box::new(AnthropicProvider::from_settings(s)?))
+    } else {
+        Ok(Box::new(DoubaoProvider::from_settings(s)?))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1162,6 +1560,7 @@ mod tests {
     async fn mock_llm_chain_reasoning_fallback() {
         // 复现用户场景：reasoning 模型流式 content 空 → 降级非流式 → 解析干净回复
         let s = crate::settings::LlmSettings {
+            protocol: "openai".to_string(),
             provider: "custom".into(),
             base_url: spawn_mock_llm_server().await,
             model: "Qwen/Qwen3.6-35B-A3B-reasoning".into(),
@@ -1192,6 +1591,7 @@ mod tests {
     async fn mock_llm_chain_truncated_json() {
         // 截断 JSON（缺右花括号）→ parse_reply 提取干净 reply
         let s = crate::settings::LlmSettings {
+            protocol: "openai".to_string(),
             provider: "custom".into(),
             base_url: spawn_mock_llm_server().await,
             model: "Qwen/Qwen3.6-35B-A3B-truncated".into(),
@@ -1215,6 +1615,7 @@ mod tests {
     async fn mock_llm_chain_stream_ok() {
         // 正常流式：content 有值 → 流式解析成功（不降级）
         let s = crate::settings::LlmSettings {
+            protocol: "openai".to_string(),
             provider: "custom".into(),
             base_url: spawn_mock_llm_server().await,
             model: "Qwen/Qwen3.6-35B-A3B".into(),
@@ -1674,5 +2075,247 @@ mod tests {
         // 回复不被替换（tools_ok=1，假完成闸门放行）
         assert!(parsed.reply.contains("已完成"), "回复不应被改写：{}", parsed.reply);
         let _ = std::fs::remove_file(&target);
+    }
+
+    // ===== Anthropic 原生协议（v45.31-e）=====
+
+    #[test]
+    fn anthropic_messages_promotes_system_and_maps_tool_roundtrip() {
+        let msgs = vec![
+            ChatMessage::user("你好"),
+            ChatMessage::assistant_tool_calls(vec![ToolCall {
+                id: "tu_1".into(),
+                kind: "function".into(),
+                function: ToolCallFunction {
+                    name: "read_file".into(),
+                    arguments: r#"{"path":"a.txt"}"#.into(),
+                },
+            }]),
+            ChatMessage::tool("tu_1", "文件内容"),
+        ];
+        let out = anthropic_messages(&msgs);
+        assert_eq!(out.len(), 3, "system 不在 messages 里，其余三条各自成型");
+        assert_eq!(out[0]["role"], "user");
+        assert_eq!(out[0]["content"][0]["type"], "text");
+        assert_eq!(out[1]["role"], "assistant");
+        assert_eq!(out[1]["content"][0]["type"], "tool_use");
+        assert_eq!(out[1]["content"][0]["name"], "read_file");
+        assert_eq!(out[1]["content"][0]["input"]["path"], "a.txt", "arguments 必须解析成对象");
+        // 工具结果 Anthropic 用 user + tool_result，不是 role:"tool"
+        assert_eq!(out[2]["role"], "user");
+        assert_eq!(out[2]["content"][0]["type"], "tool_result");
+        assert_eq!(out[2]["content"][0]["tool_use_id"], "tu_1");
+    }
+
+    #[test]
+    fn anthropic_messages_merges_adjacent_same_role() {
+        let msgs = vec![ChatMessage::user("第一段"), ChatMessage::user("第二段")];
+        let out = anthropic_messages(&msgs);
+        assert_eq!(out.len(), 1, "相邻同角色必须合并，否则 Anthropic 会 400");
+        assert_eq!(out[0]["content"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn anthropic_tools_convert_openai_schema() {
+        let tools = vec![serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "读文件",
+                "parameters": {"type":"object","properties":{"path":{"type":"string"}}}
+            }
+        })];
+        let out = anthropic_tools(&tools);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["name"], "read_file");
+        assert_eq!(out[0]["description"], "读文件");
+        assert_eq!(out[0]["input_schema"]["properties"]["path"]["type"], "string");
+        assert!(out[0].get("function").is_none(), "不能残留 OpenAI 包装");
+    }
+
+    #[test]
+    fn parse_anthropic_response_reads_text_and_tool_use() {
+        let v = serde_json::json!({
+            "content": [
+                {"type":"text","text":"好的"},
+                {"type":"tool_use","id":"tu_2","name":"read_file","input":{"path":"b.txt"}}
+            ],
+            "usage": {"input_tokens": 12, "output_tokens": 8}
+        });
+        let r = parse_anthropic_response(&v);
+        assert_eq!(r.content.as_deref(), Some("好的"));
+        assert_eq!(r.tool_calls.len(), 1);
+        assert_eq!(r.tool_calls[0].id, "tu_2");
+        assert_eq!(r.tool_calls[0].function.name, "read_file");
+        assert_eq!(
+            r.tool_calls[0].function.arguments,
+            r#"{"path":"b.txt"}"#,
+            "input 必须序列化回 JSON 字符串"
+        );
+        assert_eq!(r.tokens_used, Some(20));
+    }
+
+    /// 起一个假的 Anthropic `/v1/messages` 服务，记录收到的请求体与请求行。
+    async fn spawn_anthropic_mock(
+        stream: bool,
+        with_tool: bool,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen2 = seen.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else { break };
+                let seen = seen2.clone();
+                tokio::spawn(async move {
+                    let mut data = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    let (body_start, headers_text) = loop {
+                        let n = socket.read(&mut chunk).await.unwrap_or(0);
+                        if n == 0 { return; }
+                        data.extend_from_slice(&chunk[..n]);
+                        let Some(pos) = data.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+                        let start = pos + 4;
+                        let headers = String::from_utf8_lossy(&data[..pos]).to_string();
+                        let len = headers.lines().find_map(|l| {
+                            let (n, v) = l.split_once(':')?;
+                            if n.eq_ignore_ascii_case("content-length") {
+                                v.trim().parse::<usize>().ok()
+                            } else { None }
+                        }).unwrap_or(0);
+                        if data.len() >= start + len { break (start, headers); }
+                    };
+                    seen.lock().unwrap().push(headers_text);
+                    let body = String::from_utf8_lossy(&data[body_start..]).to_string();
+
+                    let payload = if stream {
+                        let mut sse = String::new();
+                        sse.push_str("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5}}}\n\n");
+                        sse.push_str("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n");
+                        sse.push_str("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"世\"}}\n\n");
+                        sse.push_str("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"界\"}}\n\n");
+                        if with_tool {
+                            sse.push_str("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tu_s\",\"name\":\"read_file\",\"input\":{}}}\n\n");
+                            sse.push_str("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\"}}\n\n");
+                            sse.push_str("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"c.txt\\\"}\"}}\n\n");
+                            sse.push_str("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n");
+                        }
+                        sse.push_str("event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":7}}\n\n");
+                        sse.push_str("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n");
+                        sse
+                    } else {
+                        serde_json::json!({
+                            "content": [{"type":"text","text":"你好，我是 Claude"}],
+                            "usage": {"input_tokens": 9, "output_tokens": 11}
+                        }).to_string()
+                    };
+                    let content_type = if stream { "text/event-stream" } else { "application/json" };
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n\r\n",
+                        payload.len()
+                    );
+                    let _ = socket.write_all(head.as_bytes()).await;
+                    let _ = socket.write_all(payload.as_bytes()).await;
+                    let _ = socket.flush().await;
+                    let _ = body; // 请求体已由 headers 记录（够断言）
+                });
+            }
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    fn anthropic_settings(base_url: &str) -> LlmSettings {
+        LlmSettings {
+            protocol: "auto".into(),
+            provider: "anthropic".into(),
+            base_url: base_url.to_string(),
+            model: "claude-sonnet-4".into(),
+            api_key: "sk-ant-test".into(),
+            remember_chat: false,
+            backup_providers: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn anthropic_chat_hits_native_endpoint_with_key_header() {
+        let (base, seen) = spawn_anthropic_mock(false, false).await;
+        let p = build_provider(&anthropic_settings(&base)).unwrap();
+        let resp = p
+            .chat(ChatRequest {
+                system: "你是助手".into(),
+                messages: vec![ChatMessage::user("hi")],
+                tools: None,
+                json_object: false,
+            })
+            .await
+            .unwrap();
+        assert_eq!(resp.content.as_deref(), Some("你好，我是 Claude"));
+        assert_eq!(resp.tokens_used, Some(20));
+
+        let req = seen
+            .lock()
+            .unwrap()
+            .first()
+            .cloned()
+            .expect("mock 应收到一次请求");
+        let lower = req.to_lowercase();
+        assert!(lower.contains("post /v1/messages"), "必须打原生端点：{req}");
+        assert!(lower.contains("x-api-key: sk-ant-test"), "必须用 x-api-key 而非 Bearer：{req}");
+        assert!(lower.contains("anthropic-version: 2023-06-01"), "缺少版本头：{req}");
+    }
+
+    #[tokio::test]
+    async fn anthropic_stream_rebuilds_text_and_tool_use() {
+        let (base, _seen) = spawn_anthropic_mock(true, true).await;
+        let p = build_provider(&anthropic_settings(&base)).unwrap();
+        let mut got: Vec<String> = Vec::new();
+        let resp = p
+            .chat_stream(
+                ChatRequest {
+                    system: "sys".into(),
+                    messages: vec![ChatMessage::user("hi")],
+                    tools: None,
+                    json_object: false,
+                },
+                &mut |t: &str| got.push(t.to_string()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(got.concat(), "世界", "text_delta 应逐段回调");
+        assert_eq!(resp.content.as_deref(), Some("世界"));
+        assert_eq!(resp.tool_calls.len(), 1, "input_json_delta 应拼装成一次工具调用");
+        assert_eq!(resp.tool_calls[0].id, "tu_s");
+        assert_eq!(resp.tool_calls[0].function.name, "read_file");
+        let args: serde_json::Value =
+            serde_json::from_str(&resp.tool_calls[0].function.arguments).unwrap();
+        assert_eq!(args["path"], "c.txt", "分片 JSON 必须还原成合法对象");
+        assert_eq!(resp.tokens_used, Some(12));
+    }
+
+    #[test]
+    fn build_provider_auto_picks_anthropic_only_for_anthropic_provider() {
+        let mut s = LlmSettings {
+            protocol: "auto".into(),
+            provider: "anthropic".into(),
+            base_url: "https://api.anthropic.com".into(),
+            model: "claude-sonnet-4".into(),
+            api_key: "sk-test".into(),
+            remember_chat: false,
+            backup_providers: vec![],
+        };
+        // 只验证分派结果能构建成功（不发真实请求）
+        assert!(build_provider(&s).is_ok(), "anthropic 应该构建成功");
+        // provider 不是 anthropic 时仍走兼容层
+        s.provider = "doubao".into();
+        s.base_url = "https://ark.example.com/api/v3".into();
+        assert!(build_provider(&s).is_ok());
+        // 显式 openai 覆盖：即使 provider=anthropic 也走兼容网关
+        s.provider = "anthropic".into();
+        s.protocol = "openai".into();
+        assert!(build_provider(&s).is_ok());
     }
 }

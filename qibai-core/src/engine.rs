@@ -2,7 +2,7 @@
 //! src-tauri 的命令只做最薄转发，全部业务逻辑在这里，便于无 GUI 单测。
 
 use crate::enums::{Action, Emotion};
-use crate::llm_client::{run_agent_loop, ChatMessage, DoubaoProvider, LlmError, LlmProvider};
+use crate::llm_client::{run_agent_loop, ChatMessage, LlmError, LlmProvider};
 use crate::persona::build_system_prompt_for_persona;
 use crate::personas::PersonaStore;
 use crate::reminder::{ReminderEvent, ReminderScheduler, SystemClock};
@@ -1192,7 +1192,7 @@ impl Engine {
         );
         let provider: Box<dyn LlmProvider> = match self.provider_override.take() {
             Some(p) => p,
-            None => Box::new(DoubaoProvider::from_settings(&self.settings.llm)?),
+            None => crate::llm_client::build_provider(&self.settings.llm)?,
         };
         let system = "你是代码生成器，根据需求输出完整可运行代码，只输出代码本体，不要解释、不要 markdown 围栏。";
         let resp = provider
@@ -1773,8 +1773,8 @@ pub(crate) fn reset_plan_for_rerun(
             if let Some(p) = self.provider_override.take() {
                 std::sync::Arc::from(p)
             } else {
-                match crate::llm_client::DoubaoProvider::from_settings(&self.settings.llm) {
-                    Ok(p) => std::sync::Arc::new(p),
+                match crate::llm_client::build_provider(&self.settings.llm) {
+                    Ok(p) => std::sync::Arc::from(p),
                     Err(e) => {
                         eprintln!("[qibai] task rerun: llm build failed, using NullProvider: {e}");
                         std::sync::Arc::new(crate::llm_client::NullProvider)
@@ -2141,8 +2141,8 @@ pub(crate) fn reset_plan_for_rerun(
                 std::sync::Arc::from(p)
             } else {
                 // 生产：从 settings 建 DoubaoProvider
-                match crate::llm_client::DoubaoProvider::from_settings(&self.settings.llm) {
-                    Ok(p) => std::sync::Arc::new(p),
+                match crate::llm_client::build_provider(&self.settings.llm) {
+                    Ok(p) => std::sync::Arc::from(p),
                     Err(e) => {
                         eprintln!("[qibai] task: llm provider build failed, using NullProvider: {e}");
                         std::sync::Arc::new(crate::llm_client::NullProvider)
@@ -2705,8 +2705,8 @@ PASS_WITH_WARNINGS，FAIL 就改 spec 重渲）→ `anima_mux` 合成 MP4；\n\
 
         let provider: Box<dyn LlmProvider> = match self.provider_override.take() {
             Some(p) => p,
-            None => match DoubaoProvider::from_settings(&self.settings.llm) {
-                Ok(p) => Box::new(p),
+            None => match crate::llm_client::build_provider(&self.settings.llm) {
+                Ok(p) => p,
                 Err(e) => {
                     self.sink.emit(
                         "qibai://llm-status",
@@ -4031,7 +4031,7 @@ PASS_WITH_WARNINGS，FAIL 就改 spec 重渲）→ `anima_mux` 合成 MP4；\n\
         if env_key.is_none() && cfg_key.is_none() {
             return None;
         }
-        let provider = DoubaoProvider::from_settings(&self.settings.llm).ok()?;
+        let provider = crate::llm_client::build_provider(&self.settings.llm).ok()?;
         Some(EngineSuggestLlm { provider })
     }
 
@@ -4222,7 +4222,7 @@ PASS_WITH_WARNINGS，FAIL 就改 spec 重渲）→ `anima_mux` 合成 MP4；\n\
         let resp = match &self.provider_override {
             Some(p) => p.chat(req).await,
             None => {
-                let p = DoubaoProvider::from_settings(&self.settings.llm).ok()?;
+                let p = crate::llm_client::build_provider(&self.settings.llm).ok()?;
                 p.chat(req).await
             }
         };
@@ -4753,7 +4753,7 @@ fn stt_device_available() -> bool {
 /// 把 `LlmProvider` 适配成 codecheck 的 `SuggestLlm`：要求 JSON 输出，
 /// 任何失败（网络 / key / 解析）都返回 None，由调用方降级为纯静态报告。
 struct EngineSuggestLlm {
-    provider: DoubaoProvider,
+    provider: Box<dyn LlmProvider>,
 }
 
 #[async_trait::async_trait]

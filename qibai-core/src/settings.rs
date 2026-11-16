@@ -41,6 +41,11 @@ fn default_provider() -> String {
     "doubao".to_string()
 }
 
+/// 对外协议类型：`auto`（按 provider 推断，默认）/ `openai` / `anthropic`。
+fn default_protocol() -> String {
+    "auto".to_string()
+}
+
 fn default_model() -> String {
     // 与 `Default::default()` 保持一致——以前这里回退 deepseek-chat，而 Default 给的是 Qwen，
     // 同一个 provider 配两个不同模型名，缺字段的老配置会莫名其妙指向云端 deepseek。
@@ -54,6 +59,12 @@ pub struct LlmSettings {
     /// 避免升级后整份配置读失败（曾经缺 provider 会直接 `missing field` 报错）。
     #[serde(default = "default_provider")]
     pub provider: String,
+    /// 对外协议（v45.31-e）：`auto` = 按 provider 推断（默认，选 anthropic 就走原生）；
+    /// `openai` = 强制 OpenAI 兼容 /chat/completions（接第三方 Claude 中转网关时用）；
+    /// `anthropic` = 强制 Anthropic 原生 /v1/messages。
+    /// 缺字段的老配置按 `auto` 加载：provider 不是 anthropic 时行为与升级前完全一致。
+    #[serde(default = "default_protocol")]
+    pub protocol: String,
     #[serde(default)]
     #[serde(rename = "base_url")]
     pub base_url: String,
@@ -87,6 +98,7 @@ impl Default for LlmSettings {
     fn default() -> Self {
         Self {
             provider: "doubao".to_string(),
+            protocol: "openai".to_string(),
             // 隐私路由：不硬编码任何内网/开发机地址（旧版本的 100.92.x.x 已移除）。
             // 这里给豆包 Ark 的公开端点，让「首次启动只填 Key」能用；要用本地模型就把 provider
             // 切到 qwen_local 并填自己的 http://127.0.0.1:xxxx/v1。
