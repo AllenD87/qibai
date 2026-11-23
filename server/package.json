@@ -9,7 +9,7 @@
     "test": "node --test \"src/test/*.test.js\""
   },
   "dependencies": {
-    "ws": "^8.22.1"
+    "ws": "^8.23.0"
   },
   "engines": {
     "node": ">=22.5"
